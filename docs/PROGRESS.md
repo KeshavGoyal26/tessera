@@ -88,7 +88,7 @@ Known issues / next steps:
 - [~] M5 Participant recordings (done), SPS change/clock jump handling (done, unit tested); long-run soak, CPU benchmark, benchmark done (docs/RECORDING.md); hls.js playback verified manually in headless Chromium (not automated); soak test not done
 - Docs: `docs/RECORDING.md`
 - Known issues: RTCP SR not wired from `client.RemoteTrack` (arrival-time fallback); `Room.active_recording` not set; composite unsupported; `testdata/rtp` fixtures are generated at test time with ffmpeg (`pkg/hls/hlstest`), not checked in; CI `recorder` job added (installs ffmpeg, fails on skipped tests).
-- Next steps: (1) request from WP1: expose RTCP sender reports on `client.RemoteTrack` (`OnSenderReport(func(ntp uint64, rts uint32))`, satisfies `recorder.SRSource`) so A/V alignment uses SR instead of arrival time; (2) automate the hls.js/Playwright playback check; (3) long-run soak test and 720p benchmark with a real uploader; (5) wire `recorder.NewCoordinator` in `cmd/tessera` if not done by WP3.
+- Next steps: (1) request from WP1: expose RTCP sender reports on `client.RemoteTrack` (`OnSenderReport(func(ntp uint64, rts uint32))`, satisfies `recorder.SRSource`) so A/V alignment uses SR instead of arrival time; (2) automate the hls.js/Playwright playback check; (3) long-run soak test and 720p benchmark with a real uploader.
 
 ## WP6: Admin dashboard
 
@@ -97,8 +97,8 @@ Known issues / next steps:
 - [x] Mounted at `/admin` in `cmd/tessera` (separate commit); recorder URLs via `TESSERA_DASHBOARD_RECORDERS`
 - [x] Grafana dashboard JSON + provisioning in `deploy/grafana`
 - Docs: `docs/DASHBOARD.md`
-- Known issues: no automated browser e2e suite or CI job for `web/admin` (typecheck/vitest run locally); history lost on restart; verified against synthetic stats only (real `room` snapshot not exercised); dist must be rebuilt and committed after frontend changes.
-- Next steps: add `web/admin` to CI (`npm ci && npm test && npm run build`, fail on dist drift); Playwright smoke test against a live server once WP1 lands; optional per-room history; `dashboard` config section in `pkg/config` instead of the env var.
+- Known issues: no automated browser e2e suite for `web/admin`; history lost on restart; verified against synthetic stats only (real `room` snapshot not exercised); dist must be rebuilt and committed after frontend changes.
+- Next steps: Playwright smoke test of `web/admin` against a live server (CI job `dashboard-web` already runs typecheck, vitest, build and the dist drift check); optional per-room history; `dashboard` config section in `pkg/config` instead of the env var.
 
 ## WP5: Integration, load and performance (after WP1 M3)
 
