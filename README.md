@@ -3,10 +3,10 @@
 Tessera is a WebRTC SFU (Selective Forwarding Unit) media server written from scratch in Go. It
 records to HLS and comes with a Java server SDK and a TypeScript browser SDK.
 
-> **Status: Phase 0 complete (architecture, contracts, scaffolding).** The protocol, interfaces
-> and project layout are in place, and the components are being implemented in parallel
-> work packages. Most server features currently return `not implemented`. See
-> [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** the SFU core (signaling, rooms, simulcast forwarding, NACK/PLI, RTCP, TWCC
+> bandwidth estimation, dynacast, speakers, ICE-TCP, embedded TURN), HLS recording, admin API,
+> SDKs and dashboard are implemented; see [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed
+> status and known gaps.
 
 ## Features (target for v1)
 

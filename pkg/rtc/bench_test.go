@@ -20,9 +20,14 @@ type srtpWriter struct {
 	n     int
 }
 
+// benchProfile is the SRTP profile used by the benchmarks.
+var benchProfile = srtp.ProtectionProfileAes128CmHmacSha1_80
+
 func newSRTPWriter(tb testing.TB) *srtpWriter {
 	tb.Helper()
-	ctx, err := srtp.CreateContext(make([]byte, 16), make([]byte, 14), srtp.ProtectionProfileAes128CmHmacSha1_80)
+	keyLen, _ := benchProfile.KeyLen()
+	saltLen, _ := benchProfile.SaltLen()
+	ctx, err := srtp.CreateContext(make([]byte, keyLen), make([]byte, saltLen), benchProfile)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -99,6 +104,15 @@ func BenchmarkDownTrackWriteRTP(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pkts/s")
+}
+
+// BenchmarkDownTrackWriteRTPGCM is BenchmarkDownTrackWriteRTP with the
+// AEAD_AES_128_GCM SRTP profile.
+func BenchmarkDownTrackWriteRTPGCM(b *testing.B) {
+	old := benchProfile
+	benchProfile = srtp.ProtectionProfileAeadAes128Gcm
+	defer func() { benchProfile = old }()
+	BenchmarkDownTrackWriteRTP(b)
 }
 
 // BenchmarkReceiverFanout measures buffer write + fan-out to N DownTracks

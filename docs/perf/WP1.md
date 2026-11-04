@@ -38,6 +38,7 @@ Numbers are single-goroutine (one core).
 | `BenchmarkBufferWrite` | 103 | 0 | ~9.9 GB/s copy into the ring |
 | `BenchmarkForwarderGetTranslation` | 54 | 0 | |
 | `BenchmarkDownTrackWriteRTP` | 2058 | 0 | 486k pkts/s per core incl. SRTP (target P1: 100k) |
+| `BenchmarkDownTrackWriteRTPGCM` | 459 | 0 | 2.18M pkts/s per core with `SRTP_AEAD_AES_128_GCM` |
 | `BenchmarkReceiverFanout/1` | 2171 | 0 | 461k egress pkts/s |
 | `BenchmarkReceiverFanout/10` | 20042 | 0 | 499k egress pkts/s |
 | `BenchmarkReceiverFanout/100` | 230821 | 0 | 433k egress pkts/s |
@@ -58,9 +59,13 @@ every egress packet also goes through the VP8 descriptor rewrite (payload copy).
 | ~9% | `simulcast.(*Forwarder)` (`forwardCurrent` + `translate`) |
 
 About 85% of the forwarding CPU is SRTP crypto, which Tessera cannot avoid per DownTrack (every subscriber
-has its own keys). Our own code (buffer, forwarder, VP8 rewrite, header marshal) is under 15%. Ways to cut
-the crypto cost: negotiate `SRTP_AEAD_AES_128_GCM` first (AES-GCM with hardware GHASH is much cheaper than
-AES-CM + HMAC-SHA1), which is a one-line SettingEngine change worth benchmarking with browsers.
+has its own keys). Our own code (buffer, forwarder, VP8 rewrite, header marshal) is under 15%.
+
+Follow-up measurement: with AES-GCM (`BenchmarkDownTrackWriteRTPGCM`) the same path is 4.5x faster
+(459 ns vs 2086 ns). Pion's default DTLS-SRTP profile order is already AES-256-GCM, AES-128-GCM, then
+AES-CM-HMAC-SHA1-80, and current browsers support GCM, so production traffic normally takes the fast
+path; the AES-CM numbers are the worst case (peers without GCM). The fan-out benchmarks use AES-CM and
+are therefore conservative.
 
 ## Next steps
 
