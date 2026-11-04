@@ -2,6 +2,7 @@
 # Multi-stage build for tessera, tessera-recorder and tessera-loadtest.
 #   docker build -f deploy/docker/Dockerfile --target tessera  -t tessera .
 #   docker build -f deploy/docker/Dockerfile --target recorder -t tessera-recorder .
+#   docker build -f deploy/docker/Dockerfile --target web-demo -t tessera-web-demo .
 ARG GO_VERSION=1.27.3
 
 FROM golang:${GO_VERSION}-bookworm AS build
@@ -37,3 +38,15 @@ CMD ["--config", "/etc/tessera/recorder.yaml"]
 FROM gcr.io/distroless/static-debian12:nonroot AS loadtest
 COPY --from=build /out/tessera-loadtest /usr/local/bin/tessera-loadtest
 ENTRYPOINT ["/usr/local/bin/tessera-loadtest"]
+
+# Web demo: build the browser SDK and the demo, serve the static bundle.
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /src
+COPY sdk/js sdk/js
+COPY examples/web-demo examples/web-demo
+RUN cd sdk/js && npm ci && npm run build \
+    && cd ../../examples/web-demo && npm ci && npm run build
+
+FROM nginx:1.27-alpine AS web-demo
+COPY --from=web-build /src/examples/web-demo/dist /usr/share/nginx/html
+EXPOSE 80

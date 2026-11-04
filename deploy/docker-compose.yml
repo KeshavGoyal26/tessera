@@ -1,4 +1,4 @@
-# Local stack: tessera server, recorder and MinIO.
+# Local stack: tessera server, recorder, MinIO, web demo, Prometheus and Grafana.
 #   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
 # Media needs reachable UDP; on Linux servers host networking is simplest (see deploy/README.md).
@@ -69,6 +69,38 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+  web-demo:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: web-demo
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/tessera-dashboard.json:/var/lib/grafana/dashboards/tessera-dashboard.json:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
 
 volumes:
   minio-data:

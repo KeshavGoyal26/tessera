@@ -45,10 +45,31 @@ cd sdk/js && npm ci && npm run build && cd ../../examples/web-demo && npm ci && 
 # Java SDK
 cd sdk/java && mvn -B verify
 
-# Full stack (server, recorder, MinIO)
+# Full stack (server, recorder, MinIO, web demo, Prometheus, Grafana)
 cp deploy/.env.example deploy/.env
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
 ```
+
+With the compose stack running:
+
+| URL | What |
+|-----|------|
+| http://localhost:8080 | Web demo: enter `ws://localhost:7880` and a token from the command below |
+| http://localhost:6789/stats | Live node/room/track statistics (JSON, [docs/STATS.md](docs/STATS.md)) |
+| http://localhost:9090 | Prometheus (scrapes `tessera:6789` and `recorder:6790`) |
+| http://localhost:3000 | Grafana with the Tessera dashboard (anonymous viewer) |
+| http://localhost:9001 | MinIO console (recordings bucket `recordings`) |
+
+```bash
+# A join token for the dev key (the compose stack uses TESSERA_DEV_SECRET from deploy/.env)
+go run ./cmd/tessera create-token --room demo --identity alice
+# Synthetic load: 2 rooms x 4 publishers with 3-layer simulcast
+go run ./cmd/tessera-loadtest --url ws://localhost:7880 --secret devsecret-devsecret-devsecret-0000 \
+  --rooms 2 --publishers 4 --duration 30s
+```
+
+`TESSERA_NODE_IP` must be an address the browser can reach (127.0.0.1 for a browser on the same
+machine with Docker port publishing; the host's LAN IP otherwise).
 
 Java usage preview:
 
