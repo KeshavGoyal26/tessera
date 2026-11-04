@@ -75,8 +75,12 @@ increases).
 ## Browser and player compatibility (verified facts and open items)
 
 - hls.js (MSE): fMP4 HLS with H.264 + Opus plays in Chrome, Edge, Firefox and Safari 17+
-  (ADR-0007). **Not yet verified in this repository by a headless hls.js test**; ffprobe/ffmpeg
-  decode validation passes for the generated playlists (see `pkg/hls` and `pkg/recorder` tests).
+  (ADR-0007). Verified manually for this repository: the master playlist of a recorded
+  participant (H.264 + demuxed Opus, produced by `TestWorkerParticipantRecordingEndToEnd` with
+  `TESSERA_TEST_OUTDIR` set) loads with hls.js 1.7.4 in headless Chromium (Playwright) without
+  errors, reports 12 s / 3 fragments, and plays (currentTime advances, video 320x240). Not an
+  automated CI test yet. ffprobe/ffmpeg decode validation of every generated playlist runs in
+  `pkg/hls` and `pkg/recorder` tests.
 - Native Apple HLS: Opus is not in Apple's HLS authoring spec; treat as best effort and use AAC
   mode when recordings must play natively on iOS/macOS or third-party HLS players.
 - Playlists are HLS version 7 (fMP4 requires 6+), `EXT-X-INDEPENDENT-SEGMENTS`, target duration
@@ -110,4 +114,8 @@ resolved below `local_root`.
 - Composite (grid) recording is not implemented; `StartRecording` returns `unimplemented`.
 - No headless hls.js/Playwright test, no Apple device verification, no real-server end-to-end
   test (blocked on `pkg/client` landing); the pipeline is tested with in-memory RTP.
-- Recorder CPU benchmark (100 tracks/vCPU) not yet measured.
+- Benchmark: `go test -bench RemuxH264 ./pkg/hls` (RTP unmarshal + depacketize + mux + playlist,
+  storage excluded) measured about 0.04 ms CPU per media-second for a 320x240 100 kbps track on a
+  2.1 GHz Xeon, i.e. orders of magnitude under the 10 ms/media-second budget of the 100
+  tracks/vCPU target. Higher bitrates cost mostly memory copies; a 720p measurement with a real
+  uploader (S3 TLS) is still open.

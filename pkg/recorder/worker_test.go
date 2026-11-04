@@ -87,6 +87,9 @@ func TestWorkerParticipantRecordingEndToEnd(t *testing.T) {
 	}}
 
 	root := t.TempDir()
+	if d := os.Getenv("TESSERA_TEST_OUTDIR"); d != "" { // keep the output, e.g. for hls.js playback checks
+		root = d
+	}
 	cfg := DefaultConfig()
 	cfg.WorkerID, cfg.Capacity, cfg.Heartbeat = "w1", 10, 50*time.Millisecond
 	cfg.Storage.LocalRoot = root
