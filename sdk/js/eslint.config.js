@@ -7,6 +7,10 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
+    files: ["e2e/**", "scripts/**", "playwright.config.ts"],
+    languageOptions: { globals: { process: "readonly", console: "readonly" } },
+  },
+  {
     rules: {
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
