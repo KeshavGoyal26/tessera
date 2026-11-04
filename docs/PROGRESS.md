@@ -61,8 +61,8 @@ Known issues / next steps (WP1):
   for remote video (run 41898159870). Not debugged (no Firefox in the session environment). Start by comparing
   the Firefox publisher offer/answer (simulcast RIDs, VP8/H.264 fmtp, header extension ids) and checking whether
   the server receives Firefox RTP (`/stats` published layers) and whether Firefox gets keyframes after PLI.
-- RTX: negotiated with publishers but retransmissions on the RTX SSRC are not unwrapped; browser NACK recovery
-  needs this (Pion publishers resend on the primary SSRC, which works).
+- RTX from browsers: Pion's RTPReceiver unwraps RTX into `TrackRemote.Read` (verified in Pion source, not by a
+  browser test); towards subscribers retransmissions use the primary SSRC (ADR-0006).
 - Subscriber transceivers are not reused after unsubscribe (SDP grows in long sessions).
 - `SyncState` is answered with a participant update only; ICE restart on resume not exercised server-side.
 - Room broadcasts that happen between a participant's admission and its JoinResponse are dropped for that
