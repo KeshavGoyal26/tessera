@@ -229,12 +229,13 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 		var lc net.ListenConfig
 		ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(tcpIP, fmt.Sprint(rtcCfg.TCPPort)))
 		if err != nil {
-			e.closeConns()
-			return nil, fmt.Errorf("rtc: listen ice-tcp: %w", err)
+			// ICE-TCP is a fallback: run UDP-only rather than refusing to start.
+			logger.Warn("ICE-TCP disabled: cannot listen", "port", rtcCfg.TCPPort, "err", err)
+		} else {
+			e.tcpMux = ice.NewTCPMuxDefault(ice.TCPMuxParams{Listener: ln, ReadBufferSize: 64})
+			se.SetICETCPMux(e.tcpMux)
+			se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6, webrtc.NetworkTypeTCP4, webrtc.NetworkTypeTCP6})
 		}
-		e.tcpMux = ice.NewTCPMuxDefault(ice.TCPMuxParams{Listener: ln, ReadBufferSize: 64})
-		se.SetICETCPMux(e.tcpMux)
-		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6, webrtc.NetworkTypeTCP4, webrtc.NetworkTypeTCP6})
 	}
 
 	// Embedded TURN relaying only to this node's media addresses.
