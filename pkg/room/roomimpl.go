@@ -7,6 +7,7 @@ import (
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/speaker"
 	"github.com/KeshavGoyal26/tessera/pkg/signal"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
@@ -20,10 +21,108 @@ type Room struct {
 	closed       bool
 	emptyTimer   *time.Timer
 	created      time.Time
+
+	spkMu    sync.Mutex
+	speakers speaker.Observer
+	quality  map[string]tesserav1.ConnectionQuality
+	done     chan struct{}
 }
 
+// SpeakerInterval and QualityInterval drive the room worker.
+var (
+	SpeakerInterval = 300 * time.Millisecond
+	QualityInterval = 5 * time.Second
+)
+
 func newRoom(m *manager, info *tesserav1.Room) *Room {
-	return &Room{m: m, info: info, participants: map[string]*Participant{}, created: time.Now()}
+	r := &Room{m: m, info: info, participants: map[string]*Participant{}, created: time.Now(),
+		speakers: speaker.NewObserver(speaker.Config{}), quality: map[string]tesserav1.ConnectionQuality{}, done: make(chan struct{})}
+	go r.worker()
+	return r
+}
+
+// worker runs speaker detection and connection quality (ARCHITECTURE.md 4.4).
+func (r *Room) worker() {
+	spk := time.NewTicker(SpeakerInterval)
+	cq := time.NewTicker(QualityInterval)
+	defer spk.Stop()
+	defer cq.Stop()
+	for {
+		select {
+		case <-r.done:
+			return
+		case now := <-spk.C:
+			r.spkMu.Lock()
+			changed := r.speakers.Tick(now)
+			r.spkMu.Unlock()
+			if len(changed) > 0 {
+				r.broadcast(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_SpeakersChanged{SpeakersChanged: &tesserav1.SpeakersChanged{Speakers: changed}}}, nil)
+			}
+		case now := <-cq.C:
+			r.connectionQuality(now)
+		}
+	}
+}
+
+func (r *Room) connectionQuality(now time.Time) {
+	upd := &tesserav1.ConnectionQualityUpdate{}
+	seen := map[string]bool{}
+	for _, p := range r.Participants() {
+		if p.permission().GetHidden() {
+			continue
+		}
+		ps := p.stats(now)
+		seen[p.sid] = true
+		q := protoQuality(ps.ConnectionQuality)
+		if r.quality[p.sid] != q {
+			r.quality[p.sid] = q
+			upd.Updates = append(upd.Updates, &tesserav1.ConnectionQualityInfo{ParticipantSid: p.sid, Quality: q, Score: float32(ps.QualityScore)})
+		}
+	}
+	for sid := range r.quality {
+		if !seen[sid] {
+			delete(r.quality, sid)
+		}
+	}
+	if len(upd.Updates) > 0 {
+		r.broadcast(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_ConnectionQuality{ConnectionQuality: upd}}, nil)
+	}
+}
+
+func protoQuality(q string) tesserav1.ConnectionQuality {
+	switch q {
+	case stats.QualityExcellent:
+		return tesserav1.ConnectionQuality_CONNECTION_QUALITY_EXCELLENT
+	case stats.QualityGood:
+		return tesserav1.ConnectionQuality_CONNECTION_QUALITY_GOOD
+	case stats.QualityPoor:
+		return tesserav1.ConnectionQuality_CONNECTION_QUALITY_POOR
+	case stats.QualityLost:
+		return tesserav1.ConnectionQuality_CONNECTION_QUALITY_LOST
+	}
+	return tesserav1.ConnectionQuality_CONNECTION_QUALITY_UNSPECIFIED
+}
+
+// activeSpeakers returns the current speakers for stats.
+func (r *Room) activeSpeakers() []*tesserav1.SpeakerInfo {
+	r.spkMu.Lock()
+	defer r.spkMu.Unlock()
+	return r.speakers.Speakers()
+}
+
+func (r *Room) addSpeakerSource(p *Participant, t *pubTrack) {
+	if t.info.GetType() != tesserav1.TrackType_TRACK_TYPE_AUDIO {
+		return
+	}
+	r.spkMu.Lock()
+	r.speakers.AddTrack(p.sid, t.info.GetSid(), t.recv)
+	r.spkMu.Unlock()
+}
+
+func (r *Room) removeSpeakerSource(trackSID string) {
+	r.spkMu.Lock()
+	r.speakers.RemoveTrack(trackSID)
+	r.spkMu.Unlock()
 }
 
 // Name returns the room name.
@@ -188,6 +287,7 @@ func (r *Room) close(reason tesserav1.DisconnectReason) {
 		return
 	}
 	r.closed = true
+	close(r.done)
 	if r.emptyTimer != nil {
 		r.emptyTimer.Stop()
 	}
@@ -221,6 +321,7 @@ func (r *Room) broadcastParticipant(p *Participant) {
 
 // onTrackPublished subscribes interested participants to a new track.
 func (r *Room) onTrackPublished(pub *Participant, t *pubTrack) {
+	r.addSpeakerSource(pub, t)
 	r.broadcastParticipant(pub)
 	for _, p := range r.Participants() {
 		if p != pub && p.wantsTrack(t.info.GetSid()) {

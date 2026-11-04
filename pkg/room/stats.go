@@ -35,6 +35,13 @@ func (m *manager) Snapshot() *stats.Snapshot {
 			s.Node.SubscribedTracks += len(ps.Subscribed)
 			rs.Participants = append(rs.Participants, ps)
 		}
+		ids := map[string]string{}
+		for _, p := range rs.Participants {
+			ids[p.SID] = p.Identity
+		}
+		for _, sp := range r.activeSpeakers() {
+			rs.ActiveSpeakers = append(rs.ActiveSpeakers, stats.SpeakerStats{ParticipantSID: sp.ParticipantSid, Identity: ids[sp.ParticipantSid], Level: float64(sp.Level)})
+		}
 		s.Node.Participants += len(rs.Participants)
 		s.Rooms = append(s.Rooms, rs)
 	}

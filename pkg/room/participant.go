@@ -748,6 +748,7 @@ func (p *Participant) onReceiverClosed(sid string, recv *rtc.ReceiverImpl) {
 	delete(p.pending, t.cid)
 	closed := p.closed
 	p.mu.Unlock()
+	p.room.removeSpeakerSource(sid)
 	if closed {
 		return
 	}
