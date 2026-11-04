@@ -51,19 +51,25 @@ M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks). All e2e tests live in `
   `TestForwardingDoesNotAllocate`; all 0 allocs/op; `BenchmarkDownTrackWriteRTP` 2.06 us = 486k pkts/s/core with
   SRTP (target 100k). pprof: ~85% of forwarding CPU is SRTP crypto. Details in `docs/perf/WP1.md`
 
+Also done after M6: data packets (`_reliable`/`_lossy` forwarding with destination filtering, Go client
+`PublishData`/`OnDataPacket`, e2e), `client.RemoteTrack.OnSenderReport` (WP4 request, satisfies
+`recorder.SRSource`, e2e), JoinResponse always first, no congestion control for recorder participants.
+AES-GCM SRTP measured at 2.18M pkts/s/core (Pion already negotiates GCM first).
+
 Known issues / next steps (WP1):
-- Next optimisation candidates: prefer AES-GCM SRTP profile; parallel fan-out shards above `fanout_inline_max`.
-- Data packets (`_reliable`/`_lossy`) are accepted but not forwarded yet; `client.PublishData` returns unimplemented
-  (WP2 data e2e depends on this).
-- WP4 request (open): expose RTCP sender reports on `client.RemoteTrack` for A/V alignment.
+- **Firefox**: WP2's browser e2e (CI job `e2e`) passes all Chromium tests but 3 Firefox tests time out waiting
+  for remote video (run 41898159870). Not debugged (no Firefox in the session environment). Start by comparing
+  the Firefox publisher offer/answer (simulcast RIDs, VP8/H.264 fmtp, header extension ids) and checking whether
+  the server receives Firefox RTP (`/stats` published layers) and whether Firefox gets keyframes after PLI.
+- RTX: negotiated with publishers but retransmissions on the RTX SSRC are not unwrapped; browser NACK recovery
+  needs this (Pion publishers resend on the primary SSRC, which works).
 - Subscriber transceivers are not reused after unsubscribe (SDP grows in long sessions).
-- `SyncState` is accepted but only answered with a participant update; ICE restart on resume not exercised server-side.
-- RTX: negotiated with publishers but retransmissions on the RTX SSRC are not unwrapped; browser NACK recovery needs
-  this (Pion publishers resend on the primary SSRC, which works).
+- `SyncState` is answered with a participant update only; ICE restart on resume not exercised server-side.
+- Room broadcasts that happen between a participant's admission and its JoinResponse are dropped for that
+  participant (JoinResponse already carries the state; a narrow race window remains).
 - TURNS (TLS) not implemented (`turn.tls_port` ignored); no padding probes (`congestion_control.probe` ignored).
-- Drain sends `leave` with DISCONNECT rather than RESUME/RECONNECT migration; fuzzing only runs seeds.
-- `golangci-lint` reported errcheck/revive issues in WP3/WP4 packages (admin, hls, storage, webhook) mid-session;
-  WP1 packages were clean.
+- Drain sends `leave` with DISCONNECT rather than RESUME/RECONNECT migration; fuzzing only runs the seeds.
+- Parallel fan-out shards above `fanout_inline_max` not implemented (inline fan-out only).
 
 ## WP2: Browser SDK and demo
 
@@ -118,16 +124,27 @@ Known issues / next steps:
 
 ## WP5: Integration, load and performance (after WP1 M3)
 
-Not started: session A spent the budget on WP1 M1 to M6 (the owner prioritised WP1). Starting points for
-whoever continues: `test/e2e/harness_test.go` (server + client helpers, synthetic VP8/Opus generators,
-simulcast generator and policed link in `simulcast_test.go`/`bwe_test.go`) can be reused for the
-full-system suite and `cmd/tessera-loadtest`.
+Session A, after WP1 (budget-limited; owner prioritised WP1).
 
-- [ ] M1 Load tester MVP
-- [ ] M2 Benchmark harness and regression gate
-- [ ] M3 Scenario results P1–P12
-- [ ] M4 Optimisation round
-- [ ] M5 Helm chart, dashboard, runbook, multi-node ADR
+- [x] Full-system e2e `test/e2e/system_test.go`: server, 3 publishers (H.264+Opus, 2x VP8 simulcast+Opus),
+  5 subscribers (one behind a 1.2 Mbit/s policed link, must leave the top layer), HLS recording of the H.264
+  publisher through the real Coordinator + Worker, verified with ffprobe (skipped without ffmpeg). CI job
+  `go-e2e` (installs ffmpeg) runs the whole `test/e2e` suite under `-race`.
+- [x] M1 Load tester MVP `cmd/tessera-loadtest`: synthetic Opus + VP8 1-3 layer simulcast, listen-only
+  subscribers, join / first-packet / latency (send time in payload) / loss / throughput, periodic and JSON
+  reports. First results in `docs/perf/LOADTEST.md` (meeting 24 clients, webinar 61 clients, 0% loss,
+  p99 latency < 3 ms; server and clients on the same 4 vCPUs).
+- [~] Deployment: compose adds the web demo (nginx image built from `sdk/js` + `examples/web-demo`),
+  Prometheus and Grafana (provisioning from `deploy/grafana`); README quick start. **Images and compose were not
+  built or started** (no Docker daemon in the session); verified instead: web demo `npm run build`, the server
+  boots with `deploy/config/tessera.yaml` and forwards media with `node_ip: 127.0.0.1`.
+- [~] Profiling: micro-benchmark pprof (`docs/perf/WP1.md`): SRTP crypto dominates; GCM path 4.5x faster
+  (already Pion's default). No pprof under load and no code optimisation round yet.
+- [ ] M2 Benchmark regression gate in CI (benchstat), M3 P1-P12 on the reference machine with separate
+  load-generator hosts, churn and recording-load scenarios, M5 Helm chart, runbook, multi-node ADR.
+
+Next steps: `docker compose up` smoke test on a machine with Docker (check MinIO/Grafana image tags and that
+the recorder reaches the server's media address); run the load tester from a second host; add `bench` CI job.
 
 ## Later phases
 
