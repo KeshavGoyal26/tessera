@@ -37,19 +37,30 @@ Numbers are single-goroutine (one core).
 |-----------|-------|-----------|-------|
 | `BenchmarkBufferWrite` | 103 | 0 | ~9.9 GB/s copy into the ring |
 | `BenchmarkForwarderGetTranslation` | 54 | 0 | |
-| `BenchmarkDownTrackWriteRTP` | not yet recorded | 0 (verified by `TestForwardingDoesNotAllocate`) | run the command above |
-| `BenchmarkReceiverFanout/*` | not yet recorded | 0 (same test) | run the command above |
+| `BenchmarkDownTrackWriteRTP` | 2058 | 0 | 486k pkts/s per core incl. SRTP (target P1: 100k) |
+| `BenchmarkReceiverFanout/1` | 2171 | 0 | 461k egress pkts/s |
+| `BenchmarkReceiverFanout/10` | 20042 | 0 | 499k egress pkts/s |
+| `BenchmarkReceiverFanout/100` | 230821 | 0 | 433k egress pkts/s |
+| `BenchmarkReceiverFanout/1000` | 2565892 | 0 | 390k egress pkts/s (cache pressure from 1000 DownTracks) |
 
-The SRTP and fan-out benchmarks landed at the end of session A; the tooling was unavailable at that
-point, so their numbers still have to be recorded here. The zero-allocation property of the full
-forwarding path (buffer write, forwarder, VP8 rewrite, header marshal, SRTP encryption) is enforced by
-`TestForwardingDoesNotAllocate` in every `go test` run.
+Measured 2026-11-04 with the first command above. The packet is ~1 kB VP8 with a 15-bit picture id, so
+every egress packet also goes through the VP8 descriptor rewrite (payload copy).
 
 ## pprof notes
 
-Not done yet. Expected top entries from code inspection: AES-CTR + HMAC-SHA1 in `srtp.EncryptRTP`
-(dominant per egress packet), `rtp.Header.MarshalTo`, the forwarder mutex, and the VP8 payload copy in
-`simulcast.RewriteVP8` (only for packets carrying a picture id).
+`BenchmarkReceiverFanout/100`, `go tool pprof -top`:
+
+| flat % | function |
+|--------|----------|
+| 31% | `aes.encryptBlockAsm` (SRTP AES-CM keystream) |
+| 27% | `sha1.blockSHANI` (SRTP HMAC-SHA1 auth tag) |
+| ~8% | AES block wrapper + `srtp.xorBytesCTR` |
+| ~9% | `simulcast.(*Forwarder)` (`forwardCurrent` + `translate`) |
+
+About 85% of the forwarding CPU is SRTP crypto, which Tessera cannot avoid per DownTrack (every subscriber
+has its own keys). Our own code (buffer, forwarder, VP8 rewrite, header marshal) is under 15%. Ways to cut
+the crypto cost: negotiate `SRTP_AEAD_AES_128_GCM` first (AES-GCM with hardware GHASH is much cheaper than
+AES-CM + HMAC-SHA1), which is a one-line SettingEngine change worth benchmarking with browsers.
 
 ## Next steps
 

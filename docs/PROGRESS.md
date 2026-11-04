@@ -47,13 +47,12 @@ M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks). All e2e tests live in `
   datagram counters, ICE-TCP mux (`rtc.tcp_port`), NAT 1:1 (`rtc.node_ip` via address rewrite rules),
   embedded TURN (`turn.enabled`, UDP + TCP, REST-style ephemeral credentials in `ice_servers`, relay restricted
   to node addresses); e2e: speakers + quality, TURN relay-only client, ICE-TCP-only client, NAT 1:1
-- [~] M6 Zero-allocation benchmarks (`pkg/rtc/bench_test.go`: SRTP DownTrack write, fan-out 1/10/100/1000) and
-  `TestForwardingDoesNotAllocate`; notes in `docs/perf/WP1.md`. Numbers for the SRTP/fan-out benchmarks and
-  the pprof pass are still to be recorded (tooling became unavailable at the end of the session)
+- [x] M6 Zero-allocation benchmarks (`pkg/rtc/bench_test.go`: SRTP DownTrack write, fan-out 1/10/100/1000) and
+  `TestForwardingDoesNotAllocate`; all 0 allocs/op; `BenchmarkDownTrackWriteRTP` 2.06 us = 486k pkts/s/core with
+  SRTP (target 100k). pprof: ~85% of forwarding CPU is SRTP crypto. Details in `docs/perf/WP1.md`
 
 Known issues / next steps (WP1):
-- Last commit (M6 benchmarks) was pushed through the GitHub API without a final `golangci-lint`/full `-race` run;
-  `TestForwardingDoesNotAllocate` passed locally. Run `make lint test-race` first.
+- Next optimisation candidates: prefer AES-GCM SRTP profile; parallel fan-out shards above `fanout_inline_max`.
 - Data packets (`_reliable`/`_lossy`) are accepted but not forwarded yet; `client.PublishData` returns unimplemented
   (WP2 data e2e depends on this).
 - WP4 request (open): expose RTCP sender reports on `client.RemoteTrack` for A/V alignment.
