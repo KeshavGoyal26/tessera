@@ -1,0 +1,29 @@
+# Example tessera server configuration (docker-compose). See pkg/config for all options.
+development: true
+port: 7880
+keys:
+  # Development key only. Production secrets must be >= 32 bytes and kept out of git.
+  devkey: ${TESSERA_DEV_SECRET}
+rtc:
+  udp_port: 7882
+  tcp_port: 7881
+  # Advertised media address; set TESSERA_NODE_IP to the host's LAN/public IP.
+  node_ip: ${TESSERA_NODE_IP}
+turn:
+  enabled: false
+room:
+  auto_create: true
+  empty_timeout: 5m
+webhook:
+  api_key: devkey
+  endpoints: []
+  #  - url: http://host.docker.internal:8080/webhooks/tessera
+  #    encoding: json
+recording:
+  enabled: true
+  ws_url: ws://tessera:7880
+metrics:
+  addr: ":6789"
+  pprof: true
+logging:
+  level: info

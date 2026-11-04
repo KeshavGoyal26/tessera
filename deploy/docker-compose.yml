@@ -1,0 +1,74 @@
+# Local stack: tessera server, recorder and MinIO.
+#   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
+# Media needs reachable UDP; on Linux servers host networking is simplest (see deploy/README.md).
+name: tessera
+services:
+  tessera:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: tessera
+    command: ["--config", "/etc/tessera/tessera.yaml"]
+    environment:
+      TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
+      TESSERA_NODE_IP: ${TESSERA_NODE_IP}
+    volumes:
+      - ./config/tessera.yaml:/etc/tessera/tessera.yaml:ro
+    ports:
+      - "7880:7880/tcp"
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+      - "6789:6789/tcp"
+    restart: unless-stopped
+
+  recorder:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: recorder
+    command: ["--config", "/etc/tessera/recorder.yaml"]
+    environment:
+      TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./config/recorder.yaml:/etc/tessera/recorder.yaml:ro
+    depends_on:
+      tessera:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
+                  mc mb --ignore-existing local/recordings &&
+                  mc anonymous set download local/recordings"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+volumes:
+  minio-data:

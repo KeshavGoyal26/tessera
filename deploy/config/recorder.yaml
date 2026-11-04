@@ -1,0 +1,25 @@
+# Example tessera-recorder configuration (docker-compose). See pkg/recorder.Config.
+development: true
+server_url: http://tessera:7880
+api_key: devkey
+secret: ${TESSERA_DEV_SECRET}
+worker_id: ${HOSTNAME}
+capacity: 100
+temp_dir: /var/lib/tessera-recorder
+ffmpeg_path: ffmpeg
+storage:
+  kind: s3
+  s3:
+    bucket: recordings
+    region: us-east-1
+    endpoint: http://minio:9000
+    access_key: ${MINIO_ROOT_USER}
+    secret: ${MINIO_ROOT_PASSWORD}
+    force_path_style: true
+hls:
+  segment_duration: 4s
+  audio_codec: opus
+metrics:
+  addr: ":6790"
+logging:
+  level: info
