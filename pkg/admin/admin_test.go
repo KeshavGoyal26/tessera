@@ -280,7 +280,7 @@ func TestGrantTable(t *testing.T) {
 
 func TestErrorMapping(t *testing.T) {
 	s, _, _ := newTestServer(t)
-	tok := token(t, AdminGrant())
+	tok := token(t, FullGrant())
 	rs := "/twirp/" + RoomServiceName + "/"
 	cases := []struct {
 		path, body string
@@ -313,7 +313,7 @@ func TestErrorMapping(t *testing.T) {
 
 func TestJSONAcceptsSnakeAndCamel(t *testing.T) {
 	s, rooms, _ := newTestServer(t)
-	tok := token(t, AdminGrant())
+	tok := token(t, FullGrant())
 	for _, body := range []string{`{"name":"a","maxParticipants":5}`, `{"name":"b","max_participants":5}`} {
 		w := post(s, "/twirp/"+RoomServiceName+"/CreateRoom", tok, "application/json", body)
 		if w.Code != 200 {
@@ -334,7 +334,7 @@ func TestClientRoundTrip(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	srv := httptest.NewServer(s)
 	defer srv.Close()
-	c := NewClient(srv.URL, testKey, testSecret, AdminGrant())
+	c := NewClient(srv.URL, testKey, testSecret, FullGrant())
 	w := NewClient(srv.URL, testKey, testSecret, WorkerGrant())
 	ctx := context.Background()
 
@@ -403,7 +403,7 @@ func TestClientRoundTrip(t *testing.T) {
 
 func TestProtobufAndJSONEquivalent(t *testing.T) {
 	s, _, _ := newTestServer(t)
-	tok := token(t, AdminGrant())
+	tok := token(t, FullGrant())
 	w := post(s, "/twirp/"+RoomServiceName+"/ListRooms", tok, "application/protobuf", "")
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/protobuf" {
 		t.Fatalf("%d %s", w.Code, w.Header())

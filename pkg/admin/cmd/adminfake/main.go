@@ -195,7 +195,7 @@ func main() {
 	srv := admin.NewServer(admin.Params{Rooms: f, Recordings: f, Verifier: auth.NewVerifier(keys), Logger: logger})
 	mux := http.NewServeMux()
 	mux.Handle(admin.PathPrefix, srv)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

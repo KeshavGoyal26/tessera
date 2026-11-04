@@ -335,7 +335,7 @@ func (e *endpoint) post(ev *tesserav1.WebhookEvent, body []byte, ct string) erro
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("endpoint answered HTTP %d", resp.StatusCode)

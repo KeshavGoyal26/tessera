@@ -208,7 +208,7 @@ func TestSurvivesReceiverDowntime(t *testing.T) {
 	down.Store(true)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
 		if down.Load() {
-			http.Error(w, "down", 503)
+			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
 		r.ServeHTTP(w, q)

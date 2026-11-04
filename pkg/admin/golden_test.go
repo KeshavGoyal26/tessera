@@ -226,7 +226,7 @@ func TestGoldenTwirp(t *testing.T) {
 	s, rooms, recs := newTestServer(t)
 	rooms.rooms["standup"] = &tesserav1.Room{Name: "standup"}
 	recs.recs = map[string]*tesserav1.RecordingInfo{"REC_1": rec}
-	tok := token(t, AdminGrant())
+	tok := token(t, FullGrant())
 	for _, c := range cases {
 		path := "/twirp/" + c.Service + "/" + c.Method
 		rooms.rooms["standup"] = &tesserav1.Room{Name: "standup"}

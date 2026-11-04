@@ -26,7 +26,7 @@ type Client struct {
 }
 
 // NewClient creates a client. grant is the grant put into every token; use
-// AdminGrant for a full-access one.
+// FullGrant for a full-access one.
 func NewClient(baseURL, apiKey, secret string, grant auth.RoomGrant) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, secret: secret, grant: grant,
@@ -34,8 +34,8 @@ func NewClient(baseURL, apiKey, secret string, grant auth.RoomGrant) *Client {
 	}
 }
 
-// AdminGrant returns a grant with every admin permission (not the worker one).
-func AdminGrant() auth.RoomGrant {
+// FullGrant returns a grant with every admin permission (not the worker one).
+func FullGrant() auth.RoomGrant {
 	return auth.RoomGrant{RoomCreate: true, RoomList: true, RoomAdmin: true, RoomRecord: true}
 }
 
@@ -64,7 +64,7 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 	if err != nil {
 		return errs.Wrap(errs.CodeUnavailable, err, "admin request failed")
 	}
-	defer hres.Body.Close()
+	defer func() { _ = hres.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(hres.Body, MaxBodyBytes))
 	if err != nil {
 		return errs.Wrap(errs.CodeUnavailable, err, "reading admin response")
