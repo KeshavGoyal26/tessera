@@ -20,11 +20,34 @@ only its own section (rebase on conflict).
 
 ## WP1: SFU core
 
-- [ ] M1 Signaling + rooms + single-layer forwarding, `room.Admin`, Go client publish/subscribe
-- [ ] M2 Go client complete, resume, data packets, hidden recorder participants
-- [ ] M3 Simulcast forwarder and munging, NACK, PLI/FIR, SR/RR, dynacast, speakers
+Session A. Milestones follow the session plan (M1 core, M2 RTCP/resume, M3 simulcast,
+M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks).
+
+- [x] M1 Signaling (`/rtc` WebSocket, protobuf + JSON framing, bounded write queue, ping timeout, close codes),
+  JWT check + `Admit` before upgrade (401/403/404/409/426/503), rooms (auto-create, empty/departure timeouts,
+  duplicate identity kick), `room.Admin` fully implemented, publisher/subscriber PeerConnections (debounced,
+  serialised subscriber renegotiation), Receiver/DownTrack forwarding with SN/TS munging, `pkg/client`,
+  `pkg/stats` (+ `/stats` JSON on the metrics port, Prometheus collector, docs/STATS.md), e2e media test
+- [x] M2 Packet ring buffer (own RTP parser, 0 allocs), NACK generator towards publishers, NACK responder
+  (munged SN -> original SN, per-SN throttle, 3 tries), PLI/FIR relay throttled per layer, SR per DownTrack
+  from publisher SR, RR to publishers, resume within `resume_window` (server + Go client), hidden recorder
+  participants, e2e tests: NACK, PLI throttle, resume, duplicate identity, permissions
+- [~] M3 Simulcast: VP8 + H.264 layer switching on keyframes (SN/TS/VP8 picture-id/TL0PICIDX/KEYIDX rewrite,
+  7->15 bit picture id, temporal-layer drop), subscriber preferences (`track_setting` quality/size/fps/disabled),
+  Go client simulcast publish, e2e switching test. Not done: dynacast, speakers (moved to M4/M5)
 - [ ] M4 TWCC estimator, allocator, probing, pause, connection quality
 - [ ] M5 TURN, ICE-TCP, NAT 1:1, drain, fuzzing and hardening
+
+Benchmarks (4 vCPU container, go1.27.3): `BenchmarkBufferWrite` 103 ns/op 0 allocs,
+`BenchmarkForwarderGetTranslation` 54 ns/op 0 allocs.
+
+Known issues / next steps (WP1):
+- Data packets (`_reliable`/`_lossy`) are accepted but not forwarded yet; `PublishData` returns unimplemented.
+- Subscriber transceivers are not reused after unsubscribe (SDP grows in long sessions).
+- `SyncState` is accepted but only answered with a participant update; ICE restart on resume not exercised.
+- Connection quality is computed in stats only (no `connection_quality` signal messages yet); no speaker detection.
+- TURN, ICE-TCP not implemented (`turn.enabled` is ignored); NAT 1:1 via `rtc.node_ip` is wired but untested.
+- `golangci-lint` currently reports errcheck/revive issues in WP3/WP4 packages (admin, hls, storage, webhook).
 
 ## WP2: Browser SDK and demo
 
