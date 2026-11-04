@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pion/rtp"
+
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
 
@@ -19,10 +21,187 @@ func TestPoolReuse(t *testing.T) {
 	}
 }
 
-func TestWriteStub(t *testing.T) {
-	// Phase 0: replaced by real tests in WP1 (wrap-around, duplicates, NACK lookup, fuzzing).
-	_, err := New(Config{Slots: 100, ClockRate: 48000}).Write(make([]byte, 20), 0)
-	if !errors.Is(err, errs.ErrUnimplemented) {
-		t.Fatalf("got %v", err)
+type ext struct {
+	id      uint8
+	payload []byte
+}
+
+func mkPkt(t testing.TB, sn uint16, ts uint32, payload []byte, exts ...ext) []byte {
+	h := rtp.Header{Version: 2, PayloadType: 96, SequenceNumber: sn, Timestamp: ts, SSRC: 1234}
+	for _, e := range exts {
+		if err := h.SetExtension(e.id, e.payload); err != nil {
+			t.Fatal(err)
+		}
 	}
+	p := rtp.Packet{Header: h, Payload: payload}
+	b, err := p.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestWriteWrapAndGet(t *testing.T) {
+	b := New(Config{Slots: 16, ClockRate: 90000, MimeType: "video/VP8"})
+	defer b.Release()
+	var lastExt uint64
+	for i := range 10 {
+		sn := uint16(65530 + i)
+		e, err := b.Write(mkPkt(t, sn, uint32(i*3000), []byte{0x10, 0x00, byte(i)}), int64(i)*1e6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.SequenceNumber != sn || (i > 0 && e.ExtSequenceNumber != lastExt+1) {
+			t.Fatalf("sn %d ext %d last %d", sn, e.ExtSequenceNumber, lastExt)
+		}
+		lastExt = e.ExtSequenceNumber
+	}
+	if _, err := b.Write(mkPkt(t, 2, 0, []byte{0x10, 0, 0}), 0); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("dup: %v", err)
+	}
+	dst := make([]byte, MaxPacketSize)
+	n, err := b.GetPacket(dst, 65535)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p rtp.Packet
+	if err := p.Unmarshal(dst[:n]); err != nil || p.SequenceNumber != 65535 || p.Payload[2] != 5 {
+		t.Fatalf("%v %+v", err, p.Header)
+	}
+	if _, err := b.GetPacket(dst, 100); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	s := b.Stats()
+	if s.PacketsReceived != 10 || s.PacketsLost != 0 || s.PacketsDuplicate != 1 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestLossOutOfOrderAndNACK(t *testing.T) {
+	b := New(Config{Slots: 64, ClockRate: 90000})
+	defer b.Release()
+	for _, sn := range []uint16{1, 2, 5, 6} {
+		if _, err := b.Write(mkPkt(t, sn, 0, []byte{1}), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := b.MissingSequenceNumbers(nil, 1e6)
+	if len(got) != 2 || got[0] != 3 || got[1] != 4 {
+		t.Fatalf("nack %v", got)
+	}
+	// Throttled within 20 ms.
+	if got := b.MissingSequenceNumbers(nil, 5e6); len(got) != 0 {
+		t.Fatalf("throttle %v", got)
+	}
+	if _, err := b.Write(mkPkt(t, 3, 0, []byte{1}), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.MissingSequenceNumbers(nil, 30e6); len(got) != 1 || got[0] != 4 {
+		t.Fatalf("after recovery %v", got)
+	}
+	if got := b.MissingSequenceNumbers(nil, 400e6); len(got) != 0 {
+		t.Fatalf("give up %v", got)
+	}
+	s := b.Stats()
+	if s.PacketsLost != 1 || s.PacketsOutOfOrder != 1 || s.Expected != 6 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestAudioLevel(t *testing.T) {
+	b := New(Config{Slots: 8, ClockRate: 48000, MimeType: "audio/opus", AudioLevelExtID: 1})
+	defer b.Release()
+	e, err := b.Write(mkPkt(t, 1, 0, []byte{1, 2}, ext{1, []byte{0x80 | 30}}), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.HasAudioLevel || e.AudioLevel != 30 || !e.VoiceActivity {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestVP8Descriptor(t *testing.T) {
+	// X=1 S=1 PID=0; I L T K; M=1 picture id 0x1234; TL0PICIDX 7; TID 2 Y KEYIDX 3; then keyframe byte.
+	p := []byte{0x90, 0xF0, 0x80 | 0x12, 0x34, 7, 0x80 | 0x20 | 3, 0x00}
+	var d VP8Descriptor
+	if err := ParseVP8(p, &d); err != nil {
+		t.Fatal(err)
+	}
+	if !d.MBit || d.PictureID != 0x1234 || d.TL0PICIDX != 7 || d.TID != 2 || !d.Y || d.KEYIDX != 3 || d.HeaderSize != 6 || !d.IsKeyFrame {
+		t.Fatalf("%+v", d)
+	}
+	// 7-bit picture id, inter frame.
+	if err := ParseVP8([]byte{0x90, 0x80, 0x05, 0x01}, &d); err != nil || d.MBit || d.PictureID != 5 || d.IsKeyFrame {
+		t.Fatalf("%v %+v", err, d)
+	}
+	if ParseVP8([]byte{0x90, 0x80}, &d) == nil {
+		t.Fatal("truncated must fail")
+	}
+}
+
+func TestH264KeyFrame(t *testing.T) {
+	cases := []struct {
+		p    []byte
+		want bool
+	}{
+		{[]byte{0x65, 1}, true},                         // IDR
+		{[]byte{0x67, 1}, true},                         // SPS
+		{[]byte{0x41, 1}, false},                        // non-IDR
+		{[]byte{0x78, 0, 2, 0x67, 1, 0, 1, 0x68}, true}, // STAP-A with SPS
+		{[]byte{0x7c, 0x85, 1}, true},                   // FU-A start IDR
+		{[]byte{0x7c, 0x05, 1}, false},                  // FU-A middle
+		{[]byte{0x7c, 0x81, 1}, false},                  // FU-A start non-IDR
+	}
+	for i, c := range cases {
+		if got := IsH264KeyFrame(c.p); got != c.want {
+			t.Errorf("%d: got %v", i, got)
+		}
+	}
+}
+
+func TestWriteDoesNotAllocate(t *testing.T) {
+	b := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/VP8"})
+	defer b.Release()
+	pkt := mkPkt(t, 0, 0, []byte{0x90, 0x80, 0x05, 0x01, 2, 3, 4})
+	sn := uint16(0)
+	allocs := testing.AllocsPerRun(1000, func() {
+		sn++
+		pkt[2], pkt[3] = byte(sn>>8), byte(sn)
+		if _, err := b.Write(pkt, 0); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 0 {
+		t.Fatalf("allocs %v", allocs)
+	}
+}
+
+func BenchmarkBufferWrite(b *testing.B) {
+	buf := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/VP8"})
+	defer buf.Release()
+	pkt := mkPkt(b, 0, 0, append([]byte{0x90, 0x80, 0x05, 0x01}, make([]byte, 1000)...))
+	b.ReportAllocs()
+	b.SetBytes(int64(len(pkt)))
+	sn := uint16(0)
+	for b.Loop() {
+		sn++
+		pkt[2], pkt[3] = byte(sn>>8), byte(sn)
+		if _, err := buf.Write(pkt, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func FuzzBufferWrite(f *testing.F) {
+	f.Add([]byte{0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0x90, 0x80, 0x05})
+	f.Add([]byte{0x90, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0xBE, 0xDE, 0, 1, 0x10, 0x85, 0, 0, 0x7c, 0x85})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		for _, mime := range []string{"video/VP8", "video/H264", "audio/opus"} {
+			b := New(Config{Slots: 8, MimeType: mime, AudioLevelExtID: 1})
+			_, _ = b.Write(data, 0)
+			dst := make([]byte, MaxPacketSize)
+			_, _ = b.GetPacket(dst, 1)
+			b.Release()
+		}
+	})
 }

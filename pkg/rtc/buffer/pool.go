@@ -25,3 +25,20 @@ func (p *packetPool) Put(b *[]byte) {
 	}
 	p.p.Put(b)
 }
+
+// Slab pools keyed by slot count (video and audio rings use different sizes).
+var slabPools sync.Map // int -> *sync.Pool
+
+func getSlab(slots int) *[]byte {
+	p, _ := slabPools.LoadOrStore(slots, &sync.Pool{New: func() any {
+		b := make([]byte, slots*MaxPacketSize)
+		return &b
+	}})
+	return p.(*sync.Pool).Get().(*[]byte)
+}
+
+func putSlab(b *[]byte) {
+	if p, ok := slabPools.Load(len(*b) / MaxPacketSize); ok {
+		p.(*sync.Pool).Put(b)
+	}
+}

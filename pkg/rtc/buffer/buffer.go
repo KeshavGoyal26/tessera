@@ -7,6 +7,11 @@
 package buffer
 
 import (
+	"math"
+	"strings"
+	"sync"
+	"sync/atomic"
+
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
 
@@ -89,40 +94,316 @@ type Stats struct {
 	PacketsDuplicate  uint64
 	PacketsOutOfOrder uint64
 	NACKsSent         uint64
-	Jitter            float64
-	HighestExtSN      uint64
+	// Jitter in RTP timestamp units.
+	Jitter       float64
+	HighestExtSN uint64
+	// Expected is the number of packets expected (highest - first + 1).
+	Expected uint64
+	// LastSN/LastTS are the latest in-order sequence number and timestamp.
+	LastTS uint32
 }
 
-// Buffer is a per-SSRC ring of recent packets.
+type codecKind uint8
+
+const (
+	codecOther codecKind = iota
+	codecVP8
+	codecH264
+	codecOpus
+)
+
+// Buffer is a per-SSRC ring of recent packets. Write is called by exactly one
+// goroutine (the layer reader); GetPacket and Stats may be called
+// concurrently from RTCP goroutines.
 type Buffer struct {
-	cfg Config
+	cfg   Config
+	codec codecKind
+
+	mu     sync.Mutex // guards slot contents against concurrent GetPacket
+	slab   *[]byte
+	pkts   []ExtPacket
+	sizes  []uint16
+	extSNs []uint64
+
+	// Unwrapping state, writer goroutine only.
+	started     bool
+	highestSN   uint64
+	firstSN     uint64
+	highestTS   uint64
+	lastTransit int64
+	hdr         Header
+
+	received, bytes, dup, ooo, nacks atomic.Uint64
+	highest, first                   atomic.Uint64
+	jitterBits                       atomic.Uint64
+	lastTS                           atomic.Uint32
+	// missing tracks not-yet-received SNs for NACK generation (writer side).
+	nack nackQueue
 }
 
 // New creates a Buffer. Memory for slots is allocated lazily from a pool.
 func New(cfg Config) *Buffer {
-	return &Buffer{cfg: cfg}
+	if cfg.Slots <= 0 {
+		cfg.Slots = 500
+	}
+	if cfg.ClockRate == 0 {
+		cfg.ClockRate = 90000
+	}
+	b := &Buffer{cfg: cfg}
+	switch m := strings.ToLower(cfg.MimeType); m {
+	case "video/vp8":
+		b.codec = codecVP8
+	case "video/h264":
+		b.codec = codecH264
+	case "audio/opus":
+		b.codec = codecOpus
+	}
+	return b
+}
+
+// Config returns the buffer configuration.
+func (b *Buffer) Config() Config { return b.cfg }
+
+var errDuplicate = errs.New(errs.CodeAlreadyExists, "duplicate packet")
+var errTooOld = errs.New(errs.CodeFailedPrecondition, "packet too old")
+
+// ErrDuplicate is returned by Write for packets already in the ring.
+var ErrDuplicate error = errDuplicate
+
+// ErrTooOld is returned by Write for packets older than the ring.
+var ErrTooOld error = errTooOld
+
+func (b *Buffer) alloc() {
+	b.slab = getSlab(b.cfg.Slots)
+	b.pkts = make([]ExtPacket, b.cfg.Slots)
+	b.sizes = make([]uint16, b.cfg.Slots)
+	b.extSNs = make([]uint64, b.cfg.Slots)
 }
 
 // Write copies pkt into the ring, parses it and returns the slot's ExtPacket.
-// arrival is monotonic nanoseconds.
+// arrival is monotonic nanoseconds. Duplicates and packets older than the ring
+// return ErrDuplicate / ErrTooOld. No allocation in steady state.
 func (b *Buffer) Write(pkt []byte, arrival int64) (*ExtPacket, error) {
-	return nil, errs.NotImplemented("buffer.Write")
+	h := &b.hdr
+	if err := ParseHeader(pkt, h); err != nil {
+		return nil, err
+	}
+	if len(pkt) > MaxPacketSize {
+		return nil, errShort
+	}
+	if b.slab == nil {
+		b.alloc()
+	}
+	// Unwrap the sequence number.
+	var ext uint64
+	if !b.started {
+		b.started = true
+		ext = 1<<16 | uint64(h.SequenceNumber)
+		b.highestSN, b.firstSN = ext, ext
+		b.first.Store(ext)
+		b.highestTS = 1<<32 | uint64(h.Timestamp)
+	} else {
+		diff := int16(h.SequenceNumber - uint16(b.highestSN))
+		ext = uint64(int64(b.highestSN) + int64(diff))
+	}
+	slots := uint64(len(b.pkts))
+	if ext+slots <= b.highestSN {
+		return nil, errTooOld
+	}
+	idx := ext % slots
+	if ext <= b.highestSN && b.extSNs[idx] == ext && b.sizes[idx] > 0 {
+		b.dup.Add(1)
+		return nil, errDuplicate
+	}
+	inOrder := ext > b.highestSN || ext == b.firstSN && b.received.Load() == 0
+	if ext > b.highestSN {
+		if ext > b.highestSN+1 {
+			b.nack.addRange(b.highestSN+1, ext, arrival)
+		}
+		b.highestSN = ext
+		b.highest.Store(ext)
+	} else if ext < b.highestSN {
+		b.ooo.Add(1)
+		b.nack.remove(ext)
+	}
+	if ext < b.firstSN {
+		b.firstSN = ext
+		b.first.Store(ext)
+	}
+	// Unwrap the timestamp relative to the highest seen.
+	tsDiff := int32(h.Timestamp - uint32(b.highestTS))
+	extTS := uint64(int64(b.highestTS) + int64(tsDiff))
+	if inOrder && extTS > b.highestTS {
+		b.highestTS = extTS
+	}
+
+	b.mu.Lock()
+	slab := *b.slab
+	raw := slab[int(idx)*MaxPacketSize : int(idx)*MaxPacketSize+len(pkt)]
+	copy(raw, pkt)
+	b.sizes[idx] = uint16(len(pkt))
+	b.extSNs[idx] = ext
+	b.mu.Unlock()
+
+	e := &b.pkts[idx]
+	*e = ExtPacket{
+		Arrival:           arrival,
+		ExtSequenceNumber: ext,
+		ExtTimestamp:      extTS,
+		SequenceNumber:    h.SequenceNumber,
+		Timestamp:         h.Timestamp,
+		SSRC:              h.SSRC,
+		PayloadType:       h.PayloadType,
+		Marker:            h.Marker,
+		Raw:               raw,
+		HeaderSize:        h.HeaderSize,
+		Payload:           raw[h.HeaderSize : len(raw)-h.PaddingSize],
+		Spatial:           b.cfg.Spatial,
+	}
+	e.PaddingOnly = len(e.Payload) == 0
+	b.parsePayload(e, raw, h)
+
+	b.received.Add(1)
+	b.bytes.Add(uint64(len(pkt)))
+	if inOrder {
+		b.lastTS.Store(h.Timestamp)
+		b.updateJitter(h.Timestamp, arrival)
+	}
+	return e, nil
+}
+
+func (b *Buffer) parsePayload(e *ExtPacket, raw []byte, h *Header) {
+	if b.cfg.AudioLevelExtID != 0 {
+		if v := FindExtension(raw, h, b.cfg.AudioLevelExtID); len(v) > 0 {
+			e.HasAudioLevel = true
+			e.AudioLevel = v[0] & 0x7f
+			e.VoiceActivity = v[0]&0x80 != 0
+		}
+	}
+	if e.PaddingOnly {
+		return
+	}
+	switch b.codec {
+	case codecVP8:
+		if ParseVP8(e.Payload, &e.VP8) == nil {
+			e.KeyFrame = e.VP8.IsKeyFrame
+			if e.VP8.TIDPresent {
+				e.Temporal = int32(e.VP8.TID)
+			}
+		}
+	case codecH264:
+		e.KeyFrame = IsH264KeyFrame(e.Payload)
+	}
+}
+
+// updateJitter implements the RFC 3550 interarrival jitter estimator.
+func (b *Buffer) updateJitter(ts uint32, arrival int64) {
+	arrivalRTP := int64(float64(arrival) * float64(b.cfg.ClockRate) / 1e9)
+	transit := arrivalRTP - int64(ts)
+	if b.lastTransit != 0 {
+		d := transit - b.lastTransit
+		if d < 0 {
+			d = -d
+		}
+		j := math.Float64frombits(b.jitterBits.Load())
+		j += (float64(d) - j) / 16
+		b.jitterBits.Store(math.Float64bits(j))
+	}
+	b.lastTransit = transit
 }
 
 // GetPacket copies the packet with original sequence number sn into dst and
 // returns its length. It fails with errs.ErrNotFound when the packet has been
-// overwritten or never arrived.
+// overwritten or never arrived. Safe for concurrent use with Write.
 func (b *Buffer) GetPacket(dst []byte, sn uint16) (int, error) {
-	return 0, errs.NotImplemented("buffer.GetPacket")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.slab == nil {
+		return 0, errNotFound
+	}
+	highest := b.highest.Load()
+	diff := int16(uint16(highest) - sn)
+	if diff < 0 {
+		return 0, errNotFound
+	}
+	ext := highest - uint64(diff)
+	idx := ext % uint64(len(b.pkts))
+	if b.extSNs[idx] != ext || b.sizes[idx] == 0 {
+		return 0, errNotFound
+	}
+	n := int(b.sizes[idx])
+	if len(dst) < n {
+		return 0, errShort
+	}
+	slab := *b.slab
+	return copy(dst, slab[int(idx)*MaxPacketSize:int(idx)*MaxPacketSize+n]), nil
 }
 
-// MissingSequenceNumbers returns sequence numbers to NACK (appending to dst).
+var errNotFound = errs.New(errs.CodeNotFound, "packet not in buffer")
+
+// ParseExtPacket fills e from a raw packet (e.g. a copy obtained with
+// GetPacket) using the buffer's codec configuration. ExtSequenceNumber and
+// ExtTimestamp are not set.
+func (b *Buffer) ParseExtPacket(raw []byte, e *ExtPacket) error {
+	var h Header
+	if err := ParseHeader(raw, &h); err != nil {
+		return err
+	}
+	*e = ExtPacket{
+		SequenceNumber: h.SequenceNumber,
+		Timestamp:      h.Timestamp,
+		SSRC:           h.SSRC,
+		PayloadType:    h.PayloadType,
+		Marker:         h.Marker,
+		Raw:            raw,
+		HeaderSize:     h.HeaderSize,
+		Payload:        raw[h.HeaderSize : len(raw)-h.PaddingSize],
+		Spatial:        b.cfg.Spatial,
+	}
+	e.PaddingOnly = len(e.Payload) == 0
+	b.parsePayload(e, raw, &h)
+	return nil
+}
+
+// MissingSequenceNumbers appends sequence numbers to NACK to dst. It must be
+// called from the writer goroutine (the layer reader calls it between
+// packets on a 20 ms cadence). now is monotonic nanoseconds.
 func (b *Buffer) MissingSequenceNumbers(dst []uint16, now int64) []uint16 {
+	before := len(dst)
+	dst = b.nack.collect(dst, now, b.highestSN, uint64(len(b.pkts)))
+	if len(dst) > before {
+		b.nacks.Add(uint64(len(dst) - before))
+	}
 	return dst
 }
 
-// Stats returns a snapshot of receive statistics.
-func (b *Buffer) Stats() Stats { return Stats{} }
+// Stats returns a snapshot of receive statistics (lock-free).
+func (b *Buffer) Stats() Stats {
+	s := Stats{
+		PacketsReceived:   b.received.Load(),
+		BytesReceived:     b.bytes.Load(),
+		PacketsDuplicate:  b.dup.Load(),
+		PacketsOutOfOrder: b.ooo.Load(),
+		NACKsSent:         b.nacks.Load(),
+		Jitter:            math.Float64frombits(b.jitterBits.Load()),
+		HighestExtSN:      b.highest.Load(),
+		LastTS:            b.lastTS.Load(),
+	}
+	if s.PacketsReceived > 0 {
+		s.Expected = s.HighestExtSN - b.first.Load() + 1
+		if s.Expected > s.PacketsReceived {
+			s.PacketsLost = s.Expected - s.PacketsReceived
+		}
+	}
+	return s
+}
 
 // Release returns slot memory to the pool. The Buffer must not be used afterwards.
-func (b *Buffer) Release() {}
+func (b *Buffer) Release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.slab != nil {
+		putSlab(b.slab)
+		b.slab = nil
+	}
+}
