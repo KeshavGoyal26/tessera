@@ -34,7 +34,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate": "buf generate --template buf.gen.yaml",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "size": "node scripts/size.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.16.0"

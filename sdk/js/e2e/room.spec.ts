@@ -55,3 +55,82 @@ test("a bad token is rejected with a visible error", async ({ page }) => {
   await expect(page.locator("#error")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#status")).toHaveText("disconnected");
 });
+
+test("subscriber layer selection changes the received resolution", async ({ browser }) => {
+  const room = `e2e-layers-${Date.now()}`;
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  try {
+    await join(a, room, "alice");
+    await join(b, room, "bob");
+    await a.click("#cam");
+    await expectVideoPlaying(b, "alice");
+    const width = () => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
+    await b.selectOption("#quality", "high");
+    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThanOrEqual(640);
+    const high = await width();
+    await b.selectOption("#quality", "low");
+    await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
+
+// The server does not forward data packets yet (WP1 M2: transport.SendDataPacket is a stub).
+// Enable with TESSERA_E2E_DATA=1 once it does.
+test("data packets are delivered between participants", async ({ browser }) => {
+  test.skip(process.env.TESSERA_E2E_DATA !== "1", "server data-packet forwarding is not implemented yet (WP1 M2); set TESSERA_E2E_DATA=1 to run");
+  const room = `e2e-data-${Date.now()}`;
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  try {
+    await join(a, room, "alice");
+    await join(b, room, "bob");
+    await expect(a.locator("#tile-bob")).toBeVisible();
+    await b.evaluate(() => {
+      const r = (window as unknown as { room: { on(e: string, f: (p: Uint8Array, who: { identity: string } | undefined, topic?: string) => void): void } }).room;
+      (window as unknown as { got: string[] }).got = [];
+      r.on("dataReceived", (payload, who, topic) =>
+        (window as unknown as { got: string[] }).got.push(`${who?.identity}:${topic}:${new TextDecoder().decode(payload)}`),
+      );
+    });
+    await a.evaluate(async () => {
+      const r = (window as unknown as { room: { localParticipant: { publishData(p: Uint8Array, o: object): Promise<void> } } }).room;
+      await r.localParticipant.publishData(new TextEncoder().encode("hello"), { topic: "chat" });
+    });
+    await expect.poll(() => b.evaluate(() => (window as unknown as { got: string[] }).got), { timeout: 15_000 }).toEqual(["alice:chat:hello"]);
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
+
+test("the client reconnects after a network outage and media resumes", async ({ browser }) => {
+  const room = `e2e-reconnect-${Date.now()}`;
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  try {
+    await join(a, room, "alice");
+    await join(b, room, "bob");
+    await a.click("#cam");
+    await expectVideoPlaying(b, "alice");
+    await ctxA.setOffline(true);
+    await expect(a.locator("#status")).toHaveText("reconnecting", { timeout: 30_000 });
+    await ctxA.setOffline(false);
+    await expect(a.locator("#status")).toHaveText("connected", { timeout: 45_000 });
+    // Bob still sees Alice and a fresh frame flow.
+    await expect(b.locator("#tile-alice")).toBeVisible();
+    const t0 = await b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.currentTime ?? 0);
+    await expect.poll(() => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.currentTime ?? 0), { timeout: 20_000 }).toBeGreaterThan(t0 + 1);
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
