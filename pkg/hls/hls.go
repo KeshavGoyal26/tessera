@@ -10,10 +10,6 @@ package hls
 import (
 	"context"
 	"time"
-
-	"github.com/pion/rtp"
-
-	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
 
 // Codec of a muxed track.
@@ -43,34 +39,32 @@ type TrackSpec struct {
 	AudioSpecificConfig []byte
 }
 
+// CodecString returns the RFC 6381 codec identifier for playlists.
+func (s TrackSpec) CodecString() string {
+	switch s.Codec {
+	case CodecH264:
+		if info, err := ParseSPS(s.SPS); err == nil {
+			return info.CodecString()
+		}
+		return "avc1.42e01f"
+	case CodecOpus:
+		return "opus"
+	case CodecAAC:
+		return "mp4a.40.2"
+	}
+	return ""
+}
+
 // Sample is one access unit (video, AVCC length-prefixed) or audio frame.
 type Sample struct {
-	// DTS in track timescale units, unwrapped.
+	// DTS in track timescale units, unwrapped (any origin; the muxer rebases).
 	DTS int64
 	// CTSOffset = PTS - DTS (0 for baseline H.264 and audio).
 	CTSOffset int32
-	Duration  uint32
-	KeyFrame  bool
-	Data      []byte
-}
-
-// AccessUnit is a depacketized H.264 frame.
-type AccessUnit struct {
-	RTPTimestamp uint32
-	NALUs        [][]byte
-	KeyFrame     bool
-	// SPS/PPS seen in this AU (for init segment updates).
-	SPS, PPS []byte
-}
-
-// H264Depacketizer assembles access units from RTP (RFC 6184, packetization-mode 1).
-type H264Depacketizer struct{}
-
-// Push adds a packet; it returns a complete AU on frame boundary (marker bit
-// or timestamp change), or nil. Lost fragments return errs.ErrMalformed and
-// the depacketizer resynchronizes on the next keyframe.
-func (d *H264Depacketizer) Push(pkt *rtp.Packet) (*AccessUnit, error) {
-	return nil, errs.NotImplemented("hls.H264Depacketizer.Push")
+	// Duration is optional; the muxer derives it from the next sample's DTS.
+	Duration uint32
+	KeyFrame bool
+	Data     []byte
 }
 
 // Segment is a finished media segment.
@@ -91,37 +85,6 @@ type Sink interface {
 	WritePlaylist(ctx context.Context, name string, data []byte) error
 }
 
-// MuxerConfig configures a Muxer.
-type MuxerConfig struct {
-	TargetSegmentDuration time.Duration
-	// Live writes an EVENT playlist after every segment.
-	Live bool
-	// PlaylistName defaults to "index.m3u8".
-	PlaylistName string
-}
-
-// Muxer writes one track as fMP4 HLS.
-type Muxer struct {
-	cfg  MuxerConfig
-	spec TrackSpec
-	sink Sink
-}
-
-// NewMuxer creates a muxer and writes the init segment lazily.
-func NewMuxer(cfg MuxerConfig, spec TrackSpec, sink Sink) (*Muxer, error) {
-	return &Muxer{cfg: cfg, spec: spec, sink: sink}, nil
-}
-
-// WriteSample appends a sample, cutting segments on keyframes after the target duration.
-func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
-	return errs.NotImplemented("hls.Muxer.WriteSample")
-}
-
-// Close flushes the last segment and writes the final VOD playlist with EXT-X-ENDLIST.
-func (m *Muxer) Close(ctx context.Context) error {
-	return errs.NotImplemented("hls.Muxer.Close")
-}
-
 // Rendition is one entry of a master playlist.
 type Rendition struct {
 	URI        string
@@ -130,10 +93,6 @@ type Rendition struct {
 	Width      int
 	Height     int
 	AudioGroup string
+	Name       string
 	IsAudio    bool
-}
-
-// MasterPlaylist encodes a master playlist with demuxed audio (EXT-X-MEDIA).
-func MasterPlaylist(renditions []Rendition) ([]byte, error) {
-	return nil, errs.NotImplemented("hls.MasterPlaylist")
 }
