@@ -1,0 +1,12 @@
+# Generates the checked-in TypeScript code. Run: npm run generate
+# Uses buf and protoc-gen-es from devDependencies (node_modules/.bin).
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+      - import_extension=js
+inputs:
+  - directory: ../../proto

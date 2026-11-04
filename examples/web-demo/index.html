@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tessera demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Tessera demo</h1>
+      <span id="status" class="status" role="status">disconnected</span>
+    </header>
+
+    <form id="join">
+      <label>
+        Server URL
+        <input name="url" type="url" required value="ws://localhost:7880" />
+      </label>
+      <label>
+        Access token
+        <input name="token" type="password" required autocomplete="off" />
+      </label>
+      <button id="join-button" type="submit">Join</button>
+    </form>
+
+    <div class="controls">
+      <button id="mic" type="button" disabled>Unmute mic</button>
+      <button id="cam" type="button" disabled>Start camera</button>
+      <button id="leave" type="button" disabled>Leave</button>
+    </div>
+
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <main id="grid" class="grid" aria-label="Participants"></main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
