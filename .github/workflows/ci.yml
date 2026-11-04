@@ -141,3 +141,38 @@ jobs:
         with:
           name: playwright-report
           path: sdk/js/test-results
+
+  recorder:
+    name: recorder (ffmpeg-backed hls, recorder and storage tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Test (race, fails if FFmpeg tests are skipped)
+        run: |
+          go test -race -count=1 -v ./pkg/hls/... ./pkg/recorder/... ./pkg/storage/... 2>&1 | tee test.log
+          ! grep -E -- '--- SKIP' test.log
+
+  dashboard-web:
+    name: dashboard web (typecheck, test, build, embedded dist is current)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+      - name: Install, typecheck, test, build
+        working-directory: web/admin
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Embedded dist is up to date
+        run: git diff --exit-code -- pkg/dashboard/dist
