@@ -157,7 +157,7 @@ jobs:
           go test -race -count=1 -v ./pkg/hls/... ./pkg/recorder/... ./pkg/storage/... 2>&1 | tee test.log
           ! grep -E -- '--- SKIP' test.log
 
-  e2e:
+  go-e2e:
     name: e2e (real server + Pion clients, full system incl. HLS recording)
     runs-on: ubuntu-latest
     steps:
