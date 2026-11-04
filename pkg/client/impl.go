@@ -606,15 +606,42 @@ func (c *client) PublishSimulcastTrack(ctx context.Context, layers []webrtc.Trac
 	if err != nil {
 		return nil, err
 	}
+	if len(layers) > 1 {
+		wrapped := make([]*ridTrack, len(layers))
+		for i, l := range layers {
+			wrapped[i] = &ridTrack{TrackLocal: l}
+		}
+		tr, err := c.pub.AddTransceiverFromTrack(wrapped[0], webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range wrapped[1:] {
+			if err := tr.Sender().AddEncoding(l); err != nil {
+				return nil, err
+			}
+		}
+		c.startSenderRTCP(tr)
+		if err := c.negotiatePublisher(ctx); err != nil {
+			return nil, err
+		}
+		mid := tr.Mid()
+		for _, w := range wrapped {
+			w.mid.Store(&mid)
+		}
+		return info, nil
+	}
 	tr, err := c.pub.AddTransceiverFromTrack(first, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
 	if err != nil {
 		return nil, err
 	}
-	for _, l := range layers[1:] {
-		if err := tr.Sender().AddEncoding(l); err != nil {
-			return nil, err
-		}
+	c.startSenderRTCP(tr)
+	if err := c.negotiatePublisher(ctx); err != nil {
+		return nil, err
 	}
+	return info, nil
+}
+
+func (c *client) startSenderRTCP(tr *webrtc.RTPTransceiver) {
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -629,10 +656,6 @@ func (c *client) PublishSimulcastTrack(ctx context.Context, layers []webrtc.Trac
 			}
 		}
 	}()
-	if err := c.negotiatePublisher(ctx); err != nil {
-		return nil, err
-	}
-	return info, nil
 }
 
 func (c *client) negotiatePublisher(ctx context.Context) error {

@@ -248,3 +248,48 @@ func BenchmarkForwarderGetTranslation(b *testing.B) {
 		}
 	}
 }
+
+func TestH264SwitchOnIDR(t *testing.T) {
+	f := NewForwarder("video/H264")
+	f.SetAvailableLayers(1)
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 3})
+	bufs := []*buffer.Buffer{
+		buffer.New(buffer.Config{Slots: 64, MimeType: "video/H264", Spatial: 0}),
+		buffer.New(buffer.Config{Slots: 64, MimeType: "video/H264", Spatial: 1}),
+	}
+	sns := []uint16{65530, 300}
+	tss := []uint32{0, 99999}
+	mk := func(l int, payload []byte) *buffer.ExtPacket {
+		p := rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: sns[l], Timestamp: tss[l]}, Payload: payload}
+		raw, _ := p.Marshal()
+		sns[l]++
+		tss[l] += 3000
+		e, err := bufs[l].Write(raw, int64(sns[l])*33e6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	sps, idr, nonIDR := []byte{0x67, 1}, []byte{0x65, 1}, []byte{0x41, 1}
+	c := &outChecker{t: t}
+	c.check(f.GetTranslation(mk(0, sps), 0))
+	c.check(f.GetTranslation(mk(0, idr), 0))
+	f.SetMaxLayer(types.VideoLayer{Spatial: 1, Temporal: 3})
+	for range 5 {
+		c.check(f.GetTranslation(mk(0, nonIDR), 0))
+		if tp, _ := f.GetTranslation(mk(1, nonIDR), 1); !tp.Drop || !tp.RequestKeyFrame {
+			t.Fatal("must wait for IDR on layer 1")
+		}
+	}
+	c.check(f.GetTranslation(mk(1, sps), 1))
+	if f.CurrentLayer().Spatial != 1 {
+		t.Fatal("no switch on SPS")
+	}
+	if tp, _ := f.GetTranslation(mk(0, nonIDR), 0); !tp.Drop {
+		t.Fatal("old layer must be dropped after switch")
+	}
+	c.check(f.GetTranslation(mk(1, nonIDR), 1))
+	if c.forwarded != 9 {
+		t.Fatal(c.forwarded)
+	}
+}
