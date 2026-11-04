@@ -85,6 +85,7 @@ jobs:
           npm run typecheck
           npm run build
           npm test
+          npm run size
       - name: Check generated TypeScript is up to date
         working-directory: sdk/js
         run: |
@@ -109,3 +110,34 @@ jobs:
       - name: Maven verify
         working-directory: sdk/java
         run: mvn -B -ntp verify
+
+  e2e:
+    name: e2e (browsers against tessera --dev)
+    runs-on: ubuntu-latest
+    needs: [js]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            sdk/js/package-lock.json
+            examples/web-demo/package-lock.json
+      - name: Install
+        run: |
+          (cd sdk/js && npm ci && npm run build)
+          (cd examples/web-demo && npm ci)
+          cd sdk/js && npx playwright install --with-deps chromium firefox
+      - name: Playwright
+        working-directory: sdk/js
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: sdk/js/test-results
