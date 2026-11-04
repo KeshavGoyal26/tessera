@@ -198,6 +198,7 @@ func (p *Participant) start() error {
 	p.mu.Lock()
 	p.state = tesserav1.ParticipantInfo_STATE_JOINED
 	p.mu.Unlock()
+	go p.rtcpLoop()
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Join{Join: &tesserav1.JoinResponse{
 		Room: p.room.ToProto(), Participant: p.ToProto(), OtherParticipants: others,
 		ServerInfo:   &tesserav1.ServerInfo{Version: version.Version, Protocol: version.ProtocolVersion, MinProtocol: version.MinProtocolVersion, NodeId: m.cfg.NodeID, Region: m.cfg.Region},
@@ -206,6 +207,52 @@ func (p *Participant) start() error {
 		EnabledPublishCodecs: codecs, ResumeWindow: uint32(m.cfg.Signal.ResumeWindow / time.Second),
 	}}})
 	return nil
+}
+
+// rtcpLoop sends SRs for subscribed tracks and RRs for published tracks
+// every second (ARCHITECTURE.md 4.2).
+func (p *Participant) rtcpLoop() {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for range t.C {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return
+		}
+		pub, sub := p.pub, p.sub
+		dts := make([]*rtc.DownTrackImpl, 0, len(p.subs))
+		for _, s := range p.subs {
+			dts = append(dts, s.dt)
+		}
+		recvs := make([]*rtc.ReceiverImpl, 0, len(p.tracks))
+		for _, tr := range p.tracks {
+			recvs = append(recvs, tr.recv)
+		}
+		p.mu.Unlock()
+		if sub != nil && len(dts) > 0 {
+			var pkts []rtcp.Packet
+			for _, dt := range dts {
+				if sr := dt.SenderReport(); sr != nil {
+					pkts = append(pkts, sr)
+				}
+			}
+			if len(pkts) > 0 {
+				_ = sub.WriteRTCP(pkts)
+			}
+		}
+		if pub != nil && len(recvs) > 0 {
+			rr := &rtcp.ReceiverReport{SSRC: 1}
+			for _, r := range recvs {
+				rr.Reports = append(rr.Reports, r.ReceptionReports()...)
+			}
+			for len(rr.Reports) > 0 {
+				n := min(len(rr.Reports), 31)
+				_ = pub.WriteRTCP([]rtcp.Packet{&rtcp.ReceiverReport{SSRC: 1, Reports: rr.Reports[:n]}})
+				rr.Reports = rr.Reports[n:]
+			}
+		}
+	}
 }
 
 // run is the session read loop; it returns when the connection ends.

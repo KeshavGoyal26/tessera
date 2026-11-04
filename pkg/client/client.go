@@ -9,6 +9,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
@@ -24,6 +26,15 @@ type Options struct {
 	// Codecs restricts codecs registered in the media engine (nil = all supported).
 	Codecs []webrtc.RTPCodecParameters
 	Logger *slog.Logger
+	// Interceptors are registered before Pion's defaults (closest to the
+	// network), e.g. packet-drop shims in tests.
+	Interceptors []interceptor.Factory
+	// OnPublisherRTCP receives RTCP arriving for published tracks (PLI,
+	// NACK, RR from the server).
+	OnPublisherRTCP func(pkts []rtcp.Packet)
+	// DisableResume makes a dropped WebSocket end the session instead of
+	// resuming it.
+	DisableResume bool
 }
 
 // PublishOptions describe a published track.

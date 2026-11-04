@@ -51,6 +51,8 @@ type layer struct {
 	srNTP     atomic.Uint64
 	srRTP     atomic.Uint32
 	srArrival atomic.Int64
+	// RR interval state (RTCP ticker goroutine only).
+	rrExpected, rrReceived uint64
 }
 
 // ReceiverImpl is the Receiver implementation.
@@ -397,3 +399,37 @@ func (s TrackRemoteSource) SSRC() uint32 { return uint32(s.T.SSRC()) }
 
 // RID implements RTPSource.
 func (s TrackRemoteSource) RID() string { return s.T.RID() }
+
+// ReceptionReports builds RTCP reception reports for every layer (RR towards
+// the publisher). It must be called from a single goroutine (the RTCP ticker).
+func (r *ReceiverImpl) ReceptionReports() []rtcp.ReceptionReport {
+	var out []rtcp.ReceptionReport
+	now := Now()
+	for s := range types.MaxSpatialLayers {
+		l := r.layers[s].Load()
+		if l == nil {
+			continue
+		}
+		st := l.buf.Stats()
+		if st.PacketsReceived == 0 {
+			continue
+		}
+		expInt := st.Expected - l.rrExpected
+		recvInt := st.PacketsReceived - l.rrReceived
+		l.rrExpected, l.rrReceived = st.Expected, st.PacketsReceived
+		var frac uint8
+		if expInt > recvInt && expInt > 0 {
+			frac = uint8((expInt - recvInt) * 256 / expInt)
+		}
+		rr := rtcp.ReceptionReport{
+			SSRC: l.ssrc, FractionLost: frac, TotalLost: uint32(min(st.PacketsLost, 0x7fffff)),
+			LastSequenceNumber: uint32(st.HighestExtSN - 1<<16), Jitter: uint32(st.Jitter),
+		}
+		if at := l.srArrival.Load(); at != 0 {
+			rr.LastSenderReport = uint32(l.srNTP.Load() >> 16)
+			rr.Delay = uint32((now - at) * 65536 / 1e9)
+		}
+		out = append(out, rr)
+	}
+	return out
+}

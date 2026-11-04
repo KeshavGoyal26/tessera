@@ -105,6 +105,8 @@ type client struct {
 	rtt       atomic.Int64
 	closed    atomic.Bool
 	done      chan struct{}
+	url       string
+	token     string
 }
 
 // New creates a client.
@@ -129,6 +131,9 @@ func (c *client) buildAPI() error {
 		return err
 	}
 	ir := &interceptor.Registry{}
+	for _, f := range c.opts.Interceptors {
+		ir.Add(f)
+	}
 	if err := webrtc.RegisterDefaultInterceptors(me, ir); err != nil {
 		return err
 	}
@@ -187,6 +192,7 @@ func (c *client) Connect(ctx context.Context, rawURL, token string) error {
 	}
 	ws.SetReadLimit(1 << 20)
 	c.ws = ws
+	c.url, c.token = rawURL, token
 	c.ctx, c.stop = context.WithCancel(context.Background())
 
 	first, err := c.read(ctx)
@@ -239,7 +245,10 @@ func (c *client) newPC(cfg webrtc.Configuration, target tesserav1.SignalTarget) 
 }
 
 func (c *client) read(ctx context.Context) (*tesserav1.SignalResponse, error) {
-	_, data, err := c.ws.Read(ctx)
+	c.wsMu.Lock()
+	ws := c.ws
+	c.wsMu.Unlock()
+	_, data, err := ws.Read(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +293,9 @@ func (c *client) readLoop() {
 	for {
 		msg, err := c.read(c.ctx)
 		if err != nil {
+			if !c.closed.Load() && !c.opts.DisableResume && c.resume() {
+				continue
+			}
 			if !c.closed.Load() {
 				c.mu.Lock()
 				cb := c.cb.OnDisconnected
@@ -296,6 +308,63 @@ func (c *client) readLoop() {
 		}
 		c.handle(msg)
 	}
+}
+
+// resume reconnects the WebSocket with reconnect=1 (PROTOCOL.md 2.6),
+// keeping both PeerConnections. It retries for up to 10 seconds.
+func (c *client) resume() bool {
+	c.mu.Lock()
+	cb := c.cb
+	sid := c.local.GetSid()
+	c.mu.Unlock()
+	if cb.OnReconnecting != nil {
+		cb.OnReconnecting()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && !c.closed.Load() {
+		u, _ := url.Parse(strings.TrimSuffix(c.url, "/") + "/rtc")
+		switch u.Scheme {
+		case "http":
+			u.Scheme = "ws"
+		case "https":
+			u.Scheme = "wss"
+		}
+		q := url.Values{}
+		q.Set("access_token", c.token)
+		q.Set("protocol", fmt.Sprint(version.ProtocolVersion))
+		q.Set("sdk", sdkName(c.opts.SDK))
+		q.Set("reconnect", "1")
+		q.Set("sid", sid)
+		u.RawQuery = q.Encode()
+		ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+		ws, resp, err := websocket.Dial(ctx, u.String(), nil)
+		cancel()
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		if err != nil {
+			if resp != nil && resp.StatusCode == 409 {
+				return false
+			}
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		ws.SetReadLimit(1 << 20)
+		c.wsMu.Lock()
+		c.ws = ws
+		c.wsMu.Unlock()
+		msg, err := c.read(c.ctx)
+		if err != nil || msg.GetReconnect() == nil {
+			_ = ws.CloseNow()
+			continue
+		}
+		_ = c.send(&tesserav1.SignalRequest{Message: &tesserav1.SignalRequest_SyncState{SyncState: &tesserav1.SyncState{}}})
+		if cb.OnReconnected != nil {
+			cb.OnReconnected()
+		}
+		return true
+	}
+	return false
 }
 
 func (c *client) handle(msg *tesserav1.SignalResponse) {
@@ -549,8 +618,14 @@ func (c *client) PublishSimulcastTrack(ctx context.Context, layers []webrtc.Trac
 	go func() {
 		buf := make([]byte, 1500)
 		for {
-			if _, _, err := tr.Sender().Read(buf); err != nil {
+			n, _, err := tr.Sender().Read(buf)
+			if err != nil {
 				return
+			}
+			if f := c.opts.OnPublisherRTCP; f != nil {
+				if pkts, err := rtcp.Unmarshal(buf[:n]); err == nil {
+					f(pkts)
+				}
 			}
 		}
 	}()
@@ -685,6 +760,9 @@ func (c *client) Disconnect(context.Context) error {
 // DropConnection closes the WebSocket without leaving (tests resume).
 func DropConnection(cl Client) {
 	if c, ok := cl.(*client); ok && c.ws != nil {
-		_ = c.ws.CloseNow()
+		c.wsMu.Lock()
+		ws := c.ws
+		c.wsMu.Unlock()
+		_ = ws.CloseNow()
 	}
 }
