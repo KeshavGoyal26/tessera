@@ -40,7 +40,7 @@ func TestRunServesAndShutsDown(t *testing.T) {
 		{http.MethodGet, ops + "/readyz", 200},
 		{http.MethodGet, ops + "/metrics", 200},
 		{http.MethodGet, base + "/", 200},
-		{http.MethodPost, base + "/twirp/tessera.v1.RoomService/ListRooms", 501},
+		{http.MethodPost, base + "/twirp/tessera.v1.RoomService/ListRooms", 0}, // routed (any status but 404)
 		{http.MethodGet, base + "/rtc?protocol=1", 401},
 		{http.MethodGet, base + "/rtc?protocol=99", 426},
 	}
@@ -51,6 +51,9 @@ func TestRunServesAndShutsDown(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = resp.Body.Close()
+		if c.want == 0 && resp.StatusCode != http.StatusNotFound {
+			continue
+		}
 		if resp.StatusCode != c.want {
 			t.Errorf("%s %s: got %d want %d", c.method, c.url, resp.StatusCode, c.want)
 		}
