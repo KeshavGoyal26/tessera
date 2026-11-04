@@ -1,24 +1,29 @@
 # Tessera Server SDK for Java
 
-Server-side SDK for [Tessera](../../README.md): mint access tokens, manage rooms and
-participants, control recordings and verify webhooks from a Java 17+ backend.
+Java 17+ server SDK for [Tessera](../../README.md): mint access tokens, manage rooms,
+participants and recordings, and verify webhooks. One required dependency (`protobuf-java`),
+sync and `CompletableFuture` APIs, timeouts, automatic retries and typed exceptions.
 
-> Status: Phase 0 scaffolding (`0.1.0-SNAPSHOT`). The public API below is in place and tested
-> against a local stub server; it is finalized together with the server admin API in WP3.
-> Design: [ADR-0004](../../docs/adr/0004-api-keys-and-jwt-access-tokens.md) (tokens) and
-> [ADR-0008](../../docs/adr/0008-admin-api-and-java-sdk.md) (admin API, webhooks, SDK).
+## Quick start
+
+```java
+var rooms = RoomServiceClient.create("https://tessera.example.com", "APIkey", System.getenv("TESSERA_SECRET"));
+rooms.createRoom(CreateRoomRequest.newBuilder().setName("standup").build());            // or createRoomAsync(...)
+String jwt = AccessToken.builder().apiKey("APIkey").secret(System.getenv("TESSERA_SECRET"))
+    .identity("alice").grants(RoomGrant.builder().room("standup").roomJoin(true).build()).toJwt();
+// hand `jwt` to the browser SDK: new Room().connect(url, jwt)
+```
+
+Runnable end to end in [`examples/java-spring`](../../examples/java-spring).
 
 ## Install
-
-Not yet published to Maven Central. Install locally with `mvn -B install` in this directory, then:
 
 ```xml
 <dependency>
   <groupId>io.github.keshavgoyal26</groupId>
   <artifactId>tessera-server-sdk</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
-
 <!-- Only if your webhook endpoints use the default JSON encoding: -->
 <dependency>
   <groupId>com.google.protobuf</groupId>
@@ -27,7 +32,8 @@ Not yet published to Maven Central. Install locally with `mvn -B install` in thi
 </dependency>
 ```
 
-Gradle: `implementation("io.github.keshavgoyal26:tessera-server-sdk:0.1.0-SNAPSHOT")`.
+Gradle: `implementation("io.github.keshavgoyal26:tessera-server-sdk:0.1.0")`. Until the first
+release is on Maven Central, run `mvn -B install` in this directory and use `0.1.0-SNAPSHOT`.
 
 ## Usage
 
@@ -89,6 +95,21 @@ application.
 
 Every call mints a 10-minute admin token carrying only the grant it needs (`room_create`,
 `room_list`, `room_admin` scoped to the request's room, or `room_record`).
+
+### Async, timeouts and retries
+
+Every method has an `...Async` variant returning a `CompletableFuture` that completes
+exceptionally with the same `TesseraException`:
+
+```java
+rooms.listRoomsAsync(ListRoomsRequest.getDefaultInstance())
+     .thenAccept(r -> r.getRoomsList().forEach(x -> System.out.println(x.getName())));
+```
+
+`TesseraConfig.builder()` sets `timeout` (default 10 s), `maxRetries` (default 2) and
+`retryBackoff` (default 200 ms, doubled per retry). Connection errors, timeouts and
+HTTP 429/502/503/504 (`unavailable`) are retried for idempotent calls; `startRecording` is
+never retried, and `not_found`, `permission_denied` etc. fail immediately.
 
 Errors are thrown as `TesseraException` with the Twirp code and HTTP status:
 
@@ -153,6 +174,26 @@ to add). Deliveries are at-least-once: deduplicate on `event.getId()`.
   claims and Twirp errors uses a small internal writer/reader. No Jackson, Gson, OkHttp or
   logging framework.
 - Packages under `io.github.keshavgoyal26.tessera.internal` are not public API.
+
+## Room settings on join
+
+`RoomGrant.builder().roomConfig(RoomGrant.RoomConfig.of(emptyTimeout, departureTimeout, maxParticipants, recordingEnabled))`
+applies when the join auto-creates the room. `recordingEnabled` makes browser publishers prefer H.264.
+
+## Contract tests
+
+`src/test/.../ContractTest` checks token claims, webhook bodies and signatures and Twirp
+messages against golden fixtures in [`testdata/contract`](../../testdata/contract) generated
+by Go (`go test ./pkg/admin -run Golden -update`). `CrossLanguageTest` builds and starts the real
+Go admin server (`pkg/admin/cmd/adminfake`) and exercises the SDK against it, including a
+Java-minted token accepted by Go and a Go-signed webhook verified by Java (skipped when `go` is
+not installed).
+
+## Releasing
+
+`mvn -B verify` produces the jar plus `-sources` and `-javadoc` jars. A release is
+`mvn -B -P release deploy` (GPG signing and the Central Portal publishing plugin, credentials
+via `settings.xml` server `central` and `MAVEN_GPG_PASSPHRASE`); the profile is not active by default.
 
 ## Code generation
 
