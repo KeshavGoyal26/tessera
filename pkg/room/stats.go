@@ -86,6 +86,11 @@ func (p *Participant) stats(now time.Time) stats.ParticipantStats {
 		}
 	}
 	ps.RTTMs = float64(p.rttMs.Load())
+	p.mu.Lock()
+	if p.twcc != nil {
+		ps.BandwidthEstimateBps = p.twcc.Est.Estimate()
+	}
+	p.mu.Unlock()
 	for _, t := range tracks {
 		ps.Published = append(ps.Published, trackStats(t, now))
 	}
@@ -98,7 +103,7 @@ func (p *Participant) stats(now time.Time) stats.ParticipantStats {
 			TargetSpatial: st.Target.Spatial, TargetTemporal: st.Target.Temporal, MaxSpatial: st.MaxLayer.Spatial,
 			BitrateBps: st.BitrateBps, PacketsSent: st.Packets, PacketsLost: st.PacketsLost, LossPercent: st.FractionLost,
 			JitterMs: st.JitterMs, RTTMs: st.RTTMs, LayerSwitches: st.LayerSwitches, NACKs: st.NACKs, PLIs: st.PLIs,
-			Retransmits: st.Retransmits, Muted: st.Muted, Paused: s.dt.Kind() == webrtc.RTPCodecTypeVideo && !st.Target.IsValid() && !st.Muted,
+			Retransmits: st.Retransmits, Muted: st.Muted, BandwidthEstimateBps: ps.BandwidthEstimateBps, Paused: s.dt.Kind() == webrtc.RTPCodecTypeVideo && !st.Target.IsValid() && !st.Muted,
 		}
 		if st.RTTMs > 0 {
 			ps.RTTMs = st.RTTMs

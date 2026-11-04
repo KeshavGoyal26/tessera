@@ -100,6 +100,13 @@ func NewMediaEngine(codecs []webrtc.RTPCodecParameters, publisherSide bool) (*we
 			}{extMID, webrtc.RTPCodecTypeAudio},
 		)
 	}
+	if !publisherSide {
+		for _, typ := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeAudio, webrtc.RTPCodecTypeVideo} {
+			if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: extTWCC}, typ); err != nil {
+				return nil, err
+			}
+		}
+	}
 	for _, e := range exts {
 		if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: e.uri}, e.typ); err != nil {
 			return nil, err

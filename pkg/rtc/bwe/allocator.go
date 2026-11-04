@@ -1,0 +1,198 @@
+package bwe
+
+import (
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
+)
+
+// allocTick is the allocator period.
+const allocTick = 500 * time.Millisecond
+
+type trackState struct {
+	t       AllocatableTrack
+	applied types.VideoLayer
+	set     bool
+	paused  bool
+	upSince time.Time
+	prevMax int32
+}
+
+type allocator struct {
+	cfg Config
+	est Estimator
+
+	mu       sync.Mutex
+	tracks   map[string]*trackState
+	onPaused func([]Allocation)
+	stop     chan struct{}
+	once     sync.Once
+	now      func() time.Time
+}
+
+// NewAllocator returns the stream allocator for one subscriber connection.
+func NewAllocator(cfg Config, est Estimator) Allocator {
+	if cfg.UpgradeHold == 0 {
+		cfg.UpgradeHold = 3 * time.Second
+	}
+	return &allocator{cfg: cfg, est: est, tracks: map[string]*trackState{}, stop: make(chan struct{}), now: time.Now}
+}
+
+func (a *allocator) AddTrack(t AllocatableTrack) {
+	a.mu.Lock()
+	a.tracks[t.ID()] = &trackState{t: t, applied: types.InvalidVideoLayer, prevMax: t.MaxLayer().Spatial}
+	a.mu.Unlock()
+}
+
+func (a *allocator) RemoveTrack(id string) {
+	a.mu.Lock()
+	delete(a.tracks, id)
+	a.mu.Unlock()
+}
+
+func (a *allocator) OnTrackChanged(string) {}
+
+func (a *allocator) OnPausedChanged(f func([]Allocation)) {
+	a.mu.Lock()
+	a.onPaused = f
+	a.mu.Unlock()
+}
+
+func (a *allocator) Start() {
+	if !a.cfg.Enabled {
+		return
+	}
+	go func() {
+		t := time.NewTicker(allocTick)
+		defer t.Stop()
+		for {
+			select {
+			case <-a.stop:
+				return
+			case <-t.C:
+				a.Allocate()
+			}
+		}
+	}()
+}
+
+func (a *allocator) Stop() { a.once.Do(func() { close(a.stop) }) }
+
+type feedbackCounter interface{ Feedbacks() uint64 }
+
+// lowestFrom returns the lowest active spatial layer >= from and <= max.
+func layerRate(b types.Bitrates, s int32) int64 { return b[s][types.MaxTemporalLayers-1] }
+
+// Allocate runs one allocation round (exported for tests).
+func (a *allocator) Allocate() []Allocation {
+	if fc, ok := a.est.(feedbackCounter); ok && fc.Feedbacks() == 0 {
+		return nil // no bandwidth information yet: do not constrain
+	}
+	now := a.now()
+	budget := float64(a.est.Estimate()) * 0.95
+	a.mu.Lock()
+	states := make([]*trackState, 0, len(a.tracks))
+	for _, s := range a.tracks {
+		states = append(states, s)
+	}
+	cb := a.onPaused
+	a.mu.Unlock()
+
+	var videos []*trackState
+	for _, s := range states {
+		if !s.t.IsVideo() {
+			budget -= float64(layerRate(s.t.Bitrates(), 0))
+			continue
+		}
+		videos = append(videos, s)
+	}
+	sort.Slice(videos, func(i, j int) bool {
+		if videos[i].t.Priority() != videos[j].t.Priority() {
+			return videos[i].t.Priority() > videos[j].t.Priority()
+		}
+		return videos[i].t.ID() < videos[j].t.ID()
+	})
+	desired := make([]int32, len(videos))
+	rates := make([]types.Bitrates, len(videos))
+	for i, s := range videos {
+		rates[i] = s.t.Bitrates()
+		desired[i] = types.InvalidLayer
+		max := s.t.MaxLayer()
+		if !max.IsValid() {
+			continue
+		}
+		for l := int32(0); l <= max.Spatial && l < types.MaxSpatialLayers; l++ {
+			if r := layerRate(rates[i], l); r > 0 {
+				if float64(r) <= budget || !a.cfg.AllowPause {
+					desired[i] = l
+					budget -= float64(r)
+				}
+				break
+			}
+		}
+	}
+	for upgraded := true; upgraded; {
+		upgraded = false
+		for i, s := range videos {
+			if desired[i] < 0 {
+				continue
+			}
+			cur := layerRate(rates[i], desired[i])
+			for l := desired[i] + 1; l <= s.t.MaxLayer().Spatial && l < types.MaxSpatialLayers; l++ {
+				r := layerRate(rates[i], l)
+				if r == 0 {
+					continue
+				}
+				if float64(r-cur) <= budget {
+					budget -= float64(r - cur)
+					desired[i] = l
+					upgraded = true
+				}
+				break
+			}
+		}
+	}
+	var out, changed []Allocation
+	for i, s := range videos {
+		want := desired[i]
+		maxNow := s.t.MaxLayer().Spatial
+		prefRaised := maxNow > s.prevMax
+		s.prevMax = maxNow
+		// Hysteresis: bandwidth-driven upgrades must be sustained for
+		// UpgradeHold; upgrades requested by the subscriber are immediate.
+		if s.set && want > s.applied.Spatial && s.applied.Spatial >= 0 && !prefRaised {
+			if s.upSince.IsZero() {
+				s.upSince = now
+			}
+			if now.Sub(s.upSince) < a.cfg.UpgradeHold {
+				want = s.applied.Spatial
+			}
+		} else {
+			s.upSince = time.Time{}
+		}
+		target := types.InvalidVideoLayer
+		if want >= 0 {
+			target = types.VideoLayer{Spatial: want, Temporal: types.MaxTemporalLayers - 1}
+		}
+		paused := want < 0 && s.t.MaxLayer().IsValid()
+		if !s.set || target != s.applied {
+			s.t.SetTargetLayer(target)
+			s.applied, s.set = target, true
+		}
+		al := Allocation{TrackID: s.t.ID(), Target: target, Paused: paused}
+		if want >= 0 {
+			al.Bitrate = layerRate(rates[i], want)
+		}
+		if paused != s.paused {
+			s.paused = paused
+			changed = append(changed, al)
+		}
+		out = append(out, al)
+	}
+	if len(changed) > 0 && cb != nil {
+		cb(changed)
+	}
+	return out
+}

@@ -80,27 +80,6 @@ type Config struct {
 	MaxBitrate int64
 	// UpgradeHold is how long an estimate must support a higher layer before upgrading.
 	UpgradeHold time.Duration
+	// StartBitrate is the initial estimate (default 1.5 Mbit/s).
+	StartBitrate int64
 }
-
-type nopEstimator struct{ initial int64 }
-
-// NewEstimator returns the TWCC estimator. Phase 0 stub: a constant estimate.
-func NewEstimator(cfg Config) Estimator { return &nopEstimator{initial: 1_500_000} }
-
-func (e *nopEstimator) OnPacketSent(uint16, int, int64, bool)                 {}
-func (e *nopEstimator) OnTransportFeedback(*rtcp.TransportLayerCC, time.Time) {}
-func (e *nopEstimator) OnRTT(time.Duration)                                   {}
-func (e *nopEstimator) Estimate() int64                                       { return e.initial }
-func (e *nopEstimator) State() CongestionState                                { return StateNormal }
-
-type nopAllocator struct{}
-
-// NewAllocator returns the stream allocator. Phase 0 stub: does nothing.
-func NewAllocator(cfg Config, est Estimator) Allocator { return nopAllocator{} }
-
-func (nopAllocator) AddTrack(AllocatableTrack)          {}
-func (nopAllocator) RemoveTrack(string)                 {}
-func (nopAllocator) OnTrackChanged(string)              {}
-func (nopAllocator) OnPausedChanged(func([]Allocation)) {}
-func (nopAllocator) Start()                             {}
-func (nopAllocator) Stop()                              {}

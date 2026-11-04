@@ -15,6 +15,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/bwe"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/signal"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
@@ -61,6 +62,8 @@ type Participant struct {
 	explicit   map[string]bool // explicit subscriptions (auto_subscribe=0)
 	closed     bool
 	resumeT    *time.Timer
+	twcc       *rtc.TWCCSender
+	alloc      bwe.Allocator
 }
 
 func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signal.Conn) *Participant {
@@ -179,9 +182,19 @@ func (p *Participant) start() error {
 		if err != nil {
 			return err
 		}
+		cc := m.cfg.RTC.CongestionControl
+		bcfg := bwe.Config{Enabled: cc.Enabled, AllowPause: cc.AllowPause, Probe: cc.Probe}
+		est := bwe.NewEstimator(bcfg)
+		alloc := bwe.NewAllocator(bcfg, est)
+		alloc.OnPausedChanged(p.onStreamStates)
 		p.mu.Lock()
 		p.sub = t
+		if cc.Enabled {
+			p.twcc = &rtc.TWCCSender{Est: est}
+		}
+		p.alloc = alloc
 		p.mu.Unlock()
+		alloc.Start()
 	}
 	var others []*tesserav1.ParticipantInfo
 	for _, o := range p.room.Participants() {
@@ -368,6 +381,9 @@ func (p *Participant) close(reason tesserav1.DisconnectReason, sendLeave bool) b
 		p.resumeT.Stop()
 	}
 	pub, sub := p.pub, p.sub
+	if p.alloc != nil {
+		p.alloc.Stop()
+	}
 	tracks := make([]*pubTrack, 0, len(p.tracks))
 	for _, t := range p.tracks {
 		tracks = append(tracks, t)
@@ -773,11 +789,19 @@ func (p *Participant) subscribe(pub *Participant, t *pubTrack) {
 		p.mu.Unlock()
 		return
 	}
-	dt := rtc.NewDownTrack(rtc.DownTrackParams{SubscriberID: p.sid, Receiver: t.recv, TrackID: t.info.Sid, StreamID: pub.sid})
+	prio := uint32(1)
+	if t.info.Source == tesserav1.TrackSource_TRACK_SOURCE_SCREEN_SHARE {
+		prio = 2
+	}
+	dt := rtc.NewDownTrack(rtc.DownTrackParams{SubscriberID: p.sid, Receiver: t.recv, TrackID: t.info.Sid, StreamID: pub.sid, TWCC: p.twcc, Priority: prio})
 	s := &subscription{dt: dt, pub: pub}
 	p.subs[t.info.Sid] = s
 	sub := p.sub
+	alloc := p.alloc
 	p.mu.Unlock()
+	if alloc != nil {
+		alloc.AddTrack(dt)
+	}
 	sid := t.info.Sid
 	dt.OnFirstPacket(func() {
 		p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_TrackSubscribed{TrackSubscribed: &tesserav1.TrackSubscribed{TrackSid: sid}}})
@@ -804,9 +828,13 @@ func (p *Participant) unsubscribe(sid string) {
 	delete(p.subs, sid)
 	sub := p.sub
 	closed := p.closed
+	alloc := p.alloc
 	p.mu.Unlock()
 	if s == nil {
 		return
+	}
+	if alloc != nil {
+		alloc.RemoveTrack(sid)
 	}
 	s.dt.Close()
 	if sub != nil && !closed {
@@ -860,6 +888,9 @@ func (p *Participant) updateTrackSettings(s *tesserav1.UpdateTrackSettings) {
 			continue
 		}
 		p.applyMute(sid)
+		if pr := s.GetPriority(); pr > 0 {
+			sub.dt.SetPriority(pr)
+		}
 		if sub.dt.Kind() != webrtc.RTPCodecTypeVideo {
 			continue
 		}
@@ -940,6 +971,28 @@ func (p *Participant) update(req *tesserav1.UpdateParticipantRequest) {
 		for _, sid := range sids {
 			p.unsubscribe(sid)
 		}
+	}
+}
+
+// onStreamStates tells the subscriber which video streams the allocator
+// paused or resumed.
+func (p *Participant) onStreamStates(changed []bwe.Allocation) {
+	upd := &tesserav1.StreamStateUpdate{}
+	for _, a := range changed {
+		st := tesserav1.StreamState_STREAM_STATE_ACTIVE
+		if a.Paused {
+			st = tesserav1.StreamState_STREAM_STATE_PAUSED
+		}
+		p.mu.Lock()
+		s := p.subs[a.TrackID]
+		p.mu.Unlock()
+		if s == nil {
+			continue
+		}
+		upd.StreamStates = append(upd.StreamStates, &tesserav1.StreamStateInfo{ParticipantSid: s.pub.sid, TrackSid: a.TrackID, State: st})
+	}
+	if len(upd.StreamStates) > 0 {
+		p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_StreamStateUpdate{StreamStateUpdate: upd}})
 	}
 }
 

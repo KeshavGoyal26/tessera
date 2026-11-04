@@ -12,6 +12,7 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/bwe"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/simulcast"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
@@ -25,6 +26,18 @@ type DownTrackParams struct {
 	// TrackID/StreamID announced in the subscriber SDP (msid).
 	TrackID  string
 	StreamID string
+	// TWCC is the subscriber connection's transport-wide CC state (nil = off).
+	TWCC *TWCCSender
+	// Priority for bandwidth allocation (higher first).
+	Priority uint32
+}
+
+// TWCCSender is shared by all DownTracks of one subscriber PeerConnection:
+// it numbers packets with transport-wide sequence numbers and feeds the
+// estimator.
+type TWCCSender struct {
+	seq atomic.Uint32
+	Est bwe.Estimator
 }
 
 // DownTrackImpl is the DownTrack implementation.
@@ -45,6 +58,9 @@ type DownTrackImpl struct {
 	hdr    rtp.Header
 	pay    []byte
 	rtx    []byte
+	twccID uint8
+	twccB  [2]byte
+	prio   atomic.Uint32
 
 	firstPkt   atomic.Bool
 	onFirst    func()
@@ -70,6 +86,7 @@ func NewDownTrack(p DownTrackParams) *DownTrackImpl {
 	if c.ClockRate != 0 {
 		d.fwd.SetClockRate(c.ClockRate)
 	}
+	d.prio.Store(p.Priority)
 	d.fwd.SetAvailableLayers(p.Receiver.MaxSpatial())
 	return d
 }
@@ -98,6 +115,13 @@ func (d *DownTrackImpl) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParam
 	d.writer = ctx.WriteStream()
 	d.ssrc = uint32(ctx.SSRC())
 	d.pt = uint8(chosen.PayloadType)
+	if d.p.TWCC != nil {
+		for _, e := range ctx.HeaderExtensions() {
+			if e.URI == extTWCC {
+				d.twccID = uint8(e.ID)
+			}
+		}
+	}
 	d.mu.Unlock()
 	d.bound.Store(true)
 	if d.kind == webrtc.RTPCodecTypeVideo {
@@ -191,9 +215,30 @@ func (d *DownTrackImpl) writeLocked(sn uint16, ts uint32, marker bool, payload [
 	h.Timestamp = ts
 	h.Marker = marker
 	h.SSRC = d.ssrc
+	if d.twccID != 0 {
+		seq := uint16(d.p.TWCC.seq.Add(1))
+		d.twccB[0], d.twccB[1] = byte(seq>>8), byte(seq)
+		_ = h.SetExtension(d.twccID, d.twccB[:])
+		d.p.TWCC.Est.OnPacketSent(seq, len(payload)+20, Now(), false)
+	}
 	_, err := d.writer.WriteRTP(h, payload)
 	return err
 }
+
+// AllocID returns the track SID used by the allocator.
+func (d *DownTrackImpl) AllocID() string { return d.p.TrackID }
+
+// IsVideo reports whether this is a video DownTrack.
+func (d *DownTrackImpl) IsVideo() bool { return d.kind == webrtc.RTPCodecTypeVideo }
+
+// Priority returns the allocation priority.
+func (d *DownTrackImpl) Priority() uint32 { return d.prio.Load() }
+
+// SetPriority sets the allocation priority.
+func (d *DownTrackImpl) SetPriority(p uint32) { d.prio.Store(p) }
+
+// Bitrates returns the publisher's measured layer bitrates.
+func (d *DownTrackImpl) Bitrates() types.Bitrates { return d.r.Bitrates() }
 
 // SetMaxLayer implements DownTrack.
 func (d *DownTrackImpl) SetMaxLayer(l types.VideoLayer) {
@@ -246,6 +291,10 @@ func (d *DownTrackImpl) HandleRTCP(pkts []rtcp.Packet) {
 					d.retransmit(sn)
 					return true
 				})
+			}
+		case *rtcp.TransportLayerCC:
+			if d.p.TWCC != nil {
+				d.p.TWCC.Est.OnTransportFeedback(p, time.Now())
 			}
 		case *rtcp.ReceiverReport:
 			for _, rr := range p.Reports {

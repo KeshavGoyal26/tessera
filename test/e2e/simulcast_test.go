@@ -24,6 +24,7 @@ type simLayer struct {
 	pid   uint16
 	tl0   uint8
 	frame int
+	pad   int // extra payload bytes per packet
 }
 
 func newSimLayers(t *testing.T, id string) []*simLayer {
@@ -54,6 +55,7 @@ func (l *simLayer) writeFrame() {
 			vp8 = 0x00
 		}
 		payload := []byte{0x80 | s, 0xE0, 0x80 | byte(l.pid>>8), byte(l.pid), l.tl0, tid << 6, vp8, l.layer, 0xab, 0xcd}
+		payload = append(payload, make([]byte, l.pad)...)
 		_ = l.track.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: l.sn, Timestamp: l.ts, Marker: i == 1}, Payload: payload})
 		l.sn++
 	}
