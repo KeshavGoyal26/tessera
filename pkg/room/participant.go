@@ -95,6 +95,10 @@ type Participant struct {
 	connGen  uint64
 	lastSeen atomic.Int64
 	rttMs    atomic.Int64
+	// joined is set once JoinResponse is queued; earlier room broadcasts are
+	// dropped because JoinResponse must be the first message (its content
+	// already reflects the room state).
+	joined atomic.Bool
 
 	mu         sync.Mutex
 	name       string
@@ -178,6 +182,11 @@ func (p *Participant) send(msg *tesserav1.SignalResponse) {
 	if c == nil {
 		return
 	}
+	if _, isJoin := msg.Message.(*tesserav1.SignalResponse_Join); isJoin {
+		defer p.joined.Store(true)
+	} else if !p.joined.Load() {
+		return
+	}
 	if err := c.WriteResponse(msg); err != nil && errs.CodeOf(err) == errs.CodeResourceExhausted {
 		_ = c.Close(signal.CloseProtocolError, "slow consumer")
 	}
@@ -230,13 +239,17 @@ func (p *Participant) start() error {
 			return err
 		}
 		cc := m.cfg.RTC.CongestionControl
+		if p.kind == tesserav1.ParticipantInfo_KIND_RECORDER {
+			// Recorders run next to the server and must never be downgraded or
+			// paused; they also may not read every subscribed track, which
+			// would starve TWCC feedback.
+			cc.Enabled = false
+		}
 		bcfg := bwe.Config{Enabled: cc.Enabled, AllowPause: cc.AllowPause, Probe: cc.Probe}
 		est := bwe.NewEstimator(bcfg)
 		alloc := bwe.NewAllocator(bcfg, est)
 		alloc.OnPausedChanged(p.onStreamStates)
-		if err := t.CreateDataChannels(); err == nil {
-			t.Negotiate(false)
-		}
+		_ = t.CreateDataChannels()
 		p.mu.Lock()
 		p.sub = t
 		if cc.Enabled {
@@ -269,6 +282,14 @@ func (p *Participant) start() error {
 		PingInterval: uint32(m.cfg.Signal.PingInterval / time.Second), PingTimeout: uint32(m.cfg.Signal.PingTimeout / time.Second),
 		EnabledPublishCodecs: codecs, ResumeWindow: uint32(m.cfg.Signal.ResumeWindow / time.Second),
 	}}})
+	// JoinResponse must be the first message: negotiate the subscriber PC
+	// (data channels) only after it is queued.
+	p.mu.Lock()
+	sub := p.sub
+	p.mu.Unlock()
+	if sub != nil {
+		sub.Negotiate(false)
+	}
 	return nil
 }
 
