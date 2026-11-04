@@ -1,0 +1,41 @@
+# golangci-lint v2 configuration.
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - noctx
+    - prealloc
+    - revive
+    - unconvert
+    - unparam
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+  exclusions:
+    generated: strict
+    paths:
+      - gen/
+      - sdk/
+      - examples/
+    rules:
+      - path: _test\.go
+        linters: [noctx, unparam, prealloc]
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/KeshavGoyal26/tessera

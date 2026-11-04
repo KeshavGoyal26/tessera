@@ -1,0 +1,238 @@
+// Command tessera is the Tessera SFU server.
+//
+//	tessera --config tessera.yaml
+//	tessera --dev                                  # dev keys, text logs
+//	tessera create-token --room r --identity alice  # mint a join token
+//
+// Ownership: WP1. Wiring of WP3/WP4 components is fixed here in Phase 0 so
+// those work packages never edit this file (ADR-0011).
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/KeshavGoyal26/tessera/pkg/admin"
+	"github.com/KeshavGoyal26/tessera/pkg/auth"
+	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/metrics"
+	"github.com/KeshavGoyal26/tessera/pkg/recorder"
+	"github.com/KeshavGoyal26/tessera/pkg/room"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc"
+	sig "github.com/KeshavGoyal26/tessera/pkg/signal"
+	"github.com/KeshavGoyal26/tessera/pkg/version"
+	"github.com/KeshavGoyal26/tessera/pkg/webhook"
+)
+
+// Development credentials used by --dev. Never use them in production.
+const (
+	devAPIKey = "devkey"
+	devSecret = "devsecret-devsecret-devsecret-0000"
+)
+
+func main() { os.Exit(realMain()) }
+
+func realMain() int {
+	if len(os.Args) > 1 && os.Args[1] == "create-token" {
+		if err := createToken(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		return 0
+	}
+	configPath := flag.String("config", "", "path to tessera.yaml")
+	dev := flag.Bool("dev", false, "development mode: dev API key, text logs")
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Version, version.Commit)
+		return 0
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if *dev {
+		cfg.Development = true
+		if len(cfg.Keys) == 0 {
+			cfg.Keys = map[string]string{devAPIKey: devSecret}
+		}
+	}
+	logger := cfg.NewLogger()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, cfg, logger, nil); err != nil {
+		logger.Error("tessera exited", "err", err)
+		return 1
+	}
+	return 0
+}
+
+// listeners lets tests inject pre-bound listeners (port 0).
+type listeners struct {
+	http, metrics net.Listener
+}
+
+// run wires all components and serves until ctx is cancelled.
+func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *listeners) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	logger.Info("starting tessera", "version", version.Version, "node", cfg.NodeID)
+
+	reg := metrics.NewRegistry("tessera")
+	keys := auth.StaticKeys(cfg.Keys)
+	verifier := auth.NewVerifier(keys)
+
+	notifier, err := webhook.NewNotifier(cfg.Webhook, keys, reg, logger)
+	if err != nil {
+		return err
+	}
+	engine, err := rtc.NewEngine(cfg.RTC, cfg.TURN, reg, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = engine.Close() }()
+
+	rooms, err := room.NewManager(room.Params{
+		Config: cfg, Engine: engine, Notifier: notifier, Keys: keys, Registry: reg, Logger: logger,
+	})
+	if err != nil {
+		return err
+	}
+	defer rooms.Close()
+
+	recKey, recSecret := firstKey(cfg)
+	coordinator := recorder.NewCoordinator(recorder.CoordinatorParams{
+		Config: cfg.Recording, Rooms: rooms, Notifier: notifier,
+		APIKey: recKey, Secret: recSecret, Registry: reg, Logger: logger,
+	})
+	adminSrv := admin.NewServer(admin.Params{
+		Rooms: rooms, Recordings: coordinator, Workers: coordinator,
+		Verifier: verifier, Registry: reg, Logger: logger,
+	})
+	signalSrv := sig.NewServer(cfg.Signal, verifier, rooms, logger)
+
+	mux := http.NewServeMux()
+	mux.Handle(sig.Path, signalSrv)
+	mux.Handle(admin.PathPrefix, adminSrv)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("tessera " + version.Version + "\n"))
+	})
+
+	ready := func() error {
+		if err := engine.Ready(); err != nil {
+			return err
+		}
+		return rooms.Ready()
+	}
+
+	if ln == nil {
+		ln = &listeners{}
+	}
+	var lc net.ListenConfig
+	if ln.http == nil {
+		if ln.http, err = lc.Listen(ctx, "tcp", net.JoinHostPort("", strconv.Itoa(cfg.Port))); err != nil {
+			return err
+		}
+	}
+	if ln.metrics == nil && cfg.Metrics.Addr != "" {
+		if ln.metrics, err = lc.Listen(ctx, "tcp", cfg.Metrics.Addr); err != nil {
+			return err
+		}
+	}
+
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("http listening", "addr", ln.http.Addr().String())
+		if err := srv.Serve(ln.http); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+	if ln.metrics != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := metrics.ServeListener(ctx, ln.metrics, cfg.Metrics, reg, ready, logger); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+
+	select {
+	case <-ctx.Done():
+	case err = <-errCh:
+	}
+	logger.Info("shutting down")
+	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = rooms.Drain(drainCtx)
+	_ = srv.Shutdown(drainCtx)
+	_ = notifier.Close(drainCtx)
+	if ln.metrics != nil && ctx.Err() == nil {
+		_ = ln.metrics.Close()
+	}
+	wg.Wait()
+	return err
+}
+
+func firstKey(cfg *config.Config) (string, string) {
+	if s, ok := cfg.Keys[cfg.Webhook.APIKey]; ok {
+		return cfg.Webhook.APIKey, s
+	}
+	for k, s := range cfg.Keys {
+		return k, s
+	}
+	return "", ""
+}
+
+func createToken(args []string) error {
+	fs := flag.NewFlagSet("create-token", flag.ContinueOnError)
+	key := fs.String("api-key", devAPIKey, "API key")
+	secret := fs.String("secret", devSecret, "API secret")
+	roomName := fs.String("room", "", "room name")
+	identity := fs.String("identity", "", "participant identity")
+	name := fs.String("name", "", "display name")
+	ttl := fs.Duration("ttl", 6*time.Hour, "validity")
+	adminGrants := fs.Bool("admin", false, "admin token (room_create, room_list, room_admin, room_record)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	g := &auth.RoomGrant{Room: *roomName}
+	if *adminGrants {
+		g.RoomCreate, g.RoomList, g.RoomAdmin, g.RoomRecord = true, true, true, true
+	} else {
+		if *roomName == "" || *identity == "" {
+			return errors.New("--room and --identity are required (or --admin)")
+		}
+		g.RoomJoin = true
+	}
+	tok, err := auth.NewAccessToken(*key, *secret).SetIdentity(*identity).SetName(*name).
+		SetGrant(g).SetValidFor(*ttl).ToJWT()
+	if err != nil {
+		return err
+	}
+	fmt.Println(tok)
+	return nil
+}
