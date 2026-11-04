@@ -157,6 +157,19 @@ jobs:
           go test -race -count=1 -v ./pkg/hls/... ./pkg/recorder/... ./pkg/storage/... 2>&1 | tee test.log
           ! grep -E -- '--- SKIP' test.log
 
+  e2e:
+    name: e2e (real server + Pion clients, full system incl. HLS recording)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: E2E tests (race)
+        run: go test -race -count=1 -v -timeout 5m ./test/e2e/
+
   dashboard-web:
     name: dashboard web (typecheck, test, build, embedded dist is current)
     runs-on: ubuntu-latest
