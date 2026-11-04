@@ -83,12 +83,12 @@ Known issues / next steps:
 
 - [x] M1 H.264 depacketizer, fMP4 writer, segmenter, playlists (ffprobe/ffmpeg-decode validated, wrap/loss/reorder tested)
 - [x] M2 Opus in fMP4, A/V alignment (origin + RTCP SR clock), master playlist, local + S3 storage (fake S3 server in tests; MinIO not run)
-- [~] M3 Coordinator + Worker end to end with fakes and in-memory RTP (done); against a real server with `pkg/client` (not started: client is still a stub; `ClientConnector` is written against its interface)
+- [x] M3 Coordinator + Worker end to end with fakes and in-memory RTP, and against the real server with `pkg/client` (`TestLiveRecordingThroughRealServer`, loopback, H.264 + Opus, ffprobe/ffmpeg validated)
 - [x] M4 AAC mode and VP8 fallback via FFmpeg, heartbeat failure handling, capacity, `/stats` + Prometheus
 - [~] M5 Participant recordings (done), SPS change/clock jump handling (done, unit tested); long-run soak, CPU benchmark, benchmark done (docs/RECORDING.md); hls.js playback verified manually in headless Chromium (not automated); soak test not done
 - Docs: `docs/RECORDING.md`
 - Known issues: RTCP SR not wired from `client.RemoteTrack` (arrival-time fallback); `Room.active_recording` not set; composite unsupported; `testdata/rtp` fixtures are generated at test time with ffmpeg (`pkg/hls/hlstest`), not checked in; CI `recorder` job added (installs ffmpeg, fails on skipped tests).
-- Next steps: (1) once `pkg/client` lands, implement `OnSenderReport` on `RemoteTrack` + real-server e2e test; (2) automate the hls.js/Playwright playback check; (3) long-run soak test and 720p benchmark with a real uploader; (5) wire `recorder.NewCoordinator` in `cmd/tessera` if not done by WP3.
+- Next steps: (1) request from WP1: expose RTCP sender reports on `client.RemoteTrack` (`OnSenderReport(func(ntp uint64, rts uint32))`, satisfies `recorder.SRSource`) so A/V alignment uses SR instead of arrival time; (2) automate the hls.js/Playwright playback check; (3) long-run soak test and 720p benchmark with a real uploader; (5) wire `recorder.NewCoordinator` in `cmd/tessera` if not done by WP3.
 
 ## WP6: Admin dashboard
 

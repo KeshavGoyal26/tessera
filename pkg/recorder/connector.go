@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/pion/webrtc/v4"
+
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 )
@@ -12,6 +14,8 @@ import (
 // participant (ADR-0007). It is the production Connector.
 type ClientConnector struct {
 	Logger *slog.Logger
+	// SettingEngine customises Pion (loopback ICE in tests); nil = defaults.
+	SettingEngine *webrtc.SettingEngine
 }
 
 type clientRoom struct{ c client.Client }
@@ -20,7 +24,7 @@ func (r clientRoom) Close(ctx context.Context) error { return r.c.Disconnect(ctx
 
 // Join implements Connector.
 func (cc ClientConnector) Join(ctx context.Context, wsURL, token string, onTrack func(Track), onClosed func(error)) (Room, error) {
-	c := client.New(client.Options{AutoSubscribe: true, SDK: tesserav1.ClientInfo_SDK_RECORDER, Logger: cc.Logger})
+	c := client.New(client.Options{AutoSubscribe: true, SDK: tesserav1.ClientInfo_SDK_RECORDER, SettingEngine: cc.SettingEngine, Logger: cc.Logger})
 	c.SetCallbacks(client.Callbacks{
 		OnTrackSubscribed: func(t *client.RemoteTrack) {
 			kind := "audio"

@@ -267,7 +267,7 @@ func newJobRun(w *Worker, j *tesserav1.RecordingJob) *jobRun {
 	return &jobRun{
 		w: w, job: j, id: j.GetRecording().GetRecordingId(), req: j.GetRecording().GetRequest(),
 		stopCh: make(chan struct{}), tracks: map[string]*recTrack{},
-		status: tesserav1.RecordingStatus_RECORDING_STATUS_STARTING,
+		status: tesserav1.RecordingStatus_RECORDING_STATUS_STARTING, started: time.Now(), origin: time.Now(),
 	}
 }
 
@@ -325,8 +325,6 @@ func (r *jobRun) update(ctx context.Context, st tesserav1.RecordingStatus, errMs
 func (r *jobRun) execute(ctx context.Context) {
 	w := r.w
 	rec := r.job.GetRecording()
-	r.started = time.Now()
-	r.origin = r.started
 	w.stats.jobStarted(r)
 	defer func() { w.stats.jobFinished(r) }()
 

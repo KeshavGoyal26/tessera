@@ -112,8 +112,10 @@ resolved below `local_root`.
 
 - `Room.active_recording` is not set (needs a `room.Admin` extension).
 - Composite (grid) recording is not implemented; `StartRecording` returns `unimplemented`.
-- No headless hls.js/Playwright test, no Apple device verification, no real-server end-to-end
-  test (blocked on `pkg/client` landing); the pipeline is tested with in-memory RTP.
+- No automated hls.js/Playwright test and no Apple device verification. The pipeline is tested
+  with in-memory RTP and, in `TestLiveRecordingThroughRealServer`, end to end: a real SFU on
+  loopback, a publisher with H.264 + Opus, Coordinator + Worker with the production
+  `ClientConnector` (hidden recorder join through `pkg/client`).
 - Benchmark: `go test -bench RemuxH264 ./pkg/hls` (RTP unmarshal + depacketize + mux + playlist,
   storage excluded) measured about 0.04 ms CPU per media-second for a 320x240 100 kbps track on a
   2.1 GHz Xeon, i.e. orders of magnitude under the 10 ms/media-second budget of the 100
