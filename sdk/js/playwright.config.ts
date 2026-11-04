@@ -43,7 +43,12 @@ export default defineConfig({
         launchOptions: {
           // PW_CHROMIUM_PATH points at a preinstalled Chromium when `playwright install` is unavailable.
           ...(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {}),
-          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--allow-loopback-in-peer-connection"],
+          args: [
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+            "--auto-select-desktop-capture-source=Entire screen",
+            "--allow-loopback-in-peer-connection",
+          ],
         },
       },
     },

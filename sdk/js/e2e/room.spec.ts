@@ -116,6 +116,11 @@ test("the client reconnects after a network outage and media resumes", async ({ 
   const ctxB = await browser.newContext();
   const a = await ctxA.newPage();
   const b = await ctxB.newPage();
+  const logs: string[] = [];
+  for (const [n, p] of [["A", a], ["B", b]] as const) {
+    p.on("console", (m) => logs.push(`${n}: ${m.text()}`));
+    p.on("pageerror", (e) => logs.push(`${n} ERROR: ${e.message}`));
+  }
   try {
     await join(a, room, "alice");
     await join(b, room, "bob");
@@ -129,6 +134,29 @@ test("the client reconnects after a network outage and media resumes", async ({ 
     await expect(b.locator("#tile-alice")).toBeVisible();
     const t0 = await b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.currentTime ?? 0);
     await expect.poll(() => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.currentTime ?? 0), { timeout: 20_000 }).toBeGreaterThan(t0 + 1);
+  } catch (err) {
+    console.log(logs.join("\n"));
+    throw err;
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
+
+test("screen share is published and shown to the other participant", async ({ browser, browserName }) => {
+  test.skip(browserName !== "chromium", "automatic screen selection is only configured for Chromium");
+  const room = `e2e-screen-${Date.now()}`;
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  try {
+    await join(a, room, "alice");
+    await join(b, room, "bob");
+    await a.click("#screen");
+    await expectVideoPlaying(b, "alice-screen");
+    await a.click("#screen");
+    await expect(b.locator("#tile-alice-screen")).toHaveCount(0, { timeout: 15_000 });
   } finally {
     await ctxA.close();
     await ctxB.close();

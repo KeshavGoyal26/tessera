@@ -51,11 +51,20 @@ Known issues / next steps (WP1):
 
 ## WP2: Browser SDK and demo
 
-- [ ] M1 SignalClient + Room connect/disconnect, participants, events
-- [ ] M2 Publish/subscribe audio and video, mute, demo shows video
-- [ ] M3 Simulcast, adaptive stream, dynacast
-- [ ] M4 Resume and reconnect, data, screen share, stats
-- [ ] M5 Bundle budget, docs, publish dry run
+- [x] M1 SignalClient (binary protobuf over WebSocket, request/response, ping/pong with RTT and timeout, close-code handling, failure classification) + Room connect/disconnect, participants, typed events; unit tests with mock WebSocket and fake transports
+- [x] M2 Publish camera / microphone / screen share, mute, device switching (`replaceTrack`), publisher/subscriber PCs per PROTOCOL.md; demo shows video both ways (verified in Chromium against `tessera --dev`)
+- [x] M3 Simulcast (q/h/f), H.264 preference while the room records, dynacast (`SubscribedQualityUpdate`), adaptive stream (ResizeObserver + IntersectionObserver + page visibility), manual quality/size, stream-state events, `getStats` summaries
+- [x] M4 Resume (`sync_state`, ICE restart) and full rejoin with republish, server leave actions, token refresh, data packets (client side), active speakers, connection quality
+- [~] M5 Bundle 37.7 kB gzip (`npm run size`, budget 60 kB), README with API reference, CI e2e job added; npm publish dry run not done
+
+E2E (`sdk/js/e2e`, Playwright, Chromium, real `tessera --dev`, fake media): two-way video, mute propagation, stats overlay, leave, bad token, subscriber layer selection, screen share, reconnect after `setOffline`: all pass locally (5 tests, ~30 s).
+
+Known issues / next steps:
+- Firefox and Safari are untested: no Firefox/WebKit download was possible in the build environment. The CI `e2e` job installs Chromium and Firefox; check its first run. Safari needs a manual pass.
+- Data-packet e2e is skipped (`TESSERA_E2E_DATA=1` enables it): the server stub `transport.SendDataPacket` / `OnDataPacket` is not implemented yet (WP1 M2).
+- The reconnect e2e failed once in about six full-suite runs (media did not resume after rejoin; passes 3/3 in isolation). Debug logs (`[tessera]` console lines) are printed on failure; investigate with server logs if it recurs.
+- Server `sync_state` handling only re-sends participant state (WP1): resume with dead PCs relies on the client's ICE restart.
+- `Room` publishes data channels lazily (first `publishData`), not at join.
 
 ## WP3: Admin API, webhooks, Java SDK
 

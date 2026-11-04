@@ -102,6 +102,9 @@ const qualityIcon: Record<number, string> = {
 };
 
 function wire(r: Room): void {
+  for (const ev of [RoomEvent.Reconnecting, RoomEvent.Reconnected, RoomEvent.Disconnected, RoomEvent.TrackSubscribed, RoomEvent.TrackUnsubscribed, RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected]) {
+    r.on(ev, ((...args: unknown[]) => console.debug("[tessera]", ev, args.length)) as never);
+  }
   r.on(RoomEvent.TrackSubscribed, onTrackSubscribed)
     .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
     .on(RoomEvent.ParticipantConnected, (p) => void tileFor(p))
