@@ -1,4 +1,4 @@
-import { NotImplementedError } from "../errors.js";
+import type { RemoteEngine } from "../room/engine.js";
 import type { TrackInfo, VideoQuality } from "../gen/tessera/v1/models_pb.js";
 import type { LocalTrack } from "./LocalTrack.js";
 import type { RemoteTrack } from "./RemoteTrack.js";
@@ -58,13 +58,24 @@ export class LocalTrackPublication extends TrackPublication {
 /** A track published by a remote participant. */
 export class RemoteTrackPublication extends TrackPublication {
   #track: RemoteTrack | undefined;
+  #engine: RemoteEngine | undefined;
+  #manual = false;
+  /** Server-reported forwarding state; `false` while paused for lack of bandwidth. */
+  streamActive = true;
+  subscribed = true;
 
-  constructor(info: TrackInfo) {
+  constructor(info: TrackInfo, engine?: RemoteEngine) {
     super(info);
+    this.#engine = engine;
   }
 
   get track(): RemoteTrack | undefined {
     return this.#track;
+  }
+
+  /** @internal */
+  setTrack(track: RemoteTrack | undefined): void {
+    this.#track = track;
   }
 
   /** True when the track is subscribed and its media has arrived. */
@@ -72,29 +83,46 @@ export class RemoteTrackPublication extends TrackPublication {
     return this.#track !== undefined;
   }
 
+  /** True once quality or size was set explicitly, which disables adaptive stream for the track. */
+  get hasManualSettings(): boolean {
+    return this.#manual;
+  }
+
   /** Subscribes to or unsubscribes from the track. */
-  setSubscribed(_subscribed: boolean): void {
-    throw new NotImplementedError("RemoteTrackPublication.setSubscribed");
+  setSubscribed(subscribed: boolean): void {
+    this.subscribed = subscribed;
+    this.#engine?.sendSubscription([this.trackSid], subscribed);
   }
 
-  /**
-   * Sets the maximum simulcast layer to receive. Disables adaptive stream sizing for this
-   * track.
-   */
-  setVideoQuality(_quality: VideoQuality): void {
-    throw new NotImplementedError("RemoteTrackPublication.setVideoQuality");
+  /** Sets the maximum simulcast layer to receive. Disables adaptive stream sizing for this track. */
+  setVideoQuality(quality: VideoQuality): void {
+    this.#manual = true;
+    this.#track?.disableAdaptiveStream();
+    this.#engine?.sendTrackSettings({ trackSids: [this.trackSid], quality, disabled: false });
   }
 
-  /**
-   * Tells the server the rendered size so it forwards the closest layer. Used when adaptive
-   * stream is disabled.
-   */
-  setVideoDimensions(_dimensions: Dimensions): void {
-    throw new NotImplementedError("RemoteTrackPublication.setVideoDimensions");
+  /** Tells the server the rendered size so it forwards the closest layer. */
+  setVideoDimensions(dimensions: Dimensions): void {
+    this.#manual = true;
+    this.#track?.disableAdaptiveStream();
+    this.#engine?.sendTrackSettings({
+      trackSids: [this.trackSid],
+      width: Math.ceil(dimensions.width),
+      height: Math.ceil(dimensions.height),
+      disabled: false,
+    });
   }
 
   /** Pauses (`false`) or resumes (`true`) forwarding without unsubscribing. */
-  setEnabled(_enabled: boolean): void {
-    throw new NotImplementedError("RemoteTrackPublication.setEnabled");
+  setEnabled(enabled: boolean): void {
+    this.#engine?.sendTrackSettings({ trackSids: [this.trackSid], disabled: !enabled });
+  }
+
+  /** @internal Applies server-side track info. */
+  updateInfo(info: TrackInfo): void {
+    this.isMuted = info.muted;
+    this.trackName = info.name;
+    this.simulcasted = info.simulcast;
+    if (info.width > 0) this.dimensions = { width: info.width, height: info.height };
   }
 }

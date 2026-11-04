@@ -27,6 +27,12 @@ export type ConnectionErrorCode =
   | "cancelled"
   /** The server did not answer in time. */
   | "timeout"
+  /** The room does not exist (HTTP 404). */
+  | "not_found"
+  /** Too many requests (HTTP 429). */
+  | "rate_limited"
+  /** The session can no longer be resumed; a full reconnect is needed (HTTP 409). */
+  | "resume_failed"
   /** Any other failure. */
   | "internal";
 

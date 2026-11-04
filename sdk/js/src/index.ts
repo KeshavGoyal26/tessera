@@ -4,11 +4,11 @@ export { EventEmitter, RoomEvent } from "./events.js";
 export type { EventMap } from "./events.js";
 export { protocolVersion, version } from "./version.js";
 
-export { ConnectionState, Room } from "./room/Room.js";
-export type { RoomEventMap, RoomOptions } from "./room/Room.js";
+export { ConnectionState, Room, reconnectDelay } from "./room/Room.js";
+export type { RoomDeps, RoomEventMap, RoomOptions } from "./room/Room.js";
 export { Participant } from "./room/Participant.js";
 export { LocalParticipant } from "./room/LocalParticipant.js";
-export type { DataPublishOptions } from "./room/LocalParticipant.js";
+export type { DataPublishOptions, MediaDeviceKind } from "./room/LocalParticipant.js";
 export { RemoteParticipant } from "./room/RemoteParticipant.js";
 
 export { Track, TrackSource } from "./track/Track.js";
@@ -25,7 +25,12 @@ export {
 export { MIN_SIMULCAST_LAYER_SIZE, VideoPresets, computeSimulcastEncodings } from "./rtc/simulcast.js";
 export type { VideoPreset } from "./rtc/simulcast.js";
 export { PCTransport } from "./rtc/PCTransport.js";
+export { AdaptiveStream, computeAdaptiveSettings } from "./rtc/adaptive.js";
+export type { AdaptiveSettings, ElementState } from "./rtc/adaptive.js";
+export { StatsSampler } from "./rtc/stats.js";
+export type { MediaStatsSummary, StatsSummary } from "./rtc/stats.js";
 export {
+  PING_TIMEOUT_CODE,
   SignalClient,
   buildSignalUrl,
   decodeResponse,
@@ -33,6 +38,7 @@ export {
 } from "./signal/SignalClient.js";
 export type {
   AddTrackInit,
+  CloseInfo,
   SignalConnectOptions,
   SignalRequestBody,
   TrackSettingsInit,
@@ -43,4 +49,4 @@ export {
   DisconnectReason,
   VideoQuality,
 } from "./gen/tessera/v1/models_pb.js";
-export { SignalTarget } from "./gen/tessera/v1/signal_pb.js";
+export { SignalTarget, StreamState } from "./gen/tessera/v1/signal_pb.js";

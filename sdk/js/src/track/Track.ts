@@ -66,7 +66,7 @@ export function trackSourceToProto(source: TrackSource): ProtoTrackSource {
 export abstract class Track {
   readonly kind: TrackKind;
   readonly source: TrackSource;
-  readonly mediaStreamTrack: MediaStreamTrack;
+  mediaStreamTrack: MediaStreamTrack;
   /** Server-assigned track sid; set once the track is published or subscribed. */
   sid: string | undefined;
 
@@ -95,7 +95,9 @@ export abstract class Track {
     el.autoplay = true;
     if (el instanceof HTMLVideoElement) el.playsInline = true;
     el.srcObject = new MediaStream([this.mediaStreamTrack]);
+    if (this.isLocal) el.muted = true;
     this.#attached.add(el);
+    this.onAttach(el);
     return el;
   }
 
@@ -105,7 +107,23 @@ export abstract class Track {
     for (const el of targets) {
       el.srcObject = null;
       this.#attached.delete(el);
+      this.onDetach(el);
     }
     return targets;
   }
+
+  /** @internal Replaces the underlying media track (device switch) and re-renders elements. */
+  replaceMediaStreamTrack(next: MediaStreamTrack): void {
+    this.mediaStreamTrack = next;
+    for (const el of this.#attached) el.srcObject = new MediaStream([next]);
+  }
+
+  /** Hook: an element started rendering this track. */
+  protected onAttach(_element: HTMLMediaElement): void {}
+
+  /** Hook: an element stopped rendering this track. */
+  protected onDetach(_element: HTMLMediaElement): void {}
+
+  /** True for tracks captured on this device. */
+  abstract get isLocal(): boolean;
 }

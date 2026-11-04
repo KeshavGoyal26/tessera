@@ -8,7 +8,7 @@ export abstract class Participant {
   /** Server-assigned session id (`PA_...`). */
   sid: string;
   /** Identity from the access token; stable across sessions. */
-  readonly identity: string;
+  identity: string;
   name: string;
   metadata: string;
   attributes: Record<string, string>;
@@ -37,10 +37,12 @@ export abstract class Participant {
   }
 
   /** @internal Applies server-side participant state. */
-  updateInfo(info: ParticipantInfo): void {
+  updateInfo(info: ParticipantInfo): unknown {
     this.sid = info.sid;
+    if (info.identity) this.identity = info.identity;
     this.name = info.name;
     this.metadata = info.metadata;
     this.attributes = { ...info.attributes };
+    return undefined;
   }
 }

@@ -99,4 +99,11 @@ export enum RoomEvent {
   Disconnected = "disconnected",
   DataReceived = "dataReceived",
   RoomMetadataChanged = "roomMetadataChanged",
+  LocalTrackPublished = "localTrackPublished",
+  LocalTrackUnpublished = "localTrackUnpublished",
+  TrackStreamStateChanged = "trackStreamStateChanged",
+  TrackSubscriptionFailed = "trackSubscriptionFailed",
+  ParticipantMetadataChanged = "participantMetadataChanged",
+  RecordingStatusChanged = "recordingStatusChanged",
+  ConnectionStateChanged = "connectionStateChanged",
 }
