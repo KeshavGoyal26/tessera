@@ -3,6 +3,7 @@ package hls
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"os/exec"
@@ -87,7 +88,7 @@ func TestDepacketizerLossWaitsForKeyframe(t *testing.T) {
 				continue // drop one fragment of frame 10
 			}
 			out, err := d.Push(pkt)
-			if err == ErrPacketLoss {
+			if errors.Is(err, ErrPacketLoss) {
 				lossSeen = true
 			}
 			for _, a := range out {
@@ -267,7 +268,9 @@ func TestH264HLSWithFFprobe(t *testing.T) {
 		initB, _ := os.ReadFile(filepath.Join(dir, "init.mp4"))
 		segB, _ := os.ReadFile(filepath.Join(dir, n))
 		one := filepath.Join(t.TempDir(), "one.mp4")
-		os.WriteFile(one, append(initB, segB...), 0o644)
+		if err := os.WriteFile(one, append(initB, segB...), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		pk := ffprobe(t, "-show_packets", "-select_streams", "v:0", one)
 		if len(pk.Packets) != 100 || !strings.HasPrefix(pk.Packets[0].Flags, "K") {
 			t.Fatalf("%s: %d packets, first flags %q", n, len(pk.Packets), pk.Packets[0].Flags)

@@ -72,7 +72,9 @@ func TestOpusAndVideoAlignedHLS(t *testing.T) {
 		t.Fatalf("%d packets want %d", len(pf.Packets), len(frames))
 	}
 	var first float64
-	fmtSscan(pf.Packets[0].PTSTime, &first)
+	if _, err := fmtSscan(pf.Packets[0].PTSTime, &first); err != nil {
+		t.Fatal(err)
+	}
 	if first < 0.49 || first > 0.51 {
 		t.Fatalf("audio starts at %v, want 0.5 (A/V offset)", first)
 	}
@@ -85,7 +87,9 @@ func TestOpusAndVideoAlignedHLS(t *testing.T) {
 		{URI: "video/index.m3u8", Codecs: "avc1.42c01e", Bandwidth: 500000, Width: 320, Height: 240},
 		{URI: "audio/index.m3u8", Codecs: "opus", Bandwidth: 32000, IsAudio: true},
 	})
-	os.WriteFile(filepath.Join(dir, "master.m3u8"), master, 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "master.m3u8"), master, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if b, err := execFFmpegDecode(filepath.Join(dir, "master.m3u8")); err != nil || len(b) != 0 {
 		t.Fatalf("master decode: %v %s", err, b)
 	}
@@ -98,7 +102,9 @@ func TestMuxerDiscontinuityOnGapAndBackwardsClock(t *testing.T) {
 	dts := int64(0)
 	step := func(n int) {
 		for i := 0; i < n; i++ {
-			m.WriteSample(ctx, Sample{DTS: dts, Data: []byte{0xfc, 1}})
+			if err := m.WriteSample(ctx, Sample{DTS: dts, Data: []byte{0xfc, 1}}); err != nil {
+				t.Fatal(err)
+			}
 			dts += 960
 		}
 	}
@@ -107,7 +113,9 @@ func TestMuxerDiscontinuityOnGapAndBackwardsClock(t *testing.T) {
 	step(100)
 	dts = 1000 // clock jumps backwards (e.g. SSRC change)
 	step(100)
-	m.Close(ctx)
+	if err := m.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(sink.playlist, "#EXT-X-DISCONTINUITY") || strings.Count(sink.playlist, "#EXT-X-DISCONTINUITY\n") != 2 {
 		t.Fatalf("%s", sink.playlist)
 	}

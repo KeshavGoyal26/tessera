@@ -109,7 +109,7 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader, _ int64, _ str
 		err = os.Rename(tmp, dst)
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	return dst, nil
@@ -139,7 +139,7 @@ func (l *local) Check(context.Context) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
+	_ = f.Close()
 	return os.Remove(f.Name())
 }
 

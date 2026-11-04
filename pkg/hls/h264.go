@@ -370,7 +370,7 @@ func ParseSPS(nal []byte) (SPSInfo, error) {
 	if r.err || wMbs > 1024 || hMapUnits > 1024 {
 		return s, errors.New("hls: bad SPS")
 	}
-	cux, cuy := uint32(1), uint32(2-frameMbsOnly)
+	cux, cuy := uint32(1), 2-frameMbsOnly
 	if s.ChromaFormat == 1 || s.ChromaFormat == 2 {
 		cux = 2
 	}

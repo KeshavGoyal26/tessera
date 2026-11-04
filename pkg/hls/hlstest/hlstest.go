@@ -5,6 +5,7 @@ package hlstest
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"os"
 	"os/exec"
@@ -29,7 +30,7 @@ func NeedFFmpeg(t testing.TB) {
 func H264(t testing.TB, seconds int) [][][]byte {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "v.h264")
-	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
+	cmd := exec.CommandContext(context.Background(), "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
 		"-t", strconv.Itoa(seconds), "-c:v", "libx264", "-profile:v", "baseline", "-g", "50", "-bf", "0",
 		"-x264-params", "aud=1:keyint=50:min-keyint=50:scenecut=0", "-pix_fmt", "yuv420p", "-f", "h264", out)
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -53,7 +54,7 @@ func H264(t testing.TB, seconds int) [][][]byte {
 func Opus(t testing.TB, seconds int) [][]byte {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "a.opus")
-	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+	cmd := exec.CommandContext(context.Background(), "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
 		"-t", strconv.Itoa(seconds), "-c:a", "libopus", "-frame_duration", "20", "-ac", "2", "-f", "opus", out)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg: %v %s", err, b)

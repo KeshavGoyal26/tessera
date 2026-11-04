@@ -117,10 +117,10 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.uploads[id] = map[int][]byte{}
 		f.mu.Unlock()
-		fmt.Fprintf(w, `<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>%s</UploadId></InitiateMultipartUploadResult>`, id)
+		_, _ = fmt.Fprintf(w, `<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>%s</UploadId></InitiateMultipartUploadResult>`, id)
 	case r.Method == http.MethodPut && q.Get("uploadId") != "":
 		var n int
-		fmt.Sscan(q.Get("partNumber"), &n)
+		_, _ = fmt.Sscan(q.Get("partNumber"), &n)
 		b := readBody(r)
 		f.mu.Lock()
 		f.uploads[q.Get("uploadId")][n] = b
@@ -131,7 +131,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Parts []struct{ PartNumber int } `xml:"Part"`
 		}
 		b, _ := io.ReadAll(r.Body)
-		xml.Unmarshal(b, &req)
+		_ = xml.Unmarshal(b, &req)
 		f.mu.Lock()
 		var all []byte
 		for _, p := range req.Parts {
@@ -139,7 +139,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.objects[path] = all
 		f.mu.Unlock()
-		fmt.Fprint(w, `<CompleteMultipartUploadResult><Location>x</Location><Bucket>b</Bucket><Key>k</Key><ETag>"done"</ETag></CompleteMultipartUploadResult>`)
+		_, _ = fmt.Fprint(w, `<CompleteMultipartUploadResult><Location>x</Location><Bucket>b</Bucket><Key>k</Key><ETag>"done"</ETag></CompleteMultipartUploadResult>`)
 	case r.Method == http.MethodPut:
 		if f.failFirst.Add(-1) >= 0 {
 			w.WriteHeader(503)
@@ -218,7 +218,7 @@ func readBody(r *http.Request) []byte {
 			break
 		}
 		var n int
-		fmt.Sscanf(strings.SplitN(string(raw[:i]), ";", 2)[0], "%x", &n)
+		_, _ = fmt.Sscanf(strings.SplitN(string(raw[:i]), ";", 2)[0], "%x", &n)
 		raw = raw[i+2:]
 		if n == 0 || n > len(raw) {
 			break
