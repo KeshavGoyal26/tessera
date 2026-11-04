@@ -1,0 +1,10 @@
+# Example scrape config for the dashboard's metrics (docs/DASHBOARD.md).
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: tessera
+    static_configs:
+      - targets: ["tessera:6789"]
+  - job_name: tessera-recorder
+    static_configs:
+      - targets: ["recorder:6790"]
