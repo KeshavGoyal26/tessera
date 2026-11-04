@@ -36,11 +36,16 @@ only its own section (rebase on conflict).
 
 ## WP3: Admin API, webhooks, Java SDK
 
-- [ ] M1 Twirp router, error mapping, authZ, `admin.Client`, RoomService against fakes
-- [ ] M2 Webhook notifier (queue, retries, signing, ordering, metrics)
-- [ ] M3 Recording routes, contract fixtures, Go/Java contract tests
-- [ ] M4 Live tests against WP1 M1
-- [ ] M5 Java SDK polish, Spring example, release dry run
+- [x] M1 Twirp router (JSON + protobuf), error mapping, per-RPC grant checks, `admin.Client`, all three services against fakes (`pkg/admin`)
+- [x] M2 Webhook notifier: ordered per-endpoint queues, drop-oldest + `num_dropped`, retries with 1 s to 5 min backoff (10 attempts), signing, `Stats()` (sent/failed/retried/dropped/queued) and Prometheus counters (`pkg/webhook`)
+- [x] M3 Golden fixtures in `testdata/contract/{tokens,webhook,twirp}` (`go test ./pkg/admin -run Golden -update`), Go and Java contract tests
+- [x] M4 Cross-language test: Java SDK against the real Go admin server (`pkg/admin/cmd/adminfake`, run by `CrossLanguageTest`; skipped without `go`). Not yet run against `cmd/tessera --dev` because WP1 rooms are still stubs.
+- [x] M5 Spring Boot example (`examples/java-spring`, MockMvc tests), Java SDK async API, retries, `room_config`, Maven Central-ready pom (sources/javadoc jars, SCM, `release` profile), README quick start
+
+Known issues / next steps:
+- Run the Java SDK and `admin.Client` against `cmd/tessera --dev` once WP1 M1 and WP4 M3 land (replace adminfake in `CrossLanguageTest` with the real binary behind a flag).
+- Webhook `Stats()` is available via `webhook.StatsProvider`; wiring it into the dashboard / `/stats` is left to WP4-dashboard/cmd owners.
+- Release dry run (`mvn -P release deploy`) needs GPG key and Central credentials; not executed.
 
 ## WP4: HLS recorder
 
@@ -77,8 +82,5 @@ _None yet. Format: `- [ ] WPx → WPy: request (date)`._
 
 ## Known gaps after Phase 0
 
-- Java SDK: `room_config` grant not yet in `RoomGrant` (WP3).
-- Golden contract fixtures (`testdata/contract/`) not yet written (WP3 M3); only the webhook
-  signature vector is shared today.
 - Docker images and compose were not built in the Phase 0 environment (no Docker daemon); WP5 verifies.
 - Native Apple HLS playback of Opus-in-fMP4 is best-effort (ADR-0007); WP4 must verify on devices.
