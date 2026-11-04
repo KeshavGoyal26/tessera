@@ -138,6 +138,9 @@ func BenchmarkReceiverFanout(b *testing.B) {
 }
 
 func TestForwardingDoesNotAllocate(t *testing.T) {
+	if raceEnabled {
+		t.Skip("the race detector allocates; run without -race")
+	}
 	r, buf := benchReceiver(t)
 	for i := range 3 {
 		if err := r.AddDownTrack(boundDownTrack(t, r, fmt.Sprint(i))); err != nil {
