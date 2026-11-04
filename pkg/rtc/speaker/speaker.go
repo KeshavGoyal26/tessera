@@ -49,7 +49,7 @@ type entry struct {
 type observer struct {
 	cfg      Config
 	tracks   map[string]*entry // by track SID
-	dominant string          // participant SID
+	dominant string            // participant SID
 	reported map[string]float64
 }
 
