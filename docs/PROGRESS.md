@@ -81,6 +81,16 @@ Known issues / next steps:
 - Known issues: RTCP SR not wired from `client.RemoteTrack` (arrival-time fallback); `Room.active_recording` not set; composite unsupported; `testdata/rtp` fixtures are generated at test time with ffmpeg (`pkg/hls/hlstest`), not checked in; no CI `recorder` job yet (CI needs ffmpeg installed: tests skip without it).
 - Next steps: (1) once `pkg/client` lands, implement `OnSenderReport` on `RemoteTrack` + real-server e2e test; (2) add CI job installing ffmpeg; (3) Playwright + hls.js playback test; (4) benchmark 100 tracks/vCPU; (5) wire `recorder.NewCoordinator` in `cmd/tessera` if not done by WP3.
 
+## WP6: Admin dashboard
+
+- [x] Backend `pkg/dashboard`: API key/secret login with HttpOnly session cookie, CSRF + same-origin checks, login rate limit, snapshot, SSE stream (1 Hz), 1 h in-memory history, recorder `/stats` aggregation, alerts (loss, RTT, CPU, recording errors), actions (end room, remove/mute, start/stop recording), tests with `-race`
+- [x] Frontend `web/admin` (TypeScript, vite, uPlot, hls.js lazy chunk): Overview, Rooms drill-down, Track quality, Connectivity, Recordings with playback, light/dark theme, responsive; built into `pkg/dashboard/dist` and embedded
+- [x] Mounted at `/admin` in `cmd/tessera` (separate commit); recorder URLs via `TESSERA_DASHBOARD_RECORDERS`
+- [x] Grafana dashboard JSON + provisioning in `deploy/grafana`
+- Docs: `docs/DASHBOARD.md`
+- Known issues: no automated browser e2e suite or CI job for `web/admin` (typecheck/vitest run locally); history lost on restart; verified against synthetic stats only (real `room` snapshot not exercised); dist must be rebuilt and committed after frontend changes.
+- Next steps: add `web/admin` to CI (`npm ci && npm test && npm run build`, fail on dist drift); Playwright smoke test against a live server once WP1 lands; optional per-room history; `dashboard` config section in `pkg/config` instead of the env var.
+
 ## WP5: Integration, load and performance (after WP1 M3)
 
 - [ ] M1 Load tester MVP
