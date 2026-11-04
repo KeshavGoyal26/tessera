@@ -1,0 +1,235 @@
+// Shared models used by signaling, the admin API, webhooks and recording.
+//
+// Compatibility: this package is tessera.v1. Only additive changes are allowed
+// (new fields, new messages, new enum values). See docs/adr/0011.
+syntax = "proto3";
+
+package tessera.v1;
+
+option go_package = "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1;tesserav1";
+option java_multiple_files = true;
+option java_outer_classname = "ModelsProto";
+option java_package = "io.github.keshavgoyal26.tessera.proto.v1";
+
+// Room is the public state of a room.
+message Room {
+  // Server-assigned unique id, prefixed "RM_".
+  string sid = 1;
+  // Application-chosen unique name.
+  string name = 2;
+  // Seconds an empty room is kept before it is closed (0 = server default).
+  uint32 empty_timeout_seconds = 3;
+  // Seconds a room is kept after the last participant left (0 = server default).
+  uint32 departure_timeout_seconds = 4;
+  // Maximum number of participants (0 = unlimited).
+  uint32 max_participants = 5;
+  // Creation time, Unix milliseconds.
+  int64 creation_time_ms = 6;
+  // Opaque application metadata.
+  string metadata = 7;
+  uint32 num_participants = 8;
+  uint32 num_publishers = 9;
+  // True while at least one recording of this room is active.
+  bool active_recording = 10;
+  // Codecs publishers may use, in server preference order.
+  repeated Codec enabled_codecs = 11;
+  // True when the room is configured to be recorded; H.264 is then preferred.
+  bool recording_enabled = 12;
+}
+
+// Codec identifies an RTP codec.
+message Codec {
+  // MIME type, for example "video/H264", "video/VP8", "audio/opus", "audio/red".
+  string mime = 1;
+  // Optional SDP fmtp line.
+  string fmtp_line = 2;
+}
+
+// ParticipantInfo is the public state of a participant.
+message ParticipantInfo {
+  // State of a participant's session.
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    // WebSocket connected, PeerConnections not yet connected.
+    STATE_JOINING = 1;
+    // Join response sent.
+    STATE_JOINED = 2;
+    // At least one PeerConnection connected.
+    STATE_ACTIVE = 3;
+    // Left or removed.
+    STATE_DISCONNECTED = 4;
+  }
+  // Kind of participant.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_STANDARD = 1;
+    // A tessera-recorder worker (always hidden).
+    KIND_RECORDER = 2;
+    // A participant created by tessera-loadtest.
+    KIND_LOADTEST = 3;
+  }
+
+  // Server-assigned unique id, prefixed "PA_".
+  string sid = 1;
+  // Identity from the access token "sub" claim; unique within a room.
+  string identity = 2;
+  State state = 3;
+  repeated TrackInfo tracks = 4;
+  string metadata = 5;
+  // Join time, Unix milliseconds.
+  int64 joined_at_ms = 6;
+  string name = 7;
+  ParticipantPermission permission = 8;
+  bool is_publisher = 9;
+  Kind kind = 10;
+  map<string, string> attributes = 11;
+}
+
+// ParticipantPermission is the effective permission set of a participant.
+message ParticipantPermission {
+  bool can_subscribe = 1;
+  bool can_publish = 2;
+  bool can_publish_data = 3;
+  // Empty means all sources are allowed.
+  repeated TrackSource can_publish_sources = 4;
+  bool hidden = 5;
+  bool recorder = 6;
+  bool can_update_metadata = 7;
+}
+
+// TrackType is the media kind of a track.
+enum TrackType {
+  TRACK_TYPE_UNSPECIFIED = 0;
+  TRACK_TYPE_AUDIO = 1;
+  TRACK_TYPE_VIDEO = 2;
+  TRACK_TYPE_DATA = 3;
+}
+
+// TrackSource describes where a track comes from.
+enum TrackSource {
+  TRACK_SOURCE_UNSPECIFIED = 0;
+  TRACK_SOURCE_CAMERA = 1;
+  TRACK_SOURCE_MICROPHONE = 2;
+  TRACK_SOURCE_SCREEN_SHARE = 3;
+  TRACK_SOURCE_SCREEN_SHARE_AUDIO = 4;
+}
+
+// VideoQuality is a simulcast spatial layer.
+enum VideoQuality {
+  VIDEO_QUALITY_UNSPECIFIED = 0;
+  // rid "q".
+  VIDEO_QUALITY_LOW = 1;
+  // rid "h".
+  VIDEO_QUALITY_MEDIUM = 2;
+  // rid "f".
+  VIDEO_QUALITY_HIGH = 3;
+  // No video (paused).
+  VIDEO_QUALITY_OFF = 4;
+}
+
+// VideoLayer describes one simulcast layer of a published video track.
+message VideoLayer {
+  VideoQuality quality = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  // Target or measured bitrate, bits per second.
+  uint32 bitrate = 4;
+  uint32 ssrc = 5;
+  // RTP stream id ("q", "h", "f").
+  string rid = 6;
+}
+
+// TrackInfo is the public state of a published track.
+message TrackInfo {
+  // Server-assigned unique id, prefixed "TR_".
+  string sid = 1;
+  TrackType type = 2;
+  string name = 3;
+  bool muted = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+  bool simulcast = 7;
+  bool disable_dtx = 8;
+  TrackSource source = 9;
+  repeated VideoLayer layers = 10;
+  // Negotiated codec MIME type, e.g. "video/H264".
+  string mime_type = 11;
+  // Transceiver mid on the publisher PeerConnection.
+  string mid = 12;
+  bool stereo = 13;
+  bool red = 14;
+  // MediaStream id used by the publisher.
+  string stream = 15;
+}
+
+// ConnectionQuality is a coarse quality score shown to users.
+enum ConnectionQuality {
+  CONNECTION_QUALITY_UNSPECIFIED = 0;
+  CONNECTION_QUALITY_LOST = 1;
+  CONNECTION_QUALITY_POOR = 2;
+  CONNECTION_QUALITY_GOOD = 3;
+  CONNECTION_QUALITY_EXCELLENT = 4;
+}
+
+// SpeakerInfo is one entry of the active speaker list.
+message SpeakerInfo {
+  string participant_sid = 1;
+  // Smoothed audio level, 0.0 (silence) to 1.0 (loudest).
+  float level = 2;
+  // False when the participant stopped speaking.
+  bool active = 3;
+}
+
+// DisconnectReason says why a participant left.
+enum DisconnectReason {
+  DISCONNECT_REASON_UNSPECIFIED = 0;
+  DISCONNECT_REASON_CLIENT_INITIATED = 1;
+  DISCONNECT_REASON_DUPLICATE_IDENTITY = 2;
+  DISCONNECT_REASON_SERVER_SHUTDOWN = 3;
+  DISCONNECT_REASON_PARTICIPANT_REMOVED = 4;
+  DISCONNECT_REASON_ROOM_DELETED = 5;
+  DISCONNECT_REASON_STATE_MISMATCH = 6;
+  DISCONNECT_REASON_JOIN_FAILURE = 7;
+  DISCONNECT_REASON_SIGNAL_TIMEOUT = 8;
+  DISCONNECT_REASON_MEDIA_FAILURE = 9;
+  DISCONNECT_REASON_ROOM_FULL = 10;
+}
+
+// ICEServer is a STUN/TURN server for the client.
+message ICEServer {
+  repeated string urls = 1;
+  string username = 2;
+  string credential = 3;
+}
+
+// ClientInfo describes the connecting SDK; sent as query parameters, echoed in events.
+message ClientInfo {
+  // SDK family.
+  enum SDK {
+    SDK_UNSPECIFIED = 0;
+    SDK_JS = 1;
+    SDK_GO = 2;
+    SDK_RECORDER = 3;
+    SDK_LOADTEST = 4;
+  }
+  SDK sdk = 1;
+  string version = 2;
+  int32 protocol = 3;
+  string os = 4;
+  string os_version = 5;
+  string browser = 6;
+  string browser_version = 7;
+  string device_model = 8;
+  string address = 9;
+}
+
+// ServerInfo describes the node a client is connected to.
+message ServerInfo {
+  string version = 1;
+  // Highest signaling protocol version supported.
+  int32 protocol = 2;
+  // Lowest signaling protocol version supported.
+  int32 min_protocol = 3;
+  string node_id = 4;
+  string region = 5;
+}

@@ -1,0 +1,49 @@
+// Webhook events POSTed by the tessera server to configured URLs.
+//
+// Body: protojson (default) or binary protobuf of WebhookEvent.
+// Headers: Tessera-Event-Id, Tessera-Event-Type, Tessera-Key and
+// Tessera-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>.
+syntax = "proto3";
+
+package tessera.v1;
+
+import "tessera/v1/models.proto";
+import "tessera/v1/recording.proto";
+
+option go_package = "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1;tesserav1";
+option java_multiple_files = true;
+option java_outer_classname = "WebhookProto";
+option java_package = "io.github.keshavgoyal26.tessera.proto.v1";
+
+// WebhookEventType is the kind of event.
+enum WebhookEventType {
+  WEBHOOK_EVENT_TYPE_UNSPECIFIED = 0;
+  WEBHOOK_EVENT_TYPE_ROOM_STARTED = 1;
+  WEBHOOK_EVENT_TYPE_ROOM_FINISHED = 2;
+  WEBHOOK_EVENT_TYPE_PARTICIPANT_JOINED = 3;
+  WEBHOOK_EVENT_TYPE_PARTICIPANT_LEFT = 4;
+  WEBHOOK_EVENT_TYPE_TRACK_PUBLISHED = 5;
+  WEBHOOK_EVENT_TYPE_TRACK_UNPUBLISHED = 6;
+  WEBHOOK_EVENT_TYPE_RECORDING_STARTED = 7;
+  WEBHOOK_EVENT_TYPE_RECORDING_UPDATED = 8;
+  WEBHOOK_EVENT_TYPE_RECORDING_ENDED = 9;
+}
+
+// WebhookEvent is the body of every webhook request.
+message WebhookEvent {
+  // Unique event id (UUID); also in the Tessera-Event-Id header. Use it to deduplicate.
+  string id = 1;
+  WebhookEventType type = 2;
+  // Set for room, participant and track events.
+  Room room = 3;
+  // Set for participant and track events.
+  ParticipantInfo participant = 4;
+  // Set for track events.
+  TrackInfo track = 5;
+  // Set for recording events.
+  RecordingInfo recording = 6;
+  // Event creation time, Unix seconds.
+  int64 created_at = 7;
+  // Events dropped for this endpoint since the previous delivered event (queue overflow).
+  uint32 num_dropped = 8;
+}

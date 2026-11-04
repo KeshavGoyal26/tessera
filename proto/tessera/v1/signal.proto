@@ -1,0 +1,423 @@
+// Signaling protocol between clients and the tessera server over WebSocket.
+//
+// Each binary WebSocket frame carries exactly one SignalRequest (client to
+// server) or SignalResponse (server to client). See docs/PROTOCOL.md for the
+// connection URL, sequencing rules and the resume flow.
+syntax = "proto3";
+
+package tessera.v1;
+
+import "tessera/v1/models.proto";
+
+option go_package = "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1;tesserav1";
+option java_multiple_files = true;
+option java_outer_classname = "SignalProto";
+option java_package = "io.github.keshavgoyal26.tessera.proto.v1";
+
+// SignalTarget selects one of the participant's two PeerConnections.
+enum SignalTarget {
+  SIGNAL_TARGET_UNSPECIFIED = 0;
+  // Client offers, server answers (client to server media).
+  SIGNAL_TARGET_PUBLISHER = 1;
+  // Server offers, client answers (server to client media).
+  SIGNAL_TARGET_SUBSCRIBER = 2;
+}
+
+// SignalRequest is sent by the client.
+message SignalRequest {
+  // Optional client-chosen id; requests that can fail are answered with a
+  // RequestResponse carrying the same id. 0 means "no response needed".
+  uint32 request_id = 1;
+
+  oneof message {
+    // Offer for the publisher PeerConnection.
+    SessionDescription offer = 2;
+    // Answer for the subscriber PeerConnection.
+    SessionDescription answer = 3;
+    TrickleRequest trickle = 4;
+    AddTrackRequest add_track = 5;
+    MuteTrackRequest mute = 6;
+    UpdateSubscription subscription = 7;
+    UpdateTrackSettings track_setting = 8;
+    LeaveRequest leave = 9;
+    UpdateVideoLayers update_layers = 10;
+    SyncState sync_state = 11;
+    Ping ping = 12;
+    UpdateParticipantMetadata update_metadata = 13;
+    UnpublishTrackRequest unpublish_track = 14;
+  }
+}
+
+// SignalResponse is sent by the server.
+message SignalResponse {
+  oneof message {
+    JoinResponse join = 1;
+    // Answer for the publisher PeerConnection.
+    SessionDescription answer = 2;
+    // Offer for the subscriber PeerConnection.
+    SessionDescription offer = 3;
+    TrickleRequest trickle = 4;
+    ParticipantUpdate update = 5;
+    TrackPublishedResponse track_published = 6;
+    TrackUnpublishedResponse track_unpublished = 7;
+    LeaveRequest leave = 8;
+    // Server-initiated mute of one of the client's published tracks.
+    MuteTrackRequest mute = 9;
+    SpeakersChanged speakers_changed = 10;
+    RoomUpdate room_update = 11;
+    ConnectionQualityUpdate connection_quality = 12;
+    StreamStateUpdate stream_state_update = 13;
+    SubscribedQualityUpdate subscribed_quality_update = 14;
+    ReconnectResponse reconnect = 15;
+    Pong pong = 16;
+    ErrorResponse error = 17;
+    RequestResponse request_response = 18;
+    SubscriptionResponse subscription_response = 19;
+    // A fresh access token to use for future reconnects.
+    string refresh_token = 20;
+    TrackSubscribed track_subscribed = 21;
+  }
+}
+
+// SessionDescription is an SDP offer or answer.
+message SessionDescription {
+  // "offer" or "answer".
+  string type = 1;
+  string sdp = 2;
+  // Monotonic per PeerConnection, set by the offerer and echoed in the answer,
+  // so stale answers can be detected.
+  uint32 id = 3;
+}
+
+// TrickleRequest carries one ICE candidate.
+message TrickleRequest {
+  // JSON-encoded RTCIceCandidateInit.
+  string candidate_init = 1;
+  SignalTarget target = 2;
+  // True when gathering is complete (end-of-candidates).
+  bool final = 3;
+}
+
+// SimulcastCodec lets a publisher offer the same track in several codecs (backup codec).
+message SimulcastCodec {
+  string codec = 1;
+  // Client track id of the encoding for this codec.
+  string cid = 2;
+}
+
+// AddTrackRequest announces a track before it is negotiated on the publisher PC.
+message AddTrackRequest {
+  // Client-side track id (MediaStreamTrack.id); matched with the SDP msid.
+  string cid = 1;
+  string name = 2;
+  TrackType type = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  bool muted = 6;
+  bool disable_dtx = 7;
+  TrackSource source = 8;
+  repeated VideoLayer layers = 9;
+  repeated SimulcastCodec simulcast_codecs = 10;
+  bool stereo = 11;
+  // Request RED (RFC 2198) for Opus.
+  bool red = 12;
+  string stream = 13;
+}
+
+// TrackPublishedResponse confirms an AddTrackRequest.
+message TrackPublishedResponse {
+  string cid = 1;
+  TrackInfo track = 2;
+}
+
+// TrackUnpublishedResponse tells a publisher one of its tracks was unpublished
+// (for example by an admin).
+message TrackUnpublishedResponse {
+  string track_sid = 1;
+}
+
+// UnpublishTrackRequest removes a published track.
+message UnpublishTrackRequest {
+  string track_sid = 1;
+}
+
+// MuteTrackRequest mutes or unmutes a track.
+message MuteTrackRequest {
+  string sid = 1;
+  bool muted = 2;
+}
+
+// ParticipantTracks addresses tracks of one participant.
+message ParticipantTracks {
+  string participant_sid = 1;
+  repeated string track_sids = 2;
+}
+
+// UpdateSubscription subscribes to or unsubscribes from tracks.
+message UpdateSubscription {
+  repeated string track_sids = 1;
+  bool subscribe = 2;
+  repeated ParticipantTracks participant_tracks = 3;
+}
+
+// UpdateTrackSettings sets subscriber preferences for subscribed tracks.
+message UpdateTrackSettings {
+  repeated string track_sids = 1;
+  // Pause the track without unsubscribing (e.g. element not visible).
+  bool disabled = 2;
+  // Maximum desired quality. Ignored when width/height are set.
+  VideoQuality quality = 3;
+  // Rendered size in device pixels; the server picks the closest layer.
+  uint32 width = 4;
+  uint32 height = 5;
+  // Maximum desired frame rate (temporal layer selection).
+  uint32 fps = 6;
+  // Higher priority tracks get bandwidth first. 0 = default.
+  uint32 priority = 7;
+}
+
+// UpdateVideoLayers updates the advertised layers of a published track.
+message UpdateVideoLayers {
+  string track_sid = 1;
+  repeated VideoLayer layers = 2;
+}
+
+// LeaveRequest ends a session; the server uses it to tell clients what to do.
+message LeaveRequest {
+  // Action the client should take.
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    // Disconnect and do not reconnect.
+    ACTION_DISCONNECT = 1;
+    // Reconnect with reconnect=1 and resume the session.
+    ACTION_RESUME = 2;
+    // Rejoin from scratch.
+    ACTION_RECONNECT = 3;
+  }
+  // Deprecated in favour of action; kept for simple clients.
+  bool can_reconnect = 1;
+  DisconnectReason reason = 2;
+  Action action = 3;
+}
+
+// ParticipantUpdate carries changed participants (full state per participant).
+message ParticipantUpdate {
+  repeated ParticipantInfo participants = 1;
+}
+
+// UpdateParticipantMetadata lets a participant change its own name, metadata and attributes.
+message UpdateParticipantMetadata {
+  string metadata = 1;
+  string name = 2;
+  map<string, string> attributes = 3;
+}
+
+// ClientConfiguration lets the server adjust client behaviour.
+message ClientConfiguration {
+  // Force relay-only ICE (for networks known to block direct UDP).
+  bool force_relay = 1;
+  // Disable simulcast on publish.
+  bool disable_simulcast = 2;
+  // Codec preference to apply on publish, in order.
+  repeated Codec publish_codec_preference = 3;
+}
+
+// JoinResponse is the first message sent by the server after a successful join.
+message JoinResponse {
+  Room room = 1;
+  ParticipantInfo participant = 2;
+  repeated ParticipantInfo other_participants = 3;
+  ServerInfo server_info = 4;
+  repeated ICEServer ice_servers = 5;
+  // True: the server will send a subscriber offer first.
+  bool subscriber_primary = 6;
+  ClientConfiguration client_configuration = 7;
+  // Seconds between client pings.
+  uint32 ping_interval = 8;
+  // Seconds without pings after which the server drops the session.
+  uint32 ping_timeout = 9;
+  // Codecs the client may publish, in preference order (H.264 first in recorded rooms).
+  repeated Codec enabled_publish_codecs = 10;
+  // Client may create the publisher PeerConnection immediately.
+  bool fast_publish = 11;
+  // Seconds the server keeps a disconnected session for resume.
+  uint32 resume_window = 12;
+}
+
+// ReconnectResponse answers a resume (reconnect=1) connection.
+message ReconnectResponse {
+  repeated ICEServer ice_servers = 1;
+  ClientConfiguration client_configuration = 2;
+  // Current participant state as known by the server.
+  ParticipantInfo participant = 3;
+}
+
+// SyncState is sent by the client after a resume so the server can reconcile.
+message SyncState {
+  // Last answer the client applied on the subscriber PC.
+  SessionDescription answer = 1;
+  UpdateSubscription subscription = 2;
+  repeated TrackPublishedResponse publish_tracks = 3;
+  repeated DataChannelInfo data_channels = 4;
+  // Last offer the client sent on the publisher PC.
+  SessionDescription offer = 5;
+  // Track sids the client currently has subscribed and receiving.
+  repeated string track_sids_subscribed = 6;
+}
+
+// DataChannelInfo describes a data channel during resume.
+message DataChannelInfo {
+  string label = 1;
+  uint32 id = 2;
+  SignalTarget target = 3;
+}
+
+// SpeakersChanged carries only the speakers whose state changed.
+message SpeakersChanged {
+  repeated SpeakerInfo speakers = 1;
+}
+
+// RoomUpdate carries changed room state (e.g. metadata, recording flag).
+message RoomUpdate {
+  Room room = 1;
+}
+
+// ConnectionQualityInfo is the quality of one participant.
+message ConnectionQualityInfo {
+  string participant_sid = 1;
+  ConnectionQuality quality = 2;
+  // Mean opinion score style value, 1.0 to 5.0.
+  float score = 3;
+}
+
+// ConnectionQualityUpdate is sent every few seconds with changed entries.
+message ConnectionQualityUpdate {
+  repeated ConnectionQualityInfo updates = 1;
+}
+
+// StreamState is the forwarding state of a subscribed track.
+enum StreamState {
+  STREAM_STATE_UNSPECIFIED = 0;
+  STREAM_STATE_ACTIVE = 1;
+  // Paused by the server because of bandwidth limits.
+  STREAM_STATE_PAUSED = 2;
+}
+
+// StreamStateInfo is the state of one subscribed track.
+message StreamStateInfo {
+  string participant_sid = 1;
+  string track_sid = 2;
+  StreamState state = 3;
+}
+
+// StreamStateUpdate tells a subscriber which tracks were paused or resumed.
+message StreamStateUpdate {
+  repeated StreamStateInfo stream_states = 1;
+}
+
+// SubscribedQuality says whether anyone is subscribed to one layer.
+message SubscribedQuality {
+  VideoQuality quality = 1;
+  bool enabled = 2;
+}
+
+// SubscribedCodec carries per-codec layer usage when backup codecs are published.
+message SubscribedCodec {
+  string codec = 1;
+  repeated SubscribedQuality qualities = 2;
+}
+
+// SubscribedQualityUpdate (dynacast) tells a publisher which layers are needed.
+message SubscribedQualityUpdate {
+  string track_sid = 1;
+  repeated SubscribedQuality subscribed_qualities = 2;
+  repeated SubscribedCodec subscribed_codecs = 3;
+}
+
+// TrackSubscribed tells the subscriber the first packet of a track was sent.
+message TrackSubscribed {
+  string track_sid = 1;
+}
+
+// Ping is sent by the client every ping_interval seconds.
+message Ping {
+  // Client time, Unix milliseconds.
+  int64 timestamp = 1;
+  // Last measured round-trip time in milliseconds.
+  int64 rtt = 2;
+}
+
+// Pong answers a Ping.
+message Pong {
+  int64 last_ping_timestamp = 1;
+  // Server time, Unix milliseconds.
+  int64 timestamp = 2;
+}
+
+// ErrorCode classifies errors sent over signaling.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INTERNAL = 1;
+  ERROR_CODE_INVALID_ARGUMENT = 2;
+  ERROR_CODE_NOT_FOUND = 3;
+  ERROR_CODE_PERMISSION_DENIED = 4;
+  ERROR_CODE_LIMIT_EXCEEDED = 5;
+  ERROR_CODE_UNSUPPORTED_PROTOCOL = 6;
+  ERROR_CODE_NEGOTIATION_FAILED = 7;
+  ERROR_CODE_SLOW_CONSUMER = 8;
+  ERROR_CODE_RESUME_FAILED = 9;
+}
+
+// ErrorResponse reports an error not tied to a specific request.
+message ErrorResponse {
+  ErrorCode code = 1;
+  string message = 2;
+  uint32 request_id = 3;
+}
+
+// RequestResponse answers a SignalRequest that carried a request_id.
+message RequestResponse {
+  // Outcome of a request.
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_OK = 1;
+    REASON_NOT_FOUND = 2;
+    REASON_NOT_ALLOWED = 3;
+    REASON_LIMIT_EXCEEDED = 4;
+    REASON_INVALID = 5;
+  }
+  uint32 request_id = 1;
+  Reason reason = 2;
+  string message = 3;
+}
+
+// SubscriptionError says why a subscription failed.
+enum SubscriptionError {
+  SUBSCRIPTION_ERROR_UNSPECIFIED = 0;
+  SUBSCRIPTION_ERROR_CODEC_UNSUPPORTED = 1;
+  SUBSCRIPTION_ERROR_TRACK_NOT_FOUND = 2;
+  SUBSCRIPTION_ERROR_PERMISSION_DENIED = 3;
+}
+
+// SubscriptionResponse reports a failed subscription.
+message SubscriptionResponse {
+  string track_sid = 1;
+  SubscriptionError err = 2;
+}
+
+// DataPacket is the payload format of the "_reliable" and "_lossy" data channels.
+message DataPacket {
+  // Delivery mode.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_RELIABLE = 1;
+    KIND_LOSSY = 2;
+  }
+  Kind kind = 1;
+  // Set by the server: sender identity.
+  string participant_identity = 2;
+  // Empty means broadcast to everyone in the room.
+  repeated string destination_identities = 3;
+  string topic = 4;
+  bytes payload = 5;
+}

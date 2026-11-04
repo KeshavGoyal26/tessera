@@ -1,0 +1,254 @@
+// Recording: the public RecordingService (admin API) and the internal
+// RecorderWorkerService used by tessera-recorder workers to pull jobs.
+//
+// Both are served with the Twirp v7 wire protocol by the tessera server.
+syntax = "proto3";
+
+package tessera.v1;
+
+option go_package = "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1;tesserav1";
+option java_multiple_files = true;
+option java_outer_classname = "RecordingProto";
+option java_package = "io.github.keshavgoyal26.tessera.proto.v1";
+
+// RecordingService starts and stops recordings. Grant: room_record.
+service RecordingService {
+  rpc StartRecording(StartRecordingRequest) returns (StartRecordingResponse);
+  rpc StopRecording(StopRecordingRequest) returns (StopRecordingResponse);
+  rpc ListRecordings(ListRecordingsRequest) returns (ListRecordingsResponse);
+  rpc GetRecording(GetRecordingRequest) returns (GetRecordingResponse);
+}
+
+// RecorderWorkerService is called by tessera-recorder workers. Grant: recorder_worker.
+service RecorderWorkerService {
+  // Long-polls for a job (up to wait_seconds). Returns an empty job when none is available.
+  rpc ClaimJob(ClaimJobRequest) returns (ClaimJobResponse);
+  // Reports job progress, outputs or failure.
+  rpc UpdateJob(UpdateJobRequest) returns (UpdateJobResponse);
+  // Keeps the worker and its jobs alive; returns jobs the worker must stop.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// RecordingStatus is the lifecycle state of a recording.
+enum RecordingStatus {
+  RECORDING_STATUS_UNSPECIFIED = 0;
+  // Queued or a worker is joining.
+  RECORDING_STATUS_STARTING = 1;
+  // Media is being written.
+  RECORDING_STATUS_ACTIVE = 2;
+  // Stop requested; finalizing playlists and uploads.
+  RECORDING_STATUS_ENDING = 3;
+  RECORDING_STATUS_COMPLETE = 4;
+  RECORDING_STATUS_FAILED = 5;
+  // Stopped before any media was written.
+  RECORDING_STATUS_ABORTED = 6;
+}
+
+// AudioCodec selects the audio codec of the HLS output.
+enum AudioCodec {
+  AUDIO_CODEC_UNSPECIFIED = 0;
+  // Opus in fMP4, no transcoding (default).
+  AUDIO_CODEC_OPUS = 1;
+  // AAC-LC via FFmpeg, for maximum native player compatibility.
+  AUDIO_CODEC_AAC = 2;
+}
+
+// PlaylistType of the final HLS media playlists.
+enum PlaylistType {
+  PLAYLIST_TYPE_UNSPECIFIED = 0;
+  // EVENT while recording, then VOD with EXT-X-ENDLIST (default).
+  PLAYLIST_TYPE_EVENT = 1;
+  // Only write the playlist at the end.
+  PLAYLIST_TYPE_VOD = 2;
+}
+
+// TrackRecordingTarget records one track.
+message TrackRecordingTarget {
+  string track_sid = 1;
+}
+
+// ParticipantRecordingTarget records one participant's camera and microphone
+// (or the given sources) into one master playlist.
+message ParticipantRecordingTarget {
+  string identity = 1;
+  // Empty = camera + microphone.
+  repeated string sources = 2;
+}
+
+// RoomCompositeTarget records the whole room as a grid (later milestone; requires transcoding).
+message RoomCompositeTarget {
+  // Layout name, e.g. "grid", "speaker".
+  string layout = 1;
+}
+
+// HLSOptions configures the HLS output.
+message HLSOptions {
+  // Target segment duration in seconds (default 4). Segments are cut on keyframes.
+  uint32 segment_duration_seconds = 1;
+  PlaylistType playlist_type = 2;
+  AudioCodec audio_codec = 3;
+}
+
+// LocalStorage writes to the recorder's local disk.
+message LocalStorage {
+  // Directory, relative to the recorder's configured root.
+  string directory = 1;
+}
+
+// S3Storage uploads to an S3-compatible bucket.
+// Credentials normally come from recorder configuration; per-request values override them.
+message S3Storage {
+  string bucket = 1;
+  string region = 2;
+  // Custom endpoint for MinIO/R2/etc., e.g. "http://minio:9000".
+  string endpoint = 3;
+  string access_key = 4;
+  string secret = 5;
+  bool force_path_style = 6;
+  // Key prefix inside the bucket.
+  string prefix = 7;
+}
+
+// StorageOptions selects where output is written.
+message StorageOptions {
+  oneof backend {
+    LocalStorage local = 1;
+    S3Storage s3 = 2;
+  }
+}
+
+// StartRecordingRequest starts a recording.
+message StartRecordingRequest {
+  string room = 1;
+  oneof target {
+    TrackRecordingTarget track = 2;
+    ParticipantRecordingTarget participant = 3;
+    RoomCompositeTarget room_composite = 4;
+  }
+  HLSOptions hls = 5;
+  // Empty = recorder default storage.
+  StorageOptions storage = 6;
+  // Path prefix for output objects; supports {room}, {recording_id}, {time} templates.
+  string filename_prefix = 7;
+}
+
+// StartRecordingResponse returns the new recording.
+message StartRecordingResponse {
+  RecordingInfo recording = 1;
+}
+
+// StopRecordingRequest stops a recording.
+message StopRecordingRequest {
+  string recording_id = 1;
+}
+
+// StopRecordingResponse returns the recording (usually ENDING).
+message StopRecordingResponse {
+  RecordingInfo recording = 1;
+}
+
+// ListRecordingsRequest lists recordings.
+message ListRecordingsRequest {
+  // Filter by room; empty = all.
+  string room = 1;
+  // Only recordings that are not COMPLETE/FAILED/ABORTED.
+  bool active_only = 2;
+}
+
+// ListRecordingsResponse returns recordings.
+message ListRecordingsResponse {
+  repeated RecordingInfo recordings = 1;
+}
+
+// GetRecordingRequest gets one recording.
+message GetRecordingRequest {
+  string recording_id = 1;
+}
+
+// GetRecordingResponse returns a recording.
+message GetRecordingResponse {
+  RecordingInfo recording = 1;
+}
+
+// RecordingOutput describes one output playlist (per track, or master).
+message RecordingOutput {
+  string track_sid = 1;
+  string participant_identity = 2;
+  // Storage location of the media playlist (s3://bucket/key or file path).
+  string playlist_location = 3;
+  // Optional HTTP URL of the playlist when storage exposes one.
+  string playlist_url = 4;
+  // Codec string per RFC 6381, e.g. "avc1.42e01f", "Opus".
+  string codecs = 5;
+  uint32 segment_count = 6;
+  int64 duration_ms = 7;
+  int64 size_bytes = 8;
+}
+
+// RecordingInfo is the full state of a recording.
+message RecordingInfo {
+  // Server-assigned id, prefixed "RC_".
+  string recording_id = 1;
+  string room = 2;
+  string room_sid = 3;
+  RecordingStatus status = 4;
+  // Unix milliseconds.
+  int64 started_at_ms = 5;
+  int64 ended_at_ms = 6;
+  string error = 7;
+  // Master playlist location, when there is one.
+  string master_playlist_location = 8;
+  repeated RecordingOutput outputs = 9;
+  StartRecordingRequest request = 10;
+  // Worker handling the recording.
+  string worker_id = 11;
+}
+
+// RecordingJob is what a worker receives.
+message RecordingJob {
+  RecordingInfo recording = 1;
+  // WebSocket URL of the node hosting the room, e.g. "ws://tessera:7880".
+  string ws_url = 2;
+  // Access token with grants: room_join, hidden, recorder, can_subscribe.
+  string token = 3;
+}
+
+// ClaimJobRequest asks for work.
+message ClaimJobRequest {
+  string worker_id = 1;
+  // Free capacity units (1 unit = one remuxed track; transcoding costs more).
+  uint32 available_capacity = 2;
+  // Long-poll timeout, max 30.
+  uint32 wait_seconds = 3;
+  string version = 4;
+}
+
+// ClaimJobResponse carries at most one job.
+message ClaimJobResponse {
+  RecordingJob job = 1;
+}
+
+// UpdateJobRequest reports progress.
+message UpdateJobRequest {
+  string worker_id = 1;
+  string recording_id = 2;
+  RecordingStatus status = 3;
+  string error = 4;
+  repeated RecordingOutput outputs = 5;
+  string master_playlist_location = 6;
+}
+
+// UpdateJobResponse is empty.
+message UpdateJobResponse {}
+
+// HeartbeatRequest is sent every 5 s by each worker.
+message HeartbeatRequest {
+  string worker_id = 1;
+  repeated string recording_ids = 2;
+  uint32 available_capacity = 3;
+}
+
+// HeartbeatResponse tells the worker which recordings to stop.
+message HeartbeatResponse {
+  repeated string stop_recording_ids = 1;
+}

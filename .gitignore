@@ -1,0 +1,25 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+# Node
+node_modules/
+sdk/js/dist/
+examples/web-demo/dist/
+test-results/
+playwright-report/
+# Java
+sdk/java/target/
+examples/java-spring/target/
+# Local data
+/data/
+/recordings/
+*.local.yaml
+.env
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store

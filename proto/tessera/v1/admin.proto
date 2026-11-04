@@ -1,0 +1,146 @@
+// Admin API: room and participant management.
+//
+// Served with the Twirp v7 wire protocol at
+// POST /twirp/tessera.v1.RoomService/<Method>
+// with Content-Type application/protobuf or application/json, and
+// Authorization: Bearer <access token with admin grants>. See docs/PROTOCOL.md.
+syntax = "proto3";
+
+package tessera.v1;
+
+import "tessera/v1/models.proto";
+
+option go_package = "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1;tesserav1";
+option java_multiple_files = true;
+option java_outer_classname = "AdminProto";
+option java_package = "io.github.keshavgoyal26.tessera.proto.v1";
+
+// RoomService manages rooms and participants.
+service RoomService {
+  // Creates a room, or returns the existing room with the same name. Grant: room_create.
+  rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
+  // Lists active rooms. Grant: room_list.
+  rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+  // Deletes a room and disconnects everyone. Grant: room_create.
+  rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+  // Updates room metadata and notifies participants. Grant: room_admin.
+  rpc UpdateRoomMetadata(UpdateRoomMetadataRequest) returns (UpdateRoomMetadataResponse);
+  // Lists participants of a room (including hidden ones). Grant: room_admin.
+  rpc ListParticipants(ListParticipantsRequest) returns (ListParticipantsResponse);
+  // Gets one participant. Grant: room_admin.
+  rpc GetParticipant(GetParticipantRequest) returns (GetParticipantResponse);
+  // Removes a participant from a room. Grant: room_admin.
+  rpc RemoveParticipant(RemoveParticipantRequest) returns (RemoveParticipantResponse);
+  // Mutes or unmutes a published track. Grant: room_admin.
+  rpc MutePublishedTrack(MutePublishedTrackRequest) returns (MutePublishedTrackResponse);
+  // Updates name, metadata, attributes or permissions of a participant. Grant: room_admin.
+  rpc UpdateParticipant(UpdateParticipantRequest) returns (UpdateParticipantResponse);
+}
+
+// CreateRoomRequest creates a room.
+message CreateRoomRequest {
+  string name = 1;
+  uint32 empty_timeout_seconds = 2;
+  uint32 departure_timeout_seconds = 3;
+  uint32 max_participants = 4;
+  string metadata = 5;
+  // Restrict publish codecs; empty = server defaults.
+  repeated Codec enabled_codecs = 6;
+  // Prefer H.264 so recordings can be remuxed without transcoding.
+  bool recording_enabled = 7;
+}
+
+// CreateRoomResponse returns the room.
+message CreateRoomResponse {
+  Room room = 1;
+}
+
+// ListRoomsRequest lists rooms.
+message ListRoomsRequest {
+  // Filter by names; empty = all rooms.
+  repeated string names = 1;
+}
+
+// ListRoomsResponse returns rooms.
+message ListRoomsResponse {
+  repeated Room rooms = 1;
+}
+
+// DeleteRoomRequest deletes a room.
+message DeleteRoomRequest {
+  string room = 1;
+}
+
+// DeleteRoomResponse is empty.
+message DeleteRoomResponse {}
+
+// UpdateRoomMetadataRequest sets room metadata.
+message UpdateRoomMetadataRequest {
+  string room = 1;
+  string metadata = 2;
+}
+
+// UpdateRoomMetadataResponse returns the room.
+message UpdateRoomMetadataResponse {
+  Room room = 1;
+}
+
+// ListParticipantsRequest lists participants.
+message ListParticipantsRequest {
+  string room = 1;
+}
+
+// ListParticipantsResponse returns participants.
+message ListParticipantsResponse {
+  repeated ParticipantInfo participants = 1;
+}
+
+// GetParticipantRequest gets a participant by identity.
+message GetParticipantRequest {
+  string room = 1;
+  string identity = 2;
+}
+
+// GetParticipantResponse returns a participant.
+message GetParticipantResponse {
+  ParticipantInfo participant = 1;
+}
+
+// RemoveParticipantRequest removes a participant.
+message RemoveParticipantRequest {
+  string room = 1;
+  string identity = 2;
+}
+
+// RemoveParticipantResponse is empty.
+message RemoveParticipantResponse {}
+
+// MutePublishedTrackRequest mutes or unmutes a track.
+message MutePublishedTrackRequest {
+  string room = 1;
+  string identity = 2;
+  string track_sid = 3;
+  bool muted = 4;
+}
+
+// MutePublishedTrackResponse returns the track.
+message MutePublishedTrackResponse {
+  TrackInfo track = 1;
+}
+
+// UpdateParticipantRequest updates a participant. Unset fields are unchanged.
+message UpdateParticipantRequest {
+  string room = 1;
+  string identity = 2;
+  optional string metadata = 3;
+  optional string name = 4;
+  // Replaces the permission set when present.
+  ParticipantPermission permission = 5;
+  // Merged into existing attributes; an empty value deletes the key.
+  map<string, string> attributes = 6;
+}
+
+// UpdateParticipantResponse returns the participant.
+message UpdateParticipantResponse {
+  ParticipantInfo participant = 1;
+}

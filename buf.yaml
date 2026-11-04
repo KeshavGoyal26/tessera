@@ -1,0 +1,10 @@
+# buf configuration (v2). The protobuf module lives in proto/.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE
