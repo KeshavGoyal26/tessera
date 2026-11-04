@@ -27,10 +27,24 @@
     <div class="controls">
       <button id="mic" type="button" disabled>Unmute mic</button>
       <button id="cam" type="button" disabled>Start camera</button>
+      <button id="screen" type="button" disabled>Share screen</button>
+      <select id="mic-device" title="Microphone" disabled></select>
+      <select id="cam-device" title="Camera" disabled></select>
+      <label class="inline">
+        Quality
+        <select id="quality" disabled>
+          <option value="auto">Auto (adaptive)</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
+      <button id="stats-toggle" type="button" aria-pressed="false">Stats</button>
       <button id="leave" type="button" disabled>Leave</button>
     </div>
 
     <p id="error" class="error" role="alert" hidden></p>
+    <pre id="stats" class="stats" hidden aria-live="off"></pre>
 
     <main id="grid" class="grid" aria-label="Participants"></main>
 

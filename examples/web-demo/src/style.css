@@ -67,3 +67,57 @@ label {
   padding: 2px 6px;
   position: absolute;
 }
+
+button,
+select,
+input {
+  font: inherit;
+  padding: 6px 10px;
+}
+.controls {
+  align-items: center;
+}
+label.inline {
+  align-items: center;
+  flex: 0 0 auto;
+  flex-direction: row;
+}
+.stats {
+  background: #111;
+  border-radius: 8px;
+  color: #9fe;
+  font-size: 0.75rem;
+  margin: 0 0 12px;
+  overflow-x: auto;
+  padding: 8px 12px;
+}
+.tile .badge {
+  background: rgb(0 0 0 / 60%);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+.tile.muted .name::after {
+  content: " (muted)";
+}
+.tile.screen {
+  grid-column: span 2;
+}
+.tile.paused::after {
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  content: "video paused (low bandwidth)";
+  font-size: 0.8rem;
+  inset: 0;
+  padding: 8px;
+  position: absolute;
+}
+@media (max-width: 600px) {
+  .tile.screen {
+    grid-column: span 1;
+  }
+}
