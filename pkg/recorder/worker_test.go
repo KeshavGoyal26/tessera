@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 )
 
 type fakeConnector struct {
-	mu     sync.Mutex
 	tracks []Track
 	joined chan struct{}
 	closed func(error)
@@ -193,7 +191,7 @@ func TestWorkerTrackRecordingEndsWithTrackAndReportsLoss(t *testing.T) {
 	cfg.WorkerID, cfg.Capacity, cfg.Heartbeat = "w1", 4, 50*time.Millisecond
 	cfg.Storage.LocalRoot = t.TempDir()
 	w, _ := NewWorker(cfg, nil, nil, WithJobAPI(coord), WithConnector(conn))
-	go w.Run(ctx)
+	go func() { _ = w.Run(ctx) }()
 
 	info, _ := coord.StartRecording(ctx, trackReq("demo"))
 	<-conn.joined
@@ -205,7 +203,7 @@ func TestWorkerTrackRecordingEndsWithTrackAndReportsLoss(t *testing.T) {
 			if i == 60 && j == 0 {
 				continue
 			}
-			v.Push(pkt)
+			_ = v.Push(pkt)
 		}
 	}
 	v.Close()

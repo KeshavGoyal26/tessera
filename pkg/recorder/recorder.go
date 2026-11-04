@@ -12,9 +12,10 @@ package recorder
 
 import (
 	"context"
-	"github.com/prometheus/client_golang/prometheus"
 	"log/slog"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"

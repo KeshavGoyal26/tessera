@@ -72,11 +72,14 @@ Known issues / next steps:
 
 ## WP4: HLS recorder
 
-- [ ] M1 H.264 depacketizer, fMP4 writer, segmenter, playlists (ffprobe-validated)
-- [ ] M2 Opus in fMP4, master playlist, local and S3 storage
-- [ ] M3 Coordinator + Worker end to end
-- [ ] M4 AAC mode, VP8 fallback, failure handling, capacity
-- [ ] M5 Participant recordings, hardening
+- [x] M1 H.264 depacketizer, fMP4 writer, segmenter, playlists (ffprobe/ffmpeg-decode validated, wrap/loss/reorder tested)
+- [x] M2 Opus in fMP4, A/V alignment (origin + RTCP SR clock), master playlist, local + S3 storage (fake S3 server in tests; MinIO not run)
+- [~] M3 Coordinator + Worker end to end with fakes and in-memory RTP (done); against a real server with `pkg/client` (not started: client is still a stub; `ClientConnector` is written against its interface)
+- [x] M4 AAC mode and VP8 fallback via FFmpeg, heartbeat failure handling, capacity, `/stats` + Prometheus
+- [~] M5 Participant recordings (done), SPS change/clock jump handling (done, unit tested); long-run soak, CPU benchmark, hls.js headless test not done
+- Docs: `docs/RECORDING.md`
+- Known issues: RTCP SR not wired from `client.RemoteTrack` (arrival-time fallback); `Room.active_recording` not set; composite unsupported; `testdata/rtp` fixtures are generated at test time with ffmpeg (`pkg/hls/hlstest`), not checked in; no CI `recorder` job yet (CI needs ffmpeg installed: tests skip without it).
+- Next steps: (1) once `pkg/client` lands, implement `OnSenderReport` on `RemoteTrack` + real-server e2e test; (2) add CI job installing ffmpeg; (3) Playwright + hls.js playback test; (4) benchmark 100 tracks/vCPU; (5) wire `recorder.NewCoordinator` in `cmd/tessera` if not done by WP3.
 
 ## WP5: Integration, load and performance (after WP1 M3)
 

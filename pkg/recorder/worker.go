@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"google.golang.org/protobuf/proto"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/hls"
@@ -64,7 +63,6 @@ type Worker struct {
 	active map[string]*jobRun
 	used   int
 	wg     sync.WaitGroup
-	ready  error
 }
 
 // NewWorker creates a worker.
@@ -452,6 +450,7 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 		sink.onSegmentDelay = r.w.stats.observeSegmentDelay
 		tr, err := newTrackRecorder(t, sink, trackOptions{
 			segment: r.segmentDuration(), live: r.req.GetHls().GetPlaylistType() != tesserav1.PlaylistType_PLAYLIST_TYPE_VOD, origin: r.origin,
+			aac: r.wantAAC(), ffmpeg: r.w.cfg.FFmpegPath, reserve: r.w.reserve,
 		}, r.w.logger)
 		if err != nil {
 			r.mu.Unlock()
@@ -474,6 +473,28 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 				r.w.logger.Warn("track recording failed", "track", t.SID, "err", rt.err)
 			}
 		}()
+	}
+}
+
+func (r *jobRun) wantAAC() bool {
+	switch r.req.GetHls().GetAudioCodec() {
+	case tesserav1.AudioCodec_AUDIO_CODEC_AAC:
+		return true
+	case tesserav1.AudioCodec_AUDIO_CODEC_OPUS:
+		return false
+	}
+	return strings.EqualFold(r.w.cfg.HLS.AudioCodec, "aac")
+}
+
+// reserve takes extra capacity units (transcoding costs more than remuxing).
+func (w *Worker) reserve(n int) func() {
+	w.mu.Lock()
+	w.used += n
+	w.mu.Unlock()
+	return func() {
+		w.mu.Lock()
+		w.used -= n
+		w.mu.Unlock()
 	}
 }
 
@@ -554,8 +575,4 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 		return outs, master, errors.New(strings.Join(errMsgs, "; "))
 	}
 	return outs, master, nil
-}
-
-func cloneInfo(i *tesserav1.RecordingInfo) *tesserav1.RecordingInfo {
-	return proto.Clone(i).(*tesserav1.RecordingInfo)
 }

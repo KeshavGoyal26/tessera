@@ -72,16 +72,26 @@ type trackRecorder struct {
 	sr               atomic.Pointer[srEvent]
 
 	codecString string
-	width       uint32
-	height      uint32
 	firstWall   atomic.Int64 // unix nano of first sample
 	started     chan struct{}
+
+	// FFmpeg fallbacks.
+	aacTC   *aacTranscoder
+	vp8TC   *vp8Transcoder
+	tcOut   <-chan transcoded
+	tcDone  bool
+	release func()
 }
 
 type trackOptions struct {
 	segment time.Duration
 	live    bool
 	origin  time.Time
+	// aac transcodes Opus to AAC-LC with FFmpeg.
+	aac    bool
+	ffmpeg string
+	// reserve takes extra capacity units for CPU-heavy pipelines and returns the release func.
+	reserve func(n int) func()
 }
 
 func newTrackRecorder(tr Track, sink *storageSink, opts trackOptions, logger interface{ Warn(string, ...any) }) (*trackRecorder, error) {
@@ -93,6 +103,9 @@ func newTrackRecorder(tr Track, sink *storageSink, opts trackOptions, logger int
 		r.depack = &hls.H264Depacketizer{}
 		r.clock.Rate = 90000
 		r.parseFmtp(tr.RTP.Codec().SDPFmtpLine)
+	case "video/vp8":
+		r.codec = "VP8"
+		r.clock.Rate = 90000
 	case "audio/opus":
 		r.codec = "Opus"
 		r.clock.Rate = 48000
@@ -157,7 +170,7 @@ func (r *trackRecorder) run(ctx context.Context) error {
 			}
 		}
 	}()
-	if r.codec == "H264" {
+	if r.codec != "Opus" {
 		_ = r.tr.RTP.RequestKeyFrame()
 		r.lastKeyReq = time.Now()
 	}
@@ -172,6 +185,15 @@ loop:
 				break loop
 			}
 			if err := r.handle(ctx, p, time.Now()); err != nil {
+				procErr = err
+				break loop
+			}
+		case e, ok := <-r.tcOut:
+			if !ok {
+				r.tcOut, r.tcDone = nil, true
+				continue
+			}
+			if err := r.writeTranscoded(ctx, e); err != nil {
 				procErr = err
 				break loop
 			}
@@ -201,6 +223,12 @@ loop:
 			procErr = r.writeAU(fctx, au)
 		}
 	}
+	if err := r.finishTranscoder(fctx); err != nil && procErr == nil {
+		procErr = err
+	}
+	if r.release != nil {
+		r.release()
+	}
 	if r.mux != nil {
 		if err := r.mux.Close(fctx); err != nil && procErr == nil {
 			procErr = err
@@ -221,7 +249,7 @@ loop:
 }
 
 func (r *trackRecorder) maybeKeyframe(now time.Time) {
-	if r.codec != "H264" || r.mux != nil && !r.needKey || now.Sub(r.lastKeyReq) < time.Second {
+	if r.codec == "Opus" || r.mux != nil && !r.needKey || now.Sub(r.lastKeyReq) < time.Second {
 		return
 	}
 	r.lastKeyReq = now
@@ -300,12 +328,44 @@ func (r *trackRecorder) process(ctx context.Context, p *rtp.Packet, now time.Tim
 			return nil
 		}
 		d := r.dts(p.Timestamp, now)
+		if r.opts.aac {
+			if r.aacTC == nil {
+				tc, err := newAACTranscoder(context.WithoutCancel(ctx), r.opts.ffmpeg, d)
+				if err != nil {
+					return err
+				}
+				r.aacTC, r.tcOut = tc, tc.out
+				r.codecString = "mp4a.40.2"
+				if r.opts.reserve != nil {
+					r.release = r.opts.reserve(1)
+				}
+			}
+			return r.aacTC.write(append([]byte(nil), p.Payload...), hls.OpusFrameSamples(p.Payload))
+		}
 		if r.mux == nil {
-			if err := r.createMuxer(hls.TrackSpec{ID: 1, Codec: hls.CodecOpus, Timescale: 48000, Channels: 2}, d, now); err != nil {
+			if err := r.createMuxer(hls.TrackSpec{ID: 1, Codec: hls.CodecOpus, Timescale: 48000, Channels: 2}, d); err != nil {
 				return err
 			}
 		}
 		return r.mux.WriteSample(ctx, hls.Sample{DTS: d, Data: append([]byte(nil), p.Payload...)})
+	case "VP8":
+		if r.vp8TC == nil {
+			tc, err := newVP8Transcoder(context.WithoutCancel(ctx), r.opts.ffmpeg)
+			if err != nil {
+				return err
+			}
+			r.vp8TC, r.tcOut = tc, tc.out
+			if r.opts.reserve != nil {
+				r.release = r.opts.reserve(3)
+			}
+		}
+		err := r.vp8TC.push(p, func(ts uint32) int64 { return r.dts(ts, now) })
+		if errors.Is(err, hls.ErrPacketLoss) {
+			r.needKey = true
+			r.maybeKeyframe(now)
+			err = nil
+		}
+		return err
 	default:
 		aus, err := r.depack.Push(p)
 		if errors.Is(err, hls.ErrPacketLoss) {
@@ -324,8 +384,47 @@ func (r *trackRecorder) process(ctx context.Context, p *rtp.Packet, now time.Tim
 func (r *trackRecorder) unwrapReady() bool { return r.haveSSR }
 
 func (r *trackRecorder) writeAU(ctx context.Context, au *hls.AccessUnit) error {
-	now := time.Now()
-	d := r.dts(au.RTPTimestamp, now)
+	return r.writeAUAt(ctx, au, r.dts(au.RTPTimestamp, time.Now()))
+}
+
+// writeTranscoded handles output of an FFmpeg pipeline.
+func (r *trackRecorder) writeTranscoded(ctx context.Context, e transcoded) error {
+	if e.au != nil {
+		return r.writeAUAt(ctx, e.au, e.dts)
+	}
+	if r.mux == nil {
+		spec := hls.TrackSpec{ID: 1, Codec: hls.CodecAAC, Timescale: 48000, SampleRate: 48000, Channels: 2, AudioSpecificConfig: aacConfig48kStereo}
+		if err := r.createMuxer(spec, e.dts); err != nil {
+			return err
+		}
+	}
+	return r.mux.WriteSample(ctx, hls.Sample{DTS: e.dts, Data: e.data})
+}
+
+// finishTranscoder closes FFmpeg's input and writes the frames still in flight.
+func (r *trackRecorder) finishTranscoder(ctx context.Context) error {
+	var result func() error
+	switch {
+	case r.aacTC != nil:
+		r.aacTC.closeInput()
+		result = r.aacTC.result
+	case r.vp8TC != nil:
+		r.vp8TC.closeInput()
+		result = r.vp8TC.result
+	default:
+		return nil
+	}
+	if !r.tcDone {
+		for e := range r.tcOut {
+			if err := r.writeTranscoded(ctx, e); err != nil {
+				return err
+			}
+		}
+	}
+	return result()
+}
+
+func (r *trackRecorder) writeAUAt(ctx context.Context, au *hls.AccessUnit, d int64) error {
 	sps, pps := au.SPS, au.PPS
 	if sps == nil && r.mux == nil {
 		sps, pps = r.fmtpSPS, r.fmtpPPS
@@ -339,11 +438,11 @@ func (r *trackRecorder) writeAU(ctx context.Context, au *hls.AccessUnit) error {
 	if sps != nil && len(pps) > 0 && !bytes.Equal(sps, r.spec.SPS) {
 		info, err := hls.ParseSPS(sps)
 		if err != nil {
-			return nil // bad parameter set: skip
+			return nil //nolint:nilerr // a malformed parameter set is skipped, not fatal
 		}
 		spec := hls.TrackSpec{ID: 1, Codec: hls.CodecH264, Timescale: 90000, Width: info.Width, Height: info.Height, SPS: sps, PPS: pps}
 		if r.mux == nil {
-			if err := r.createMuxer(spec, d, now); err != nil {
+			if err := r.createMuxer(spec, d); err != nil {
 				return err
 			}
 		} else if err := r.mux.UpdateSpec(ctx, spec); err != nil {
@@ -364,7 +463,7 @@ func (r *trackRecorder) writeAU(ctx context.Context, au *hls.AccessUnit) error {
 	return r.mux.WriteSample(ctx, hls.Sample{DTS: d, KeyFrame: au.KeyFrame, Data: au.AVCC()})
 }
 
-func (r *trackRecorder) createMuxer(spec hls.TrackSpec, dts int64, now time.Time) error {
+func (r *trackRecorder) createMuxer(spec hls.TrackSpec, dts int64) error {
 	start := r.clock.At(dts)
 	m, err := hls.NewMuxer(hls.MuxerConfig{
 		TargetSegmentDuration: r.opts.segment, Live: r.opts.live, StartTime: start, Origin: r.opts.origin,

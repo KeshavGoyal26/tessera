@@ -180,7 +180,7 @@ func TestCoordinatorHeartbeatTimeout(t *testing.T) {
 	ctx := context.Background()
 	// Never-started job is re-queued.
 	a, _ := c.StartRecording(ctx, trackReq("r"))
-	c.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "dead", AvailableCapacity: 1})
+	_, _ = c.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "dead", AvailableCapacity: 1})
 	clk.add(2 * time.Hour)
 	c.Reap()
 	r, _ := c.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "alive", AvailableCapacity: 1})
@@ -188,7 +188,7 @@ func TestCoordinatorHeartbeatTimeout(t *testing.T) {
 		t.Fatal("job must be re-queued")
 	}
 	// Active job fails.
-	c.UpdateJob(ctx, &tesserav1.UpdateJobRequest{WorkerId: "alive", RecordingId: a.RecordingId, Status: tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE})
+	_ = c.UpdateJob(ctx, &tesserav1.UpdateJobRequest{WorkerId: "alive", RecordingId: a.RecordingId, Status: tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE})
 	clk.add(2 * time.Hour)
 	c.Reap()
 	got, _ := c.GetRecording(ctx, a.RecordingId)
