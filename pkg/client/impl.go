@@ -34,6 +34,28 @@ type RemoteTrack struct {
 	Info                *tesserav1.TrackInfo
 	track               *webrtc.TrackRemote
 	pc                  *webrtc.PeerConnection
+	onSR                atomic.Pointer[func(ntp uint64, rtpTimestamp uint32)]
+}
+
+// OnSenderReport registers a callback for RTCP sender reports of this track
+// (NTP time and RTP timestamp), e.g. for A/V alignment in the recorder
+// (satisfies recorder.SRSource).
+func (t *RemoteTrack) OnSenderReport(f func(ntp uint64, rtpTimestamp uint32)) { t.onSR.Store(&f) }
+
+func (t *RemoteTrack) readRTCP(r *webrtc.RTPReceiver) {
+	for {
+		pkts, _, err := r.ReadRTCP()
+		if err != nil {
+			return
+		}
+		for _, p := range pkts {
+			if sr, ok := p.(*rtcp.SenderReport); ok && sr.SSRC == uint32(t.track.SSRC()) {
+				if f := t.onSR.Load(); f != nil {
+					(*f)(sr.NTPTime, sr.RTPTime)
+				}
+			}
+		}
+	}
 }
 
 // Read reads one RTP packet into b.
@@ -495,7 +517,7 @@ func (c *client) handleOffer(sd *tesserav1.SessionDescription) {
 		Type: "answer", Sdp: c.sub.LocalDescription().SDP, Id: sd.GetId()}}})
 }
 
-func (c *client) onTrack(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+func (c *client) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 	c.mu.Lock()
 	rt := &RemoteTrack{SID: tr.ID(), ParticipantSID: tr.StreamID(), track: tr, pc: c.sub}
 	if p := c.remotes[tr.StreamID()]; p != nil {
@@ -507,6 +529,7 @@ func (c *client) onTrack(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		}
 	}
 	c.tracks[rt.SID] = rt
+	go rt.readRTCP(rr)
 	waiters := c.waiting[rt.SID]
 	delete(c.waiting, rt.SID)
 	cb := c.cb.OnTrackSubscribed

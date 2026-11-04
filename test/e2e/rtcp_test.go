@@ -289,3 +289,36 @@ func TestPermissions(t *testing.T) {
 		t.Fatalf("hidden counted: %d", r[0].NumParticipants)
 	}
 }
+
+func TestSenderReportsReachSubscriber(t *testing.T) {
+	s := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pubC := connect(t, s, "sr", "pub")
+	_, vi := publishAV(t, ctx, pubC)
+	sub := connect(t, s, "sr", "sub")
+	rt, err := client.WaitTrack(ctx, sub, vi.Sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srs := make(chan uint32, 4)
+	rt.OnSenderReport(func(_ uint64, ts uint32) {
+		select {
+		case srs <- ts:
+		default:
+		}
+	})
+	go func() {
+		b := make([]byte, 1500)
+		for {
+			if _, err := rt.Read(b); err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-srs:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no sender report forwarded to the subscriber")
+	}
+}
