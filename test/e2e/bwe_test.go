@@ -13,6 +13,7 @@ import (
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
+	"github.com/KeshavGoyal26/tessera/pkg/room"
 )
 
 // policedConn drops inbound datagrams above rate (token bucket), emulating
@@ -152,5 +153,75 @@ func TestBWEDowngradeAndPause(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		cur, est = subStats()
 		t.Fatalf("no PAUSED stream state (layer %d estimate %d)", cur, est)
+	}
+}
+
+func TestDynacast(t *testing.T) {
+	old := room.DynacastGrace
+	room.DynacastGrace = 500 * time.Millisecond
+	t.Cleanup(func() { room.DynacastGrace = old })
+	s := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pubC := connect(t, s, "dyn", "pub")
+	updates := make(chan *tesserav1.SubscribedQualityUpdate, 16)
+	pubC.SetCallbacks(client.Callbacks{OnSubscribedQuality: func(u *tesserav1.SubscribedQualityUpdate) { updates <- u }})
+	layers := newSimLayers(t, "cam")
+	info, err := pubC.PublishSimulcastTrack(ctx, []webrtc.TrackLocal{layers[0].track, layers[1].track, layers[2].track},
+		client.PublishOptions{Name: "cam", Width: 1280, Height: 720})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tk := time.NewTicker(20 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tk.C:
+				for _, l := range layers {
+					l.writeFrame()
+				}
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stop); <-done })
+	sub := connect(t, s, "dyn", "sub")
+	if _, err := client.WaitTrack(ctx, sub, info.Sid); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.UpdateTrackSettings(ctx, &tesserav1.UpdateTrackSettings{TrackSids: []string{info.Sid}, Quality: tesserav1.VideoQuality_VIDEO_QUALITY_LOW}); err != nil {
+		t.Fatal(err)
+	}
+	enabled := func(u *tesserav1.SubscribedQualityUpdate) map[tesserav1.VideoQuality]bool {
+		m := map[tesserav1.VideoQuality]bool{}
+		for _, q := range u.SubscribedQualities {
+			m[q.Quality] = q.Enabled
+		}
+		return m
+	}
+	select {
+	case u := <-updates:
+		m := enabled(u)
+		if u.TrackSid != info.Sid || !m[tesserav1.VideoQuality_VIDEO_QUALITY_LOW] || m[tesserav1.VideoQuality_VIDEO_QUALITY_MEDIUM] || m[tesserav1.VideoQuality_VIDEO_QUALITY_HIGH] {
+			t.Fatalf("update %v", u)
+		}
+	case <-ctx.Done():
+		t.Fatal("no dynacast update")
+	}
+	if err := sub.UpdateTrackSettings(ctx, &tesserav1.UpdateTrackSettings{TrackSids: []string{info.Sid}, Quality: tesserav1.VideoQuality_VIDEO_QUALITY_HIGH}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case u := <-updates:
+		if !enabled(u)[tesserav1.VideoQuality_VIDEO_QUALITY_HIGH] {
+			t.Fatalf("update %v", u)
+		}
+	case <-ctx.Done():
+		t.Fatal("layer not re-enabled")
 	}
 }

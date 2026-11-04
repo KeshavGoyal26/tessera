@@ -26,6 +26,53 @@ type pubTrack struct {
 	cid  string
 	info *tesserav1.TrackInfo
 	recv *rtc.ReceiverImpl
+	// Dynacast state (RTCP ticker goroutine only).
+	lastNeeded [types.MaxSpatialLayers]time.Time
+	enabled    int32 // highest enabled layer last signalled; -2 = never sent
+}
+
+// DynacastGrace is how long an unused layer stays enabled before the
+// publisher is told to stop sending it (ARCHITECTURE.md 4.3).
+var DynacastGrace = 10 * time.Second
+
+// dynacast computes the highest layer any subscriber wants and returns an
+// update for the publisher when the enabled set changes.
+func (t *pubTrack) dynacast(now time.Time) *tesserav1.SubscribedQualityUpdate {
+	if !t.info.GetSimulcast() || t.info.GetType() != tesserav1.TrackType_TRACK_TYPE_VIDEO {
+		return nil
+	}
+	maxNeeded := int32(-1)
+	for _, d := range t.recv.DownTracks() {
+		dt, ok := d.(*rtc.DownTrackImpl)
+		if !ok {
+			continue
+		}
+		if m := dt.MaxLayer(); m.IsValid() && m.Spatial > maxNeeded {
+			maxNeeded = m.Spatial
+		}
+	}
+	for s := int32(0); s <= maxNeeded && s < types.MaxSpatialLayers; s++ {
+		t.lastNeeded[s] = now
+	}
+	enabled := int32(-1)
+	for s := int32(0); s < types.MaxSpatialLayers; s++ {
+		if !t.lastNeeded[s].IsZero() && now.Sub(t.lastNeeded[s]) < DynacastGrace {
+			enabled = s
+		}
+	}
+	if t.enabled == -2 && enabled == types.MaxSpatialLayers-1 {
+		t.enabled = enabled // publisher starts with all layers on
+		return nil
+	}
+	if enabled == t.enabled {
+		return nil
+	}
+	t.enabled = enabled
+	upd := &tesserav1.SubscribedQualityUpdate{TrackSid: t.info.GetSid()}
+	for s := int32(0); s < types.MaxSpatialLayers; s++ {
+		upd.SubscribedQualities = append(upd.SubscribedQualities, &tesserav1.SubscribedQuality{Quality: types.QualityForSpatial(s), Enabled: s <= enabled})
+	}
+	return upd
 }
 
 type subscription struct {
@@ -239,10 +286,18 @@ func (p *Participant) rtcpLoop() {
 			dts = append(dts, s.dt)
 		}
 		recvs := make([]*rtc.ReceiverImpl, 0, len(p.tracks))
+		ptracks := make([]*pubTrack, 0, len(p.tracks))
 		for _, tr := range p.tracks {
 			recvs = append(recvs, tr.recv)
+			ptracks = append(ptracks, tr)
 		}
 		p.mu.Unlock()
+		now := time.Now()
+		for _, tr := range ptracks {
+			if upd := tr.dynacast(now); upd != nil {
+				p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_SubscribedQualityUpdate{SubscribedQualityUpdate: upd}})
+			}
+		}
 		if sub != nil && len(dts) > 0 {
 			var pkts []rtcp.Packet
 			for _, dt := range dts {
@@ -582,7 +637,7 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 			DisableDtx: req.GetDisableDtx(), Source: req.GetSource(), Layers: req.GetLayers(),
 			Stereo: req.GetStereo(), Red: req.GetRed(), Stream: req.GetStream(),
 		}
-		t = &pubTrack{cid: req.GetCid(), info: info}
+		t = &pubTrack{cid: req.GetCid(), info: info, enabled: -2}
 		p.pending[req.GetCid()] = t
 	}
 	info := proto.Clone(t.info).(*tesserav1.TrackInfo)
