@@ -1,0 +1,268 @@
+package rtc
+
+import (
+	"fmt"
+	"log/slog"
+	"net"
+	"net/netip"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/pion/ice/v4"
+	"github.com/pion/interceptor"
+	"github.com/pion/logging"
+	"github.com/pion/webrtc/v4"
+	"github.com/prometheus/client_golang/prometheus"
+
+	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
+	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/stats"
+)
+
+// RTP header extension URIs (ADR-0006).
+const (
+	extMID          = "urn:ietf:params:rtp-hdrext:sdes:mid"
+	extRID          = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
+	extRRID         = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
+	extAudioLevel   = "urn:ietf:params:rtp-hdrext:ssrc-audio-level"
+	extTWCC         = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
+	audioLevelID    = 1 // fixed id used towards subscribers
+	videoRTCPFBNack = "nack"
+)
+
+var videoFeedback = []webrtc.RTCPFeedback{
+	{Type: "goog-remb"}, {Type: "ccm", Parameter: "fir"}, {Type: videoRTCPFBNack}, {Type: videoRTCPFBNack, Parameter: "pli"}, {Type: "transport-cc"},
+}
+
+// Codecs returns the codec set of ADR-0006 filtered by enabled MIME types
+// (nil = all). Exported for pkg/client.
+func Codecs(enabled []string) []webrtc.RTPCodecParameters {
+	all := []webrtc.RTPCodecParameters{
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1"}, PayloadType: 111},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, RTCPFeedback: videoFeedback}, PayloadType: 96},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=96"}, PayloadType: 97},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", RTCPFeedback: videoFeedback}, PayloadType: 102},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=102"}, PayloadType: 103},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f", RTCPFeedback: videoFeedback}, PayloadType: 104},
+		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=104"}, PayloadType: 105},
+	}
+	if len(enabled) == 0 {
+		return all
+	}
+	ok := map[string]bool{}
+	for _, m := range enabled {
+		ok[strings.ToLower(m)] = true
+	}
+	var out []webrtc.RTPCodecParameters
+	for _, c := range all {
+		if ok[strings.ToLower(c.MimeType)] || strings.EqualFold(c.MimeType, webrtc.MimeTypeRTX) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// NewMediaEngine registers codecs and header extensions. publisherSide
+// selects the extensions needed to receive simulcast.
+func NewMediaEngine(codecs []webrtc.RTPCodecParameters, publisherSide bool) (*webrtc.MediaEngine, error) {
+	m := &webrtc.MediaEngine{}
+	for _, c := range codecs {
+		typ := webrtc.RTPCodecTypeVideo
+		if strings.HasPrefix(strings.ToLower(c.MimeType), "audio/") {
+			typ = webrtc.RTPCodecTypeAudio
+		}
+		if err := m.RegisterCodec(c, typ); err != nil {
+			return nil, err
+		}
+	}
+	exts := []struct {
+		uri string
+		typ webrtc.RTPCodecType
+	}{{extAudioLevel, webrtc.RTPCodecTypeAudio}}
+	if publisherSide {
+		exts = append(exts,
+			struct {
+				uri string
+				typ webrtc.RTPCodecType
+			}{extMID, webrtc.RTPCodecTypeVideo},
+			struct {
+				uri string
+				typ webrtc.RTPCodecType
+			}{extRID, webrtc.RTPCodecTypeVideo},
+			struct {
+				uri string
+				typ webrtc.RTPCodecType
+			}{extRRID, webrtc.RTPCodecTypeVideo},
+			struct {
+				uri string
+				typ webrtc.RTPCodecType
+			}{extMID, webrtc.RTPCodecTypeAudio},
+		)
+	}
+	for _, e := range exts {
+		if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: e.uri}, e.typ); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
+type engine struct {
+	cfg     config.RTCConfig
+	logger  *slog.Logger
+	pubAPI  *webrtc.API
+	subAPI  *webrtc.API
+	udpMux  ice.UDPMux
+	conns   []net.PacketConn
+	iceSrv  []*tesserav1.ICEServer
+	pcCount atomic.Int64
+}
+
+// countingConn counts media datagrams for node statistics.
+type countingConn struct{ *net.UDPConn }
+
+func (c countingConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, a, err := c.UDPConn.ReadFrom(b)
+	if n > 0 {
+		stats.UDPIn.Add(n)
+	}
+	return n, a, err
+}
+
+func (c countingConn) WriteTo(b []byte, a net.Addr) (int, error) {
+	n, err := c.UDPConn.WriteTo(b, a)
+	if n > 0 {
+		stats.UDPOut.Add(n)
+	}
+	return n, err
+}
+
+func (c countingConn) ReadFromAddrPort(b []byte) (int, netip.AddrPort, error) {
+	n, a, err := c.ReadFromUDPAddrPort(b)
+	if n > 0 {
+		stats.UDPIn.Add(n)
+	}
+	return n, a, err
+}
+
+func (c countingConn) WriteToAddrPort(b []byte, a netip.AddrPort) (int, error) {
+	n, err := c.WriteToUDPAddrPort(b, a)
+	if n > 0 {
+		stats.UDPOut.Add(n)
+	}
+	return n, err
+}
+
+// NewEngine creates the engine: UDP mux socket(s), media engines and APIs.
+func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheus.Registerer, logger *slog.Logger) (Engine, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	e := &engine{cfg: rtcCfg, logger: logger}
+	se := webrtc.SettingEngine{}
+	lf := logging.NewDefaultLoggerFactory()
+	lf.DefaultLogLevel = logging.LogLevelError
+	se.LoggerFactory = lf
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
+
+	ips := rtcCfg.IPs
+	if len(ips) == 0 {
+		ips = []string{"0.0.0.0"}
+	}
+	var muxes []ice.UDPMux
+	for _, ip := range ips {
+		addr := &net.UDPAddr{IP: net.ParseIP(ip), Port: rtcCfg.UDPPort}
+		c, err := net.ListenUDP("udp", addr)
+		if err != nil {
+			e.closeConns()
+			return nil, fmt.Errorf("rtc: listen udp %s: %w", addr, err)
+		}
+		if rtcCfg.SocketBufferSize > 0 {
+			_ = c.SetReadBuffer(rtcCfg.SocketBufferSize)
+			_ = c.SetWriteBuffer(rtcCfg.SocketBufferSize)
+		}
+		e.conns = append(e.conns, c)
+		muxes = append(muxes, ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: countingConn{c}}))
+	}
+	if len(muxes) == 1 {
+		e.udpMux = muxes[0]
+	} else {
+		e.udpMux = ice.NewMultiUDPMuxDefault(muxes...)
+	}
+	se.SetICEUDPMux(e.udpMux)
+	if len(rtcCfg.IPs) > 0 {
+		allowed := map[string]bool{}
+		for _, ip := range rtcCfg.IPs {
+			allowed[net.ParseIP(ip).String()] = true
+			if net.ParseIP(ip).IsLoopback() {
+				se.SetIncludeLoopbackCandidate(true)
+			}
+		}
+		se.SetIPFilter(func(ip net.IP) bool { return allowed[ip.String()] })
+	}
+	if rtcCfg.NodeIP != "" {
+		if err := se.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+			External: []string{rtcCfg.NodeIP}, AsCandidateType: webrtc.ICECandidateTypeHost, Mode: webrtc.ICEAddressRewriteReplace,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	se.SetICETimeouts(10*time.Second, 20*time.Second, 2*time.Second)
+
+	codecs := Codecs(rtcCfg.EnabledCodecs)
+	pubME, err := NewMediaEngine(codecs, true)
+	if err != nil {
+		return nil, err
+	}
+	pubIR := &interceptor.Registry{}
+	if err := webrtc.ConfigureTWCCSender(pubME, pubIR); err != nil {
+		return nil, err
+	}
+	subME, err := NewMediaEngine(codecs, false)
+	if err != nil {
+		return nil, err
+	}
+	e.pubAPI = webrtc.NewAPI(webrtc.WithMediaEngine(pubME), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(pubIR))
+	e.subAPI = webrtc.NewAPI(webrtc.WithMediaEngine(subME), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(&interceptor.Registry{}))
+	for _, s := range rtcCfg.ICEServers {
+		e.iceSrv = append(e.iceSrv, &tesserav1.ICEServer{Urls: s.URLs, Username: s.Username, Credential: s.Credential})
+	}
+	_ = turnCfg
+	_ = reg
+	return e, nil
+}
+
+func (e *engine) closeConns() {
+	for _, c := range e.conns {
+		_ = c.Close()
+	}
+}
+
+// ICEServers implements Engine.
+func (e *engine) ICEServers(string) []*tesserav1.ICEServer { return e.iceSrv }
+
+// Ready implements Engine.
+func (e *engine) Ready() error { return nil }
+
+// Close implements Engine.
+func (e *engine) Close() error {
+	if e.udpMux != nil {
+		_ = e.udpMux.Close()
+	}
+	e.closeConns()
+	return nil
+}
+
+// PeerConnections returns the number of open PeerConnections.
+func (e *engine) PeerConnections() int { return int(e.pcCount.Load()) }
+
+// PeerConnectionCounter is implemented by the engine.
+type PeerConnectionCounter interface{ PeerConnections() int }
+
+// monotonic clock base for arrival times.
+var clockBase = time.Now()
+
+// Now returns monotonic nanoseconds since process start.
+func Now() int64 { return int64(time.Since(clockBase)) }

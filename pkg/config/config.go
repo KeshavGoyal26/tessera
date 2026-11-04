@@ -49,6 +49,9 @@ type RTCConfig struct {
 	// PortRangeStart/End use one port per PeerConnection instead of the mux (debug only).
 	PortRangeStart int `yaml:"port_range_start"`
 	PortRangeEnd   int `yaml:"port_range_end"`
+	// IPs restricts media sockets and host candidates to these local
+	// addresses (empty = all interfaces). Tests use ["127.0.0.1"].
+	IPs []string `yaml:"ips"`
 	// NodeIP is advertised as the host candidate address (NAT 1:1).
 	NodeIP string `yaml:"node_ip"`
 	// UseExternalIP discovers the public IP via STUN at start-up.
@@ -268,8 +271,8 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf("secret for key %q shorter than %d bytes", k, MinSecretLength))
 		}
 	}
-	if c.RTC.UDPPort <= 0 && c.RTC.PortRangeStart <= 0 {
-		errs = append(errs, errors.New("rtc.udp_port or rtc.port_range_start required"))
+	if c.RTC.UDPPort < 0 || c.RTC.UDPPort > 65535 {
+		errs = append(errs, fmt.Errorf("rtc.udp_port %d out of range (0 = random)", c.RTC.UDPPort))
 	}
 	if c.RTC.PortRangeStart > c.RTC.PortRangeEnd {
 		errs = append(errs, errors.New("rtc.port_range_start > rtc.port_range_end"))

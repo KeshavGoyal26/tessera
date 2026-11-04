@@ -31,6 +31,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
 	sig "github.com/KeshavGoyal26/tessera/pkg/signal"
+	"github.com/KeshavGoyal26/tessera/pkg/stats"
 	"github.com/KeshavGoyal26/tessera/pkg/version"
 	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
@@ -114,6 +115,8 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		return err
 	}
 	defer rooms.Close()
+
+	metrics.HandleExtra(stats.Path, stats.Handler(rooms))
 
 	recKey, recSecret := firstKey(cfg)
 	coordinator := recorder.NewCoordinator(recorder.CoordinatorParams{

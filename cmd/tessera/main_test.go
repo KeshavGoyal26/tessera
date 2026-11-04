@@ -19,6 +19,8 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	cfg := config.Default()
 	cfg.Development = true
 	cfg.Keys = map[string]string{devAPIKey: devSecret}
+	cfg.RTC.UDPPort = 0
+	cfg.RTC.IPs = []string{"127.0.0.1"}
 
 	httpLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	metricsLn, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -39,7 +41,7 @@ func TestRunServesAndShutsDown(t *testing.T) {
 		{http.MethodGet, ops + "/metrics", 200},
 		{http.MethodGet, base + "/", 200},
 		{http.MethodPost, base + "/twirp/tessera.v1.RoomService/ListRooms", 501},
-		{http.MethodGet, base + "/rtc?protocol=1", 501},
+		{http.MethodGet, base + "/rtc?protocol=1", 401},
 		{http.MethodGet, base + "/rtc?protocol=99", 426},
 	}
 	for _, c := range checks {

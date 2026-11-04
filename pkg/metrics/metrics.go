@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,9 +45,19 @@ func NewRegistry(component string) *prometheus.Registry {
 // ReadyFunc returns nil when the process is ready to serve traffic.
 type ReadyFunc func() error
 
+// Extra routes served on the operational listener (e.g. stats.Path).
+var extra sync.Map // path -> http.Handler
+
+// HandleExtra adds a route to every operational handler created afterwards.
+func HandleExtra(path string, h http.Handler) { extra.Store(path, h) }
+
 // Handler returns the operational HTTP handler.
 func Handler(cfg config.MetricsConfig, reg *prometheus.Registry, ready ReadyFunc) http.Handler {
 	mux := http.NewServeMux()
+	extra.Range(func(k, v any) bool {
+		mux.Handle(k.(string), v.(http.Handler))
+		return true
+	})
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))

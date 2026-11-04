@@ -45,12 +45,26 @@ type VP8Translation struct {
 }
 
 // nackHistory is the number of forwarded packets remembered for NACK translation.
-const nackHistory = 1024
+const nackHistory = 512
 
 type sentPacket struct {
-	inSN  uint16
-	layer int8
-	valid bool
+	inSN   uint16
+	layer  int8
+	valid  bool
+	ts     uint32
+	pid    uint16
+	tl0    uint8
+	key    uint8
+	rtxCnt uint8
+	rtxAt  int64
+}
+
+// NACKInfo describes a forwarded packet for retransmission.
+type NACKInfo struct {
+	Layer     int32
+	Original  uint16
+	Timestamp uint32
+	VP8       VP8Translation
 }
 
 // Forwarder decides and translates packets for one DownTrack.
@@ -359,7 +373,8 @@ func (f *Forwarder) translate(pkt *buffer.ExtPacket, layer int32, isSwitch bool)
 			}
 		}
 	}
-	f.sent[uint16(outSN)%nackHistory] = sentPacket{inSN: pkt.SequenceNumber, layer: int8(layer), valid: true}
+	f.sent[uint16(outSN)%nackHistory] = sentPacket{inSN: pkt.SequenceNumber, layer: int8(layer), valid: true,
+		ts: tp.Timestamp, pid: tp.VP8.PictureID, tl0: tp.VP8.TL0PICIDX, key: tp.VP8.KEYIDX}
 	return tp
 }
 
@@ -380,6 +395,28 @@ func (f *Forwarder) TranslateNACK(munged uint16) (layer int32, original uint16, 
 		return 0, 0, false
 	}
 	return int32(s.layer), s.inSN, true
+}
+
+// RetransmitInfo translates a NACKed munged SN for retransmission, applying
+// the per-SN throttle: at most 3 resends, no more often than minInterval
+// (nanoseconds, e.g. 0.8*RTT). now is monotonic nanoseconds.
+func (f *Forwarder) RetransmitInfo(munged uint16, now, minInterval int64) (NACKInfo, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.started {
+		return NACKInfo{}, false
+	}
+	if d := uint16(f.lastOutExtSN) - munged; d >= nackHistory {
+		return NACKInfo{}, false
+	}
+	s := &f.sent[munged%nackHistory]
+	if !s.valid || s.rtxCnt >= 3 || (s.rtxAt != 0 && now-s.rtxAt < minInterval) {
+		return NACKInfo{}, false
+	}
+	s.rtxCnt++
+	s.rtxAt = now
+	return NACKInfo{Layer: int32(s.layer), Original: s.inSN, Timestamp: s.ts,
+		VP8: VP8Translation{PictureID: s.pid, TL0PICIDX: s.tl0, KEYIDX: s.key}}, true
 }
 
 // PaddingParams returns munged (sn, ts) for n padding-only probe packets: the

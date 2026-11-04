@@ -6,10 +6,14 @@ package signal
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+
+	"github.com/coder/websocket"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
@@ -129,19 +133,88 @@ func NewServer(cfg config.SignalConfig, verifier auth.Verifier, handler SessionH
 	return &Server{cfg: cfg, verifier: verifier, handler: handler, logger: logger}
 }
 
-// ServeHTTP implements http.Handler. Phase 0 stub: 501 after parameter checks.
+// ResumeFailed returns an Admit error that maps to HTTP 409 (the client
+// must perform a full reconnect, PROTOCOL.md 2.6).
+func ResumeFailed(msg string) error { return &resumeError{msg: msg} }
+
+type resumeError struct{ msg string }
+
+func (e *resumeError) Error() string { return "resume impossible: " + e.msg }
+
+// Subprotocol is the optional WebSocket subprotocol echoed by the server.
+const Subprotocol = "tessera.v1"
+
+// ServeHTTP implements http.Handler: token check and Admit before the
+// upgrade, then the session runs on the request goroutine.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if _, err := ParseConnectParams(r.URL.Query(), r.RemoteAddr); err != nil {
+	p, err := ParseConnectParams(r.URL.Query(), r.RemoteAddr)
+	if err != nil {
 		writeHTTPError(w, err)
 		return
 	}
-	writeHTTPError(w, errs.NotImplemented("signal websocket"))
+	token := r.URL.Query().Get("access_token")
+	if token == "" {
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			token = strings.TrimPrefix(h, "Bearer ")
+		}
+	}
+	if token == "" {
+		writeHTTPError(w, errs.New(errs.CodeUnauthenticated, "missing access token"))
+		return
+	}
+	if s.verifier == nil || s.handler == nil {
+		writeHTTPError(w, errs.New(errs.CodeUnavailable, "signaling not configured"))
+		return
+	}
+	claims, err := s.verifier.Verify(token)
+	if err != nil {
+		writeHTTPError(w, err)
+		return
+	}
+	if claims.Grants == nil || !claims.Grants.RoomJoin || claims.Grants.Room == "" {
+		writeHTTPError(w, errs.New(errs.CodePermissionDenied, "token lacks room_join grant"))
+		return
+	}
+	if claims.Identity() == "" {
+		writeHTTPError(w, errs.New(errs.CodeInvalidArgument, "token has no identity"))
+		return
+	}
+	if err := s.handler.Admit(r.Context(), claims, p); err != nil {
+		writeHTTPError(w, err)
+		return
+	}
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols:       []string{Subprotocol},
+		InsecureSkipVerify: true, // browsers on other origins are authenticated by token
+	})
+	if err != nil {
+		return
+	}
+	maxSize := s.cfg.MaxMessageSize
+	if maxSize <= 0 {
+		maxSize = 1 << 20
+	}
+	ws.SetReadLimit(maxSize)
+	conn := newWSConn(ws, p.JSON, s.cfg.WriteQueueSize, r.RemoteAddr)
+	// The session outlives the request context on server shutdown only via
+	// the handler; cancel when the handler returns.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	defer cancel()
+	go conn.writeLoop(ctx)
+	if err := s.handler.HandleSession(ctx, claims, p, conn); err != nil && s.logger != nil {
+		s.logger.Debug("session ended", "identity", claims.Identity(), "err", err)
+	}
+	_ = conn.Close(CloseNormal, "")
 }
 
 func writeHTTPError(w http.ResponseWriter, err error) {
 	code := errs.CodeOf(err)
 	status := errs.HTTPStatus(code)
-	if code == errs.CodeFailedPrecondition {
+	var re *resumeError
+	switch {
+	case errors.As(err, &re):
+		status, code = http.StatusConflict, errs.CodeNotFound
+	case code == errs.CodeFailedPrecondition:
 		status = http.StatusUpgradeRequired
 	}
 	w.Header().Set("Content-Type", "application/json")

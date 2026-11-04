@@ -197,10 +197,10 @@ func IsH264KeyFrame(payload []byte) bool {
 	if len(payload) < 1 {
 		return false
 	}
-	switch nal := payload[0] & 0x1f; {
-	case nal == 5 || nal == 7:
+	switch payload[0] & 0x1f {
+	case 5, 7:
 		return true
-	case nal == 24: // STAP-A
+	case 24: // STAP-A
 		for i := 1; i+2 < len(payload); {
 			size := int(binary.BigEndian.Uint16(payload[i:]))
 			i += 2
@@ -212,7 +212,7 @@ func IsH264KeyFrame(payload []byte) bool {
 			}
 			i += size
 		}
-	case nal == 28: // FU-A
+	case 28: // FU-A
 		if len(payload) < 2 {
 			return false
 		}

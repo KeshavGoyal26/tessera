@@ -60,12 +60,12 @@ func (s *layerSrc) next(key bool, tid uint8, advanceFrame bool) *buffer.ExtPacke
 }
 
 type outChecker struct {
-	t                 *testing.T
-	started           bool
-	lastSN            uint16
-	lastTS            uint32
-	lastPID           uint16
-	forwarded, frames int
+	t         *testing.T
+	started   bool
+	lastSN    uint16
+	lastTS    uint32
+	lastPID   uint16
+	forwarded int
 }
 
 func (c *outChecker) check(tp TranslationParams, err error) {

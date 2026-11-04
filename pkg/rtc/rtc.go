@@ -9,14 +9,12 @@ package rtc
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
-	"github.com/prometheus/client_golang/prometheus"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
-	"github.com/KeshavGoyal26/tessera/pkg/config"
-	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
@@ -54,6 +52,18 @@ type TransportHandler interface {
 	OnTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver)
 	OnDataPacket(kind tesserav1.DataPacket_Kind, data []byte)
 	OnConnectionStateChange(state webrtc.PeerConnectionState)
+	// OnDataChannel is called for data channels opened by the client
+	// (publisher side).
+	OnDataChannel(dc *webrtc.DataChannel)
+}
+
+// TransportStats are connection-level statistics.
+type TransportStats struct {
+	CandidateType string
+	ICESetup      time.Duration
+	DTLSSetup     time.Duration
+	RTT           time.Duration
+	Connected     bool
 }
 
 // Transport wraps one webrtc.PeerConnection.
@@ -69,6 +79,10 @@ type Transport interface {
 	SendDataPacket(kind tesserav1.DataPacket_Kind, data []byte) error
 	// WriteRTCP sends RTCP on this PeerConnection.
 	WriteRTCP(pkts []rtcp.Packet) error
+	// Stats returns connection statistics.
+	Stats() TransportStats
+	// PeerConnection exposes the underlying Pion PeerConnection.
+	PeerConnection() *webrtc.PeerConnection
 	Close() error
 }
 
@@ -120,18 +134,3 @@ type DownTrack interface {
 	HandleRTCP(pkts []rtcp.Packet)
 	Close()
 }
-
-// NewEngine creates the engine. Phase 0 stub: constructs successfully so the
-// server can start; NewTransport returns errs.ErrUnimplemented.
-func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheus.Registerer, logger *slog.Logger) (Engine, error) {
-	return &stubEngine{}, nil
-}
-
-type stubEngine struct{}
-
-func (*stubEngine) NewTransport(TransportParams) (Transport, error) {
-	return nil, errs.NotImplemented("rtc.Engine.NewTransport")
-}
-func (*stubEngine) ICEServers(string) []*tesserav1.ICEServer { return nil }
-func (*stubEngine) Ready() error                             { return nil }
-func (*stubEngine) Close() error                             { return nil }
