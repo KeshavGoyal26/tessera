@@ -32,6 +32,8 @@ type Options struct {
 	// OnPublisherRTCP receives RTCP arriving for published tracks (PLI,
 	// NACK, RR from the server).
 	OnPublisherRTCP func(pkts []rtcp.Packet)
+	// ForceRelay uses only TURN relay candidates.
+	ForceRelay bool
 	// DisableResume makes a dropped WebSocket end the session instead of
 	// resuming it.
 	DisableResume bool

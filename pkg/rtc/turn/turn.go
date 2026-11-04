@@ -1,33 +1,146 @@
 // Package turn runs the embedded TURN server (pion/turn) with ephemeral
-// REST-style credentials (ADR-0005).
+// REST-style credentials (ADR-0005). The relay only permits peers that are
+// this node's own media addresses, so it is never an open relay.
 package turn
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"time"
+
+	"github.com/pion/logging"
+	pturn "github.com/pion/turn/v5"
 
 	"github.com/KeshavGoyal26/tessera/pkg/config"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
 
 // Server is the embedded TURN server.
-type Server struct{}
+type Server struct {
+	cfg     config.TURNConfig
+	srv     *pturn.Server
+	secret  string
+	host    string
+	udpPort int
+	tcpPort int
+	closers []func() error
+}
 
-// NewServer starts the TURN listeners. It returns (nil, nil) when TURN is disabled.
-func NewServer(cfg config.TURNConfig, logger *slog.Logger) (*Server, error) {
+// NewServer starts the TURN listeners. It returns (nil, nil) when TURN is
+// disabled. relayIP is the address relayed traffic uses (the node's media
+// IP); allowed lists the peer IPs clients may relay to.
+func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *slog.Logger) (*Server, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
-	return nil, errs.NotImplemented("turn.NewServer")
+	if cfg.TLSPort > 0 && (cfg.CertFile == "" || cfg.KeyFile == "") {
+		cfg.TLSPort = 0
+	}
+	s := &Server{cfg: cfg, secret: cfg.Secret, host: relayIP}
+	if s.secret == "" {
+		b := make([]byte, 32)
+		_, _ = rand.Read(b)
+		s.secret = hex.EncodeToString(b)
+	}
+	if cfg.Domain != "" {
+		s.host = cfg.Domain
+	}
+	ip := net.ParseIP(relayIP)
+	if ip == nil {
+		return nil, errs.New(errs.CodeInvalidArgument, "turn: bad relay ip %q", relayIP)
+	}
+	permit := func(_ net.Addr, peer net.IP) bool {
+		for _, a := range allowed {
+			if a.Equal(peer) {
+				return true
+			}
+		}
+		return false
+	}
+	gen := func() pturn.RelayAddressGenerator {
+		if cfg.RelayRangeStart > 0 && cfg.RelayRangeEnd >= cfg.RelayRangeStart {
+			return &pturn.RelayAddressGeneratorPortRange{RelayAddress: ip, Address: ip.String(),
+				MinPort: uint16(cfg.RelayRangeStart), MaxPort: uint16(cfg.RelayRangeEnd)}
+		}
+		return &pturn.RelayAddressGeneratorStatic{RelayAddress: ip, Address: ip.String()}
+	}
+	lf := logging.NewDefaultLoggerFactory()
+	lf.DefaultLogLevel = logging.LogLevelError
+	sc := pturn.ServerConfig{Realm: "tessera", LoggerFactory: lf, AuthHandler: pturn.LongTermTURNRESTAuthHandler(s.secret, nil)}
+	bind := net.JoinHostPort(ip.String(), strconv.Itoa(cfg.UDPPort))
+	if cfg.UDPPort >= 0 {
+		var lc net.ListenConfig
+		pc, err := lc.ListenPacket(context.Background(), "udp4", bind)
+		if err != nil {
+			return nil, fmt.Errorf("turn: listen udp: %w", err)
+		}
+		s.udpPort = pc.LocalAddr().(*net.UDPAddr).Port
+		s.closers = append(s.closers, pc.Close)
+		sc.PacketConnConfigs = append(sc.PacketConnConfigs, pturn.PacketConnConfig{PacketConn: pc, RelayAddressGenerator: gen(), PermissionHandler: permit})
+	}
+	if cfg.TCPPort >= 0 {
+		var lc net.ListenConfig
+		ln, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.TCPPort)))
+		if err != nil {
+			s.close()
+			return nil, fmt.Errorf("turn: listen tcp: %w", err)
+		}
+		s.tcpPort = ln.Addr().(*net.TCPAddr).Port
+		s.closers = append(s.closers, ln.Close)
+		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: gen(), PermissionHandler: permit})
+	}
+	srv, err := pturn.NewServer(sc)
+	if err != nil {
+		s.close()
+		return nil, fmt.Errorf("turn: %w", err)
+	}
+	s.srv = srv
+	if logger != nil {
+		logger.Info("turn listening", "udp", s.udpPort, "tcp", s.tcpPort, "relay", relayIP)
+	}
+	return s, nil
 }
 
-// Credentials returns an ephemeral username/password for a participant.
+func (s *Server) close() {
+	for _, c := range s.closers {
+		_ = c()
+	}
+}
+
+// Credentials returns an ephemeral username/password for a participant:
+// username "<expiry>:<participant sid>", password HMAC-SHA1 (RFC 7635 style).
 func (s *Server) Credentials(participantSID string, ttl time.Duration) (username, password string) {
-	return "", ""
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	u, p, err := pturn.GenerateLongTermTURNRESTCredentials(s.secret, participantSID, ttl)
+	if err != nil {
+		return "", ""
+	}
+	return u, p
 }
 
 // URLs returns the ICE server URLs clients should use (turn:, turns:).
-func (s *Server) URLs() []string { return nil }
+func (s *Server) URLs() []string {
+	var out []string
+	if s.udpPort > 0 {
+		out = append(out, fmt.Sprintf("turn:%s:%d?transport=udp", s.host, s.udpPort))
+	}
+	if s.tcpPort > 0 {
+		out = append(out, fmt.Sprintf("turn:%s:%d?transport=tcp", s.host, s.tcpPort))
+	}
+	return out
+}
 
 // Close stops all listeners.
-func (s *Server) Close() error { return nil }
+func (s *Server) Close() error {
+	if s == nil || s.srv == nil {
+		return nil
+	}
+	return s.srv.Close()
+}

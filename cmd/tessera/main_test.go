@@ -20,6 +20,7 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	cfg.Development = true
 	cfg.Keys = map[string]string{devAPIKey: devSecret}
 	cfg.RTC.UDPPort = 0
+	cfg.RTC.TCPPort = 0
 	cfg.RTC.IPs = []string{"127.0.0.1"}
 
 	httpLn, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -73,7 +74,8 @@ func TestRunServesAndShutsDown(t *testing.T) {
 func waitFor(t *testing.T, url string) {
 	t.Helper()
 	for range 100 {
-		if resp, err := http.Get(url); err == nil {
+		c := &http.Client{Timeout: time.Second}
+		if resp, err := c.Get(url); err == nil {
 			_ = resp.Body.Close()
 			return
 		}

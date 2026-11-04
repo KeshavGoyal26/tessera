@@ -216,6 +216,9 @@ func (c *client) Connect(ctx context.Context, rawURL, token string) error {
 		iceServers = append(iceServers, webrtc.ICEServer{URLs: s.Urls, Username: s.Username, Credential: s.Credential})
 	}
 	cfg := webrtc.Configuration{ICEServers: iceServers}
+	if c.opts.ForceRelay {
+		cfg.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
 	if c.sub, err = c.newPC(cfg, tesserav1.SignalTarget_SIGNAL_TARGET_SUBSCRIBER); err != nil {
 		return err
 	}

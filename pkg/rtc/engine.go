@@ -1,6 +1,7 @@
 package rtc
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,6 +18,7 @@ import (
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/turn"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
@@ -124,6 +126,9 @@ type engine struct {
 	conns   []net.PacketConn
 	iceSrv  []*tesserav1.ICEServer
 	pcCount atomic.Int64
+	tcpMux  ice.TCPMux
+	turn    *turn.Server
+	turnTTL time.Duration
 }
 
 // countingConn counts media datagrams for node statistics.
@@ -218,6 +223,43 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 	}
 	se.SetICETimeouts(10*time.Second, 20*time.Second, 2*time.Second)
 
+	// ICE-TCP passive candidates on a single port (ADR-0005).
+	if rtcCfg.TCPPort > 0 {
+		tcpIP := ips[0]
+		var lc net.ListenConfig
+		ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(tcpIP, fmt.Sprint(rtcCfg.TCPPort)))
+		if err != nil {
+			e.closeConns()
+			return nil, fmt.Errorf("rtc: listen ice-tcp: %w", err)
+		}
+		e.tcpMux = ice.NewTCPMuxDefault(ice.TCPMuxParams{Listener: ln, ReadBufferSize: 64})
+		se.SetICETCPMux(e.tcpMux)
+		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6, webrtc.NetworkTypeTCP4, webrtc.NetworkTypeTCP6})
+	}
+
+	// Embedded TURN relaying only to this node's media addresses.
+	if turnCfg.Enabled {
+		relayIP := rtcCfg.NodeIP
+		if relayIP == "" && len(rtcCfg.IPs) > 0 {
+			relayIP = rtcCfg.IPs[0]
+		}
+		if relayIP == "" {
+			relayIP = firstLocalIP()
+		}
+		allowed := localIPs()
+		for _, s := range append(append([]string{}, rtcCfg.IPs...), rtcCfg.NodeIP) {
+			if ip := net.ParseIP(s); ip != nil {
+				allowed = append(allowed, ip)
+			}
+		}
+		ts, err := turn.NewServer(turnCfg, relayIP, allowed, logger)
+		if err != nil {
+			e.closeConns()
+			return nil, err
+		}
+		e.turn, e.turnTTL = ts, turnCfg.CredentialTTL
+	}
+
 	codecs := Codecs(rtcCfg.EnabledCodecs)
 	pubME, err := NewMediaEngine(codecs, true)
 	if err != nil {
@@ -247,8 +289,38 @@ func (e *engine) closeConns() {
 	}
 }
 
-// ICEServers implements Engine.
-func (e *engine) ICEServers(string) []*tesserav1.ICEServer { return e.iceSrv }
+// ICEServers implements Engine: configured servers plus per-session
+// credentials for the embedded TURN server.
+func (e *engine) ICEServers(participantSID string) []*tesserav1.ICEServer {
+	out := append([]*tesserav1.ICEServer{}, e.iceSrv...)
+	if e.turn != nil {
+		if urls := e.turn.URLs(); len(urls) > 0 {
+			u, p := e.turn.Credentials(participantSID, e.turnTTL)
+			out = append(out, &tesserav1.ICEServer{Urls: urls, Username: u, Credential: p})
+		}
+	}
+	return out
+}
+
+func localIPs() []net.IP {
+	var out []net.IP
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			out = append(out, n.IP)
+		}
+	}
+	return out
+}
+
+func firstLocalIP() string {
+	for _, ip := range localIPs() {
+		if ip.To4() != nil && !ip.IsLoopback() {
+			return ip.String()
+		}
+	}
+	return "127.0.0.1"
+}
 
 // Ready implements Engine.
 func (e *engine) Ready() error { return nil }
@@ -257,6 +329,12 @@ func (e *engine) Ready() error { return nil }
 func (e *engine) Close() error {
 	if e.udpMux != nil {
 		_ = e.udpMux.Close()
+	}
+	if e.tcpMux != nil {
+		_ = e.tcpMux.Close()
+	}
+	if e.turn != nil {
+		_ = e.turn.Close()
 	}
 	e.closeConns()
 	return nil
