@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/admin"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/dashboard"
 	"github.com/KeshavGoyal26/tessera/pkg/metrics"
 	"github.com/KeshavGoyal26/tessera/pkg/recorder"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
@@ -129,9 +131,20 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	})
 	signalSrv := sig.NewServer(cfg.Signal, verifier, rooms, logger)
 
+	dash, err := dashboard.New(dashboard.Params{
+		Stats: rooms, Keys: keys, Rooms: rooms, Recordings: coordinator,
+		RecorderURLs: splitList(os.Getenv("TESSERA_DASHBOARD_RECORDERS")), Logger: logger,
+	})
+	if err != nil {
+		return err
+	}
+	defer dash.Close()
+
 	mux := http.NewServeMux()
 	mux.Handle(sig.Path, signalSrv)
 	mux.Handle(admin.PathPrefix, adminSrv)
+	mux.Handle(dashboard.PathPrefix+"/", dash)
+	mux.Handle(dashboard.PathPrefix, dash)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -238,4 +251,15 @@ func createToken(args []string) error {
 	}
 	fmt.Println(tok)
 	return nil
+}
+
+// splitList splits a comma-separated list, dropping empty entries.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
