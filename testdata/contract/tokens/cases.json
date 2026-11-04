@@ -1,0 +1,186 @@
+[
+  {
+    "name": "join_basic",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "identity": "alice",
+    "name_claim": "Alice",
+    "grants": {
+      "room": "standup",
+      "room_join": true
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "sub": "alice",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "name": "Alice",
+      "grants": {
+        "room": "standup",
+        "room_join": true
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsInN1YiI6ImFsaWNlIiwibmJmIjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDM2MDAsIm5hbWUiOiJBbGljZSIsImdyYW50cyI6eyJyb29tIjoic3RhbmR1cCIsInJvb21fam9pbiI6dHJ1ZX19.ttkxRBC_Qh3HiNxwIzGQb_oROFngFjAoBC6XP13sQck"
+  },
+  {
+    "name": "join_full",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "identity": "bob",
+    "name_claim": "Bob",
+    "metadata": "{\"userId\":42}",
+    "attributes": {
+      "lang": "en",
+      "role": "host"
+    },
+    "grants": {
+      "room": "r1",
+      "room_join": true,
+      "can_publish": false,
+      "can_publish_sources": [
+        "camera",
+        "microphone"
+      ],
+      "can_subscribe": true,
+      "can_publish_data": false,
+      "can_update_own_metadata": true,
+      "room_config": {
+        "empty_timeout_seconds": 300,
+        "departure_timeout_seconds": 20,
+        "max_participants": 50,
+        "recording_enabled": true
+      }
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "sub": "bob",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "name": "Bob",
+      "metadata": "{\"userId\":42}",
+      "attributes": {
+        "lang": "en",
+        "role": "host"
+      },
+      "grants": {
+        "room": "r1",
+        "room_join": true,
+        "can_publish": false,
+        "can_publish_sources": [
+          "camera",
+          "microphone"
+        ],
+        "can_subscribe": true,
+        "can_publish_data": false,
+        "can_update_own_metadata": true,
+        "room_config": {
+          "empty_timeout_seconds": 300,
+          "departure_timeout_seconds": 20,
+          "max_participants": 50,
+          "recording_enabled": true
+        }
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsInN1YiI6ImJvYiIsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAzNjAwLCJuYW1lIjoiQm9iIiwibWV0YWRhdGEiOiJ7XCJ1c2VySWRcIjo0Mn0iLCJhdHRyaWJ1dGVzIjp7ImxhbmciOiJlbiIsInJvbGUiOiJob3N0In0sImdyYW50cyI6eyJyb29tIjoicjEiLCJyb29tX2pvaW4iOnRydWUsImNhbl9wdWJsaXNoIjpmYWxzZSwiY2FuX3B1Ymxpc2hfc291cmNlcyI6WyJjYW1lcmEiLCJtaWNyb3Bob25lIl0sImNhbl9zdWJzY3JpYmUiOnRydWUsImNhbl9wdWJsaXNoX2RhdGEiOmZhbHNlLCJjYW5fdXBkYXRlX293bl9tZXRhZGF0YSI6dHJ1ZSwicm9vbV9jb25maWciOnsiZW1wdHlfdGltZW91dF9zZWNvbmRzIjozMDAsImRlcGFydHVyZV90aW1lb3V0X3NlY29uZHMiOjIwLCJtYXhfcGFydGljaXBhbnRzIjo1MCwicmVjb3JkaW5nX2VuYWJsZWQiOnRydWV9fX0.LBhMuF25VI8LEo2bNy2JLrITaTj3cXg9K6L3dXGiAxk"
+  },
+  {
+    "name": "recorder",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "identity": "rec-1",
+    "grants": {
+      "room": "r1",
+      "room_join": true,
+      "can_publish": false,
+      "hidden": true,
+      "recorder": true
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "sub": "rec-1",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "grants": {
+        "room": "r1",
+        "room_join": true,
+        "can_publish": false,
+        "hidden": true,
+        "recorder": true
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsInN1YiI6InJlYy0xIiwibmJmIjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDM2MDAsImdyYW50cyI6eyJyb29tIjoicjEiLCJyb29tX2pvaW4iOnRydWUsImNhbl9wdWJsaXNoIjpmYWxzZSwiaGlkZGVuIjp0cnVlLCJyZWNvcmRlciI6dHJ1ZX19.Foox3SdGdhmEseeAuA9EcmEd6ZQGLX0KYqLLkkOkR8s"
+  },
+  {
+    "name": "admin_all",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "grants": {
+      "room_create": true,
+      "room_list": true,
+      "room_admin": true,
+      "room_record": true
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "grants": {
+        "room_create": true,
+        "room_list": true,
+        "room_admin": true,
+        "room_record": true
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAzNjAwLCJncmFudHMiOnsicm9vbV9jcmVhdGUiOnRydWUsInJvb21fbGlzdCI6dHJ1ZSwicm9vbV9hZG1pbiI6dHJ1ZSwicm9vbV9yZWNvcmQiOnRydWV9fQ.sZmekye5iNEuRThizjatW1qsjshuPJZUd0gX8p6P9Ds"
+  },
+  {
+    "name": "admin_scoped",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "grants": {
+      "room": "r1",
+      "room_admin": true,
+      "room_record": true
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "grants": {
+        "room": "r1",
+        "room_admin": true,
+        "room_record": true
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAzNjAwLCJncmFudHMiOnsicm9vbSI6InIxIiwicm9vbV9hZG1pbiI6dHJ1ZSwicm9vbV9yZWNvcmQiOnRydWV9fQ.BqxPXZ4zJHalFx6DJSh2_WFsfopUHIYJzcK7TdP8SIQ"
+  },
+  {
+    "name": "worker",
+    "api_key": "APIcontract",
+    "secret": "contract-secret-0123456789abcdef0123456789",
+    "now": 1700000000,
+    "ttl_seconds": 3600,
+    "grants": {
+      "recorder_worker": true
+    },
+    "claims": {
+      "iss": "APIcontract",
+      "nbf": 1700000000,
+      "exp": 1700003600,
+      "grants": {
+        "recorder_worker": true
+      }
+    },
+    "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBUEljb250cmFjdCIsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAzNjAwLCJncmFudHMiOnsicmVjb3JkZXJfd29ya2VyIjp0cnVlfX0.izgZqurQqndL_oD4_wzslzZGJ99rmhgs8HrMJxS23Ww"
+  }
+]

@@ -47,6 +47,7 @@ public final class RoomGrant {
   private final boolean canUpdateOwnMetadata;
   private final boolean hidden;
   private final boolean recorder;
+  private final RoomConfig roomConfig;
 
   private RoomGrant(Builder b) {
     this.room = b.room;
@@ -63,6 +64,7 @@ public final class RoomGrant {
     this.canUpdateOwnMetadata = b.canUpdateOwnMetadata;
     this.hidden = b.hidden;
     this.recorder = b.recorder;
+    this.roomConfig = b.roomConfig;
   }
 
   /**
@@ -92,6 +94,7 @@ public final class RoomGrant {
     b.canPublishSources = new ArrayList<>(canPublishSources);
     b.canSubscribe = canSubscribe;
     b.canPublishData = canPublishData;
+    b.roomConfig = roomConfig;
     b.canUpdateOwnMetadata = canUpdateOwnMetadata;
     b.hidden = hidden;
     b.recorder = recorder;
@@ -226,6 +229,63 @@ public final class RoomGrant {
     return recorder;
   }
 
+  /**
+   * Returns the room settings applied on auto-create.
+   *
+   * @return the settings or {@code null}
+   */
+  public RoomConfig getRoomConfig() {
+    return roomConfig;
+  }
+
+  /** Room settings carried in the {@code room_config} grant field. Immutable. */
+  public static final class RoomConfig {
+    private final int emptyTimeoutSeconds;
+    private final int departureTimeoutSeconds;
+    private final int maxParticipants;
+    private final boolean recordingEnabled;
+
+    private RoomConfig(int empty, int departure, int max, boolean recording) {
+      this.emptyTimeoutSeconds = empty;
+      this.departureTimeoutSeconds = departure;
+      this.maxParticipants = max;
+      this.recordingEnabled = recording;
+    }
+
+    /**
+     * Creates room settings; zero values mean "server default" and are omitted from the token.
+     *
+     * @param emptyTimeoutSeconds seconds an empty room stays open
+     * @param departureTimeoutSeconds seconds a room stays open after the last participant left
+     * @param maxParticipants participant limit
+     * @param recordingEnabled whether the room records (selects H.264 for publishers)
+     * @return the settings
+     */
+    public static RoomConfig of(
+        int emptyTimeoutSeconds,
+        int departureTimeoutSeconds,
+        int maxParticipants,
+        boolean recordingEnabled) {
+      return new RoomConfig(
+          emptyTimeoutSeconds, departureTimeoutSeconds, maxParticipants, recordingEnabled);
+    }
+
+    Map<String, Object> toClaims() {
+      Map<String, Object> m = new LinkedHashMap<>();
+      if (emptyTimeoutSeconds != 0) {
+        m.put("empty_timeout_seconds", emptyTimeoutSeconds);
+      }
+      if (departureTimeoutSeconds != 0) {
+        m.put("departure_timeout_seconds", departureTimeoutSeconds);
+      }
+      if (maxParticipants != 0) {
+        m.put("max_participants", maxParticipants);
+      }
+      putIfTrue(m, "recording_enabled", recordingEnabled);
+      return m;
+    }
+  }
+
   /** Returns the {@code grants} claim as an ordered map containing only non-default fields. */
   Map<String, Object> toClaims() {
     Map<String, Object> m = new LinkedHashMap<>();
@@ -253,6 +313,12 @@ public final class RoomGrant {
     putIfTrue(m, "can_update_own_metadata", canUpdateOwnMetadata);
     putIfTrue(m, "hidden", hidden);
     putIfTrue(m, "recorder", recorder);
+    if (roomConfig != null) {
+      Map<String, Object> rc = roomConfig.toClaims();
+      if (!rc.isEmpty()) {
+        m.put("room_config", rc);
+      }
+    }
     return m;
   }
 
@@ -293,8 +359,20 @@ public final class RoomGrant {
     private boolean canUpdateOwnMetadata;
     private boolean hidden;
     private boolean recorder;
+    private RoomConfig roomConfig;
 
     private Builder() {}
+
+    /**
+     * Sets the room settings applied when this token's join auto-creates the room.
+     *
+     * @param roomConfig the settings, or {@code null}
+     * @return this builder
+     */
+    public Builder roomConfig(RoomConfig roomConfig) {
+      this.roomConfig = roomConfig;
+      return this;
+    }
 
     /**
      * Sets the room the grant applies to.

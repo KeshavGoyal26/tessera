@@ -20,6 +20,8 @@ import io.github.keshavgoyal26.tessera.proto.v1.UpdateRoomMetadataRequest;
 import io.github.keshavgoyal26.tessera.proto.v1.UpdateRoomMetadataResponse;
 import io.github.keshavgoyal26.tessera.internal.TwirpClient;
 import java.net.http.HttpClient;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ForkJoinPool;
 import java.time.Duration;
 import java.util.Objects;
 
@@ -223,4 +225,94 @@ public final class RoomServiceClient {
         SERVICE, "UpdateParticipant", request, UpdateParticipantResponse.parser(), config.adminToken(RoomGrant.builder().roomAdmin(true).room(request.getRoom()).build()));
   }
 
+
+  /**
+   * Asynchronous variant of {@link #createRoom(CreateRoomRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<CreateRoomResponse> createRoomAsync(CreateRoomRequest request) {
+    return CompletableFuture.supplyAsync(() -> createRoom(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #listRooms(ListRoomsRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<ListRoomsResponse> listRoomsAsync(ListRoomsRequest request) {
+    return CompletableFuture.supplyAsync(() -> listRooms(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #deleteRoom(DeleteRoomRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<DeleteRoomResponse> deleteRoomAsync(DeleteRoomRequest request) {
+    return CompletableFuture.supplyAsync(() -> deleteRoom(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #updateRoomMetadata(UpdateRoomMetadataRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<UpdateRoomMetadataResponse> updateRoomMetadataAsync(UpdateRoomMetadataRequest request) {
+    return CompletableFuture.supplyAsync(() -> updateRoomMetadata(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #listParticipants(ListParticipantsRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<ListParticipantsResponse> listParticipantsAsync(ListParticipantsRequest request) {
+    return CompletableFuture.supplyAsync(() -> listParticipants(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #getParticipant(GetParticipantRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<GetParticipantResponse> getParticipantAsync(GetParticipantRequest request) {
+    return CompletableFuture.supplyAsync(() -> getParticipant(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #removeParticipant(RemoveParticipantRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<RemoveParticipantResponse> removeParticipantAsync(RemoveParticipantRequest request) {
+    return CompletableFuture.supplyAsync(() -> removeParticipant(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #mutePublishedTrack(MutePublishedTrackRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<MutePublishedTrackResponse> mutePublishedTrackAsync(MutePublishedTrackRequest request) {
+    return CompletableFuture.supplyAsync(() -> mutePublishedTrack(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #updateParticipant(UpdateParticipantRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<UpdateParticipantResponse> updateParticipantAsync(UpdateParticipantRequest request) {
+    return CompletableFuture.supplyAsync(() -> updateParticipant(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
 }

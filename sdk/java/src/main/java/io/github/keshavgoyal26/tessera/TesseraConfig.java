@@ -26,6 +26,12 @@ public final class TesseraConfig {
   /** Default per-request timeout: 10 seconds. */
   public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
 
+  /** Default number of retries for idempotent calls. */
+  public static final int DEFAULT_MAX_RETRIES = 2;
+
+  /** Default initial retry delay. */
+  public static final Duration DEFAULT_RETRY_BACKOFF = Duration.ofMillis(200);
+
   /** Lifetime of the admin tokens minted for each call: 10 minutes. */
   public static final Duration DEFAULT_ADMIN_TOKEN_TTL = Duration.ofMinutes(10);
 
@@ -37,6 +43,8 @@ public final class TesseraConfig {
   private final Duration timeout;
   private final Duration adminTokenTtl;
   private final Clock clock;
+  private final int maxRetries;
+  private final Duration retryBackoff;
 
   private TesseraConfig(Builder b) {
     this.baseUrl = TwirpClient.normalizeBaseUrl(b.baseUrl);
@@ -47,6 +55,11 @@ public final class TesseraConfig {
     this.timeout = Objects.requireNonNull(b.timeout, "timeout");
     this.adminTokenTtl = Objects.requireNonNull(b.adminTokenTtl, "adminTokenTtl");
     this.clock = Objects.requireNonNull(b.clock, "clock");
+    if (b.maxRetries < 0) {
+      throw new IllegalArgumentException("maxRetries must be >= 0");
+    }
+    this.maxRetries = b.maxRetries;
+    this.retryBackoff = Objects.requireNonNull(b.retryBackoff, "retryBackoff");
     // Fail fast on an invalid key/secret instead of on the first call.
     adminToken(RoomGrant.builder().build());
   }
@@ -112,6 +125,15 @@ public final class TesseraConfig {
     return adminTokenTtl;
   }
 
+  /**
+   * Returns how many times idempotent calls are retried after transient failures.
+   *
+   * @return the retry count (default 2)
+   */
+  public int getMaxRetries() {
+    return maxRetries;
+  }
+
   /** Mints a short-lived admin token with the given grants. */
   String adminToken(RoomGrant grants) {
     return AccessToken.builder()
@@ -126,7 +148,7 @@ public final class TesseraConfig {
 
   /** Creates the Twirp client for these settings. */
   TwirpClient twirpClient() {
-    return new TwirpClient(baseUrl, httpClient, timeout);
+    return new TwirpClient(baseUrl, httpClient, timeout, maxRetries, retryBackoff);
   }
 
   @Override
@@ -144,8 +166,33 @@ public final class TesseraConfig {
     private Duration timeout = DEFAULT_TIMEOUT;
     private Duration adminTokenTtl = DEFAULT_ADMIN_TOKEN_TTL;
     private Clock clock = Clock.systemUTC();
+    private int maxRetries = DEFAULT_MAX_RETRIES;
+    private Duration retryBackoff = DEFAULT_RETRY_BACKOFF;
 
     private Builder() {}
+
+    /**
+     * Sets how often idempotent calls are retried on transient failures (connection errors, HTTP
+     * 429/502/503/504, {@code unavailable}); {@code StartRecording} is never retried. Default 2.
+     *
+     * @param maxRetries retries after the first attempt, 0 disables retrying
+     * @return this builder
+     */
+    public Builder maxRetries(int maxRetries) {
+      this.maxRetries = maxRetries;
+      return this;
+    }
+
+    /**
+     * Sets the initial retry delay, doubled for each further retry (default 200 ms).
+     *
+     * @param backoff the delay
+     * @return this builder
+     */
+    public Builder retryBackoff(Duration backoff) {
+      this.retryBackoff = backoff;
+      return this;
+    }
 
     /**
      * Sets the server URL, e.g. {@code https://tessera.example.com}. Required.

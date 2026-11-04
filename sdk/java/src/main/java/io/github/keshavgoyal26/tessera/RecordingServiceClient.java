@@ -10,6 +10,8 @@ import io.github.keshavgoyal26.tessera.proto.v1.StopRecordingRequest;
 import io.github.keshavgoyal26.tessera.proto.v1.StopRecordingResponse;
 import io.github.keshavgoyal26.tessera.internal.TwirpClient;
 import java.net.http.HttpClient;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ForkJoinPool;
 import java.time.Duration;
 import java.util.Objects;
 
@@ -150,4 +152,44 @@ public final class RecordingServiceClient {
         SERVICE, "GetRecording", request, GetRecordingResponse.parser(), config.adminToken(RoomGrant.builder().roomRecord(true).build()));
   }
 
+
+  /**
+   * Asynchronous variant of {@link #startRecording(StartRecordingRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<StartRecordingResponse> startRecordingAsync(StartRecordingRequest request) {
+    return CompletableFuture.supplyAsync(() -> startRecording(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #stopRecording(StopRecordingRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<StopRecordingResponse> stopRecordingAsync(StopRecordingRequest request) {
+    return CompletableFuture.supplyAsync(() -> stopRecording(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #listRecordings(ListRecordingsRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<ListRecordingsResponse> listRecordingsAsync(ListRecordingsRequest request) {
+    return CompletableFuture.supplyAsync(() -> listRecordings(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
+
+  /**
+   * Asynchronous variant of {@link #getRecording(GetRecordingRequest)}.
+   *
+   * @param request the request
+   * @return a future completed with the response, or exceptionally with a {@link TesseraException}
+   */
+  public CompletableFuture<GetRecordingResponse> getRecordingAsync(GetRecordingRequest request) {
+    return CompletableFuture.supplyAsync(() -> getRecording(request), config.getHttpClient().executor().orElse(ForkJoinPool.commonPool()));
+  }
 }

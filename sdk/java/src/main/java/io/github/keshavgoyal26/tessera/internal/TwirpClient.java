@@ -35,6 +35,8 @@ public final class TwirpClient {
   private final String baseUrl;
   private final HttpClient httpClient;
   private final Duration timeout;
+  private final int maxRetries;
+  private final Duration retryBackoff;
 
   /**
    * Creates a client.
@@ -45,6 +47,26 @@ public final class TwirpClient {
    * @param timeout per-request timeout
    */
   public TwirpClient(String baseUrl, HttpClient httpClient, Duration timeout) {
+    this(baseUrl, httpClient, timeout, 0, Duration.ZERO);
+  }
+
+  /**
+   * Creates a client that retries idempotent calls on transient failures.
+   *
+   * @param baseUrl server URL
+   * @param httpClient HTTP client to use
+   * @param timeout per-request timeout
+   * @param maxRetries retries after the first attempt
+   * @param retryBackoff initial delay, doubled per retry
+   */
+  public TwirpClient(
+      String baseUrl,
+      HttpClient httpClient,
+      Duration timeout,
+      int maxRetries,
+      Duration retryBackoff) {
+    this.maxRetries = maxRetries;
+    this.retryBackoff = Objects.requireNonNull(retryBackoff, "retryBackoff");
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
     this.timeout = Objects.requireNonNull(timeout, "timeout");
@@ -95,6 +117,37 @@ public final class TwirpClient {
    * @throws TesseraException on Twirp errors, transport failures or undecodable responses
    */
   public <T extends Message> T call(
+      String service, String method, Message request, Parser<T> parser, String bearerToken) {
+    int attempt = 0;
+    while (true) {
+      try {
+        return callOnce(service, method, request, parser, bearerToken);
+      } catch (TesseraException e) {
+        if (attempt >= maxRetries || !isRetryable(service, method, e)) {
+          throw e;
+        }
+        long delay = retryBackoff.toMillis() << attempt;
+        attempt++;
+        try {
+          Thread.sleep(delay);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw e;
+        }
+      }
+    }
+  }
+
+  /** Only transient failures of idempotent methods are retried. */
+  private static boolean isRetryable(String service, String method, TesseraException e) {
+    if ("StartRecording".equals(method)) {
+      return false;
+    }
+    String code = e.getCode();
+    return TesseraException.UNAVAILABLE.equals(code) || "deadline_exceeded".equals(code);
+  }
+
+  private <T extends Message> T callOnce(
       String service, String method, Message request, Parser<T> parser, String bearerToken) {
     URI uri = URI.create(baseUrl + "/twirp/" + PACKAGE + "." + service + "/" + method);
     HttpRequest.Builder rb =

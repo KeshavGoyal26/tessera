@@ -1,0 +1,106 @@
+[
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "CreateRoom",
+    "request_json": "{\"emptyTimeoutSeconds\":300,\"maxParticipants\":10,\"metadata\":\"m\",\"name\":\"standup\",\"recordingEnabled\":true}",
+    "request_pb_base64": "CgdzdGFuZHVwEKwCIAoqAW04AQ==",
+    "response_json": "{\"room\":{\"maxParticipants\":10,\"metadata\":\"m\",\"name\":\"standup\",\"numParticipants\":1,\"sid\":\"RM_1\"}}",
+    "response_pb_base64": "ChYKBFJNXzESB3N0YW5kdXAoCjoBbUAB"
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "ListRooms",
+    "request_json": "{\"names\":[\"standup\"]}",
+    "request_pb_base64": "CgdzdGFuZHVw",
+    "response_json": "{\"rooms\":[{\"maxParticipants\":10,\"metadata\":\"m\",\"name\":\"standup\",\"numParticipants\":1,\"sid\":\"RM_1\"}]}",
+    "response_pb_base64": "ChYKBFJNXzESB3N0YW5kdXAoCjoBbUAB"
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "DeleteRoom",
+    "request_json": "{\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVw",
+    "response_json": "{}",
+    "response_pb_base64": ""
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "UpdateRoomMetadata",
+    "request_json": "{\"metadata\":\"m2\",\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEgJtMg==",
+    "response_json": "{\"room\":{\"maxParticipants\":10,\"metadata\":\"m\",\"name\":\"standup\",\"numParticipants\":1,\"sid\":\"RM_1\"}}",
+    "response_pb_base64": "ChYKBFJNXzESB3N0YW5kdXAoCjoBbUAB"
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "ListParticipants",
+    "request_json": "{\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVw",
+    "response_json": "{\"participants\":[{\"identity\":\"alice\",\"metadata\":\"x\",\"name\":\"Alice\",\"sid\":\"PA_1\",\"tracks\":[{\"muted\":true,\"sid\":\"TR_1\"}]}]}",
+    "response_pb_base64": "CiEKBFBBXzESBWFsaWNlIggKBFRSXzEgASoBeDoFQWxpY2U="
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "GetParticipant",
+    "request_json": "{\"identity\":\"alice\",\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEgVhbGljZQ==",
+    "response_json": "{\"participant\":{\"identity\":\"alice\",\"metadata\":\"x\",\"name\":\"Alice\",\"sid\":\"PA_1\",\"tracks\":[{\"muted\":true,\"sid\":\"TR_1\"}]}}",
+    "response_pb_base64": "CiEKBFBBXzESBWFsaWNlIggKBFRSXzEgASoBeDoFQWxpY2U="
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "RemoveParticipant",
+    "request_json": "{\"identity\":\"alice\",\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEgVhbGljZQ==",
+    "response_json": "{}",
+    "response_pb_base64": ""
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "MutePublishedTrack",
+    "request_json": "{\"identity\":\"alice\",\"muted\":true,\"room\":\"standup\",\"trackSid\":\"TR_1\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEgVhbGljZRoEVFJfMSAB",
+    "response_json": "{\"track\":{\"muted\":true,\"sid\":\"TR_1\"}}",
+    "response_pb_base64": "CggKBFRSXzEgAQ=="
+  },
+  {
+    "service": "tessera.v1.RoomService",
+    "method": "UpdateParticipant",
+    "request_json": "{\"attributes\":{\"k\":\"v\"},\"identity\":\"alice\",\"metadata\":\"meta\",\"name\":\"Alice2\",\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEgVhbGljZRoEbWV0YSIGQWxpY2UyMgYKAWsSAXY=",
+    "response_json": "{\"participant\":{\"identity\":\"alice\",\"metadata\":\"x\",\"name\":\"Alice\",\"sid\":\"PA_1\",\"tracks\":[{\"muted\":true,\"sid\":\"TR_1\"}]}}",
+    "response_pb_base64": "CiEKBFBBXzESBWFsaWNlIggKBFRSXzEgASoBeDoFQWxpY2U="
+  },
+  {
+    "service": "tessera.v1.RecordingService",
+    "method": "StartRecording",
+    "request_json": "{\"filenamePrefix\":\"demo\",\"hls\":{\"audioCodec\":\"AUDIO_CODEC_OPUS\",\"playlistType\":\"PLAYLIST_TYPE_EVENT\",\"segmentDurationSeconds\":4},\"participant\":{\"identity\":\"alice\",\"sources\":[\"camera\"]},\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwKgYIBBABGAE6BGRlbW8aDwoFYWxpY2USBmNhbWVyYQ==",
+    "response_json": "{\"recording\":{\"masterPlaylistLocation\":\"recordings/REC_1/master.m3u8\",\"outputs\":[{\"durationMs\":\"12000\",\"participantIdentity\":\"alice\",\"segmentCount\":3,\"sizeBytes\":\"8589934592\",\"trackSid\":\"TR_1\"}],\"recordingId\":\"REC_1\",\"room\":\"standup\",\"startedAtMs\":\"1700000000000\",\"status\":\"RECORDING_STATUS_ACTIVE\"}}",
+    "response_pb_base64": "ClEKBVJFQ18xEgdzdGFuZHVwIAIogNCV/7wxQhxyZWNvcmRpbmdzL1JFQ18xL21hc3Rlci5tM3U4ShgKBFRSXzESBWFsaWNlMAM44F1AgICAgCA="
+  },
+  {
+    "service": "tessera.v1.RecordingService",
+    "method": "StopRecording",
+    "request_json": "{\"recordingId\":\"REC_1\"}",
+    "request_pb_base64": "CgVSRUNfMQ==",
+    "response_json": "{\"recording\":{\"masterPlaylistLocation\":\"recordings/REC_1/master.m3u8\",\"outputs\":[{\"durationMs\":\"12000\",\"participantIdentity\":\"alice\",\"segmentCount\":3,\"sizeBytes\":\"8589934592\",\"trackSid\":\"TR_1\"}],\"recordingId\":\"REC_1\",\"room\":\"standup\",\"startedAtMs\":\"1700000000000\",\"status\":\"RECORDING_STATUS_ACTIVE\"}}",
+    "response_pb_base64": "ClEKBVJFQ18xEgdzdGFuZHVwIAIogNCV/7wxQhxyZWNvcmRpbmdzL1JFQ18xL21hc3Rlci5tM3U4ShgKBFRSXzESBWFsaWNlMAM44F1AgICAgCA="
+  },
+  {
+    "service": "tessera.v1.RecordingService",
+    "method": "ListRecordings",
+    "request_json": "{\"activeOnly\":true,\"room\":\"standup\"}",
+    "request_pb_base64": "CgdzdGFuZHVwEAE=",
+    "response_json": "{\"recordings\":[{\"masterPlaylistLocation\":\"recordings/REC_1/master.m3u8\",\"outputs\":[{\"durationMs\":\"12000\",\"participantIdentity\":\"alice\",\"segmentCount\":3,\"sizeBytes\":\"8589934592\",\"trackSid\":\"TR_1\"}],\"recordingId\":\"REC_1\",\"room\":\"standup\",\"startedAtMs\":\"1700000000000\",\"status\":\"RECORDING_STATUS_ACTIVE\"}]}",
+    "response_pb_base64": "ClEKBVJFQ18xEgdzdGFuZHVwIAIogNCV/7wxQhxyZWNvcmRpbmdzL1JFQ18xL21hc3Rlci5tM3U4ShgKBFRSXzESBWFsaWNlMAM44F1AgICAgCA="
+  },
+  {
+    "service": "tessera.v1.RecordingService",
+    "method": "GetRecording",
+    "request_json": "{\"recordingId\":\"REC_1\"}",
+    "request_pb_base64": "CgVSRUNfMQ==",
+    "response_json": "{\"recording\":{\"masterPlaylistLocation\":\"recordings/REC_1/master.m3u8\",\"outputs\":[{\"durationMs\":\"12000\",\"participantIdentity\":\"alice\",\"segmentCount\":3,\"sizeBytes\":\"8589934592\",\"trackSid\":\"TR_1\"}],\"recordingId\":\"REC_1\",\"room\":\"standup\",\"startedAtMs\":\"1700000000000\",\"status\":\"RECORDING_STATUS_ACTIVE\"}}",
+    "response_pb_base64": "ClEKBVJFQ18xEgdzdGFuZHVwIAIogNCV/7wxQhxyZWNvcmRpbmdzL1JFQ18xL21hc3Rlci5tM3U4ShgKBFRSXzESBWFsaWNlMAM44F1AgICAgCA="
+  }
+]
