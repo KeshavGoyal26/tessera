@@ -10,16 +10,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
-	"github.com/KeshavGoyal26/tessera/pkg/auth"
-	"github.com/KeshavGoyal26/tessera/pkg/config"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
 
@@ -50,16 +45,6 @@ func (Nop) Notify(context.Context, *tesserav1.WebhookEvent) {}
 
 // Close implements Notifier.
 func (Nop) Close(context.Context) error { return nil }
-
-// NewNotifier creates the HTTP notifier for cfg.Endpoints, signing with
-// cfg.APIKey's secret. Phase 0 stub: returns Nop (logging a warning when
-// endpoints are configured).
-func NewNotifier(cfg config.WebhookConfig, keys auth.KeyProvider, reg prometheus.Registerer, logger *slog.Logger) (Notifier, error) {
-	if len(cfg.Endpoints) > 0 && logger != nil {
-		logger.Warn("webhook delivery not implemented yet; events are dropped")
-	}
-	return Nop{}, nil
-}
 
 // Sign returns the Tessera-Signature header value for body at time t.
 func Sign(secret string, t time.Time, body []byte) string {
