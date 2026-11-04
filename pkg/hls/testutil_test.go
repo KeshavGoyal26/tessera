@@ -171,3 +171,7 @@ func oggPackets(b []byte) [][]byte {
 }
 
 func fmtSscan(s string, f *float64) (int, error) { return fmt.Sscan(s, f) }
+
+func execFFmpegDecode(path string) ([]byte, error) {
+	return exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-").CombinedOutput()
+}
