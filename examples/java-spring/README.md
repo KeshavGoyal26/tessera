@@ -1,27 +1,44 @@
-# Tessera Spring Boot example (placeholder)
+# Tessera Spring Boot example
 
-This directory is a **placeholder** for a Spring Boot 4.1.2 example backend using the
-[Java server SDK](../../sdk/java). It holds a skeleton `pom.xml` and code sketches only. It is
-**not built in CI** and not yet expected to compile against a running server; the full example
-lands with the SDK implementation in WP3.
+A Spring Boot 4 backend showing the whole server-side integration with the
+[Java SDK](../../sdk/java): issue join tokens to the browser, create rooms, start and stop
+recordings and receive webhooks.
 
-## Planned contents
+| Endpoint | What it does |
+|----------|--------------|
+| `POST /api/token?room=&identity=&name=&record=` | Returns `{url, token}` for the browser SDK (`room_join` grant, `room_config.recording_enabled` when `record=true`). A real app derives the identity from its session. |
+| `POST /api/rooms/{name}` / `GET /api/rooms` / `DELETE /api/rooms/{name}` | Create, list and delete rooms |
+| `GET /api/rooms/{name}/participants`, `DELETE /api/rooms/{name}/participants/{identity}` | List and remove participants |
+| `POST /api/rooms/{name}/recordings`, `DELETE /api/recordings/{id}`, `GET /api/recordings` | Start, stop and list recordings |
+| `POST /webhooks/tessera` | Verifies the HMAC signature, deduplicates by event id, logs the event |
+| `GET /api/events` | Last webhook events received (for trying it out) |
 
-- `POST /api/token`: returns `{url, token}` with a join token minted by `AccessToken`
-  (`TokenController`). A real app authenticates the user first and derives the identity from
-  its session.
-- `POST /webhooks/tessera`: verifies and decodes webhooks with `WebhookReceiver`, answering 401 on
-  verification failures (`WebhookController`). The body is bound as raw `byte[]` so the
-  signature can be checked.
-- A `RoomServiceClient` bean for admin calls (`Application`).
-- Configuration through `tessera.url`, `tessera.api-key`, `tessera.api-secret`
-  (`application.properties`, environment variables `TESSERA_API_KEY` / `TESSERA_API_SECRET`).
-
-## Trying the skeleton locally
+## Run it
 
 ```sh
-(cd ../../sdk/java && mvn -B install)   # installs tessera-server-sdk 0.1.0-SNAPSHOT
-mvn -B spring-boot:run
+# 1. a Tessera server in development mode (prints a development key and secret)
+go run ./cmd/tessera --dev
+
+# 2. install the SDK locally and start the example
+(cd sdk/java && mvn -B install -DskipTests)
+cd examples/java-spring
+TESSERA_API_KEY=<key> TESSERA_API_SECRET=<secret> mvn spring-boot:run
+
+# 3. use it
+curl -X POST 'localhost:8080/api/token?room=demo&identity=alice&record=true'
+curl -X POST  localhost:8080/api/rooms/demo
+curl -X POST  localhost:8080/api/rooms/demo/recordings
+curl          localhost:8080/api/events
 ```
 
-The example adds `protobuf-java-util` because webhook endpoints default to JSON encoding.
+Point the Tessera webhook endpoint at `http://localhost:8080/webhooks/tessera`
+(`webhook.endpoints` in `tessera.yaml`, `api_key` selects the signing secret). The browser demo
+(`examples/web-demo`) can fetch its token from `POST /api/token` instead of using a hard-coded one.
+
+Configuration: `tessera.url`, `tessera.api-key`, `tessera.api-secret`
+(environment `TESSERA_URL`, `TESSERA_API_KEY`, `TESSERA_API_SECRET`).
+
+The webhook endpoint uses the default JSON encoding, so the example adds `protobuf-java-util`.
+Configure the endpoint with `encoding: protobuf` to drop that dependency.
+
+`mvn -B test` runs MockMvc tests for token issuing and webhook verification.
