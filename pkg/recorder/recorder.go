@@ -12,15 +12,13 @@ package recorder
 
 import (
 	"context"
+	"github.com/prometheus/client_golang/prometheus"
 	"log/slog"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
-	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
@@ -48,55 +46,9 @@ type CoordinatorParams struct {
 	// APIKey/Secret sign recorder access tokens.
 	APIKey, Secret string
 	Registry       prometheus.Registerer
-	Logger         *slog.Logger
-}
-
-// Coordinator implements Service and WorkerAPI.
-type Coordinator struct {
-	p CoordinatorParams
-}
-
-var (
-	_ Service   = (*Coordinator)(nil)
-	_ WorkerAPI = (*Coordinator)(nil)
-)
-
-// NewCoordinator creates the Coordinator. Phase 0 stub.
-func NewCoordinator(p CoordinatorParams) *Coordinator { return &Coordinator{p: p} }
-
-// StartRecording implements Service.
-func (c *Coordinator) StartRecording(context.Context, *tesserav1.StartRecordingRequest) (*tesserav1.RecordingInfo, error) {
-	return nil, errs.NotImplemented("recorder.StartRecording")
-}
-
-// StopRecording implements Service.
-func (c *Coordinator) StopRecording(context.Context, string) (*tesserav1.RecordingInfo, error) {
-	return nil, errs.NotImplemented("recorder.StopRecording")
-}
-
-// ListRecordings implements Service.
-func (c *Coordinator) ListRecordings(context.Context, *tesserav1.ListRecordingsRequest) ([]*tesserav1.RecordingInfo, error) {
-	return nil, errs.NotImplemented("recorder.ListRecordings")
-}
-
-// GetRecording implements Service.
-func (c *Coordinator) GetRecording(context.Context, string) (*tesserav1.RecordingInfo, error) {
-	return nil, errs.NotImplemented("recorder.GetRecording")
-}
-
-// ClaimJob implements WorkerAPI.
-func (c *Coordinator) ClaimJob(context.Context, *tesserav1.ClaimJobRequest) (*tesserav1.ClaimJobResponse, error) {
-	return nil, errs.NotImplemented("recorder.ClaimJob")
-}
-
-// UpdateJob implements WorkerAPI.
-func (c *Coordinator) UpdateJob(context.Context, *tesserav1.UpdateJobRequest) error {
-	return errs.NotImplemented("recorder.UpdateJob")
-}
-
-// Heartbeat implements WorkerAPI.
-func (c *Coordinator) Heartbeat(context.Context, *tesserav1.HeartbeatRequest) (*tesserav1.HeartbeatResponse, error) {
-	return nil, errs.NotImplemented("recorder.Heartbeat")
+	// Now overrides the clock in tests.
+	Now    func() time.Time
+	Logger *slog.Logger
 }
 
 // JoinGrant returns the grant used in recorder join tokens.
@@ -164,22 +116,3 @@ func DefaultConfig() *Config {
 		Heartbeat:  5 * time.Second,
 	}
 }
-
-// Worker runs recording jobs inside tessera-recorder.
-type Worker struct {
-	cfg    *Config
-	logger *slog.Logger
-}
-
-// NewWorker creates a worker.
-func NewWorker(cfg *Config, reg prometheus.Registerer, logger *slog.Logger) (*Worker, error) {
-	return &Worker{cfg: cfg, logger: logger}, nil
-}
-
-// Run claims and executes jobs until ctx is cancelled. Phase 0 stub.
-func (w *Worker) Run(ctx context.Context) error {
-	return errs.NotImplemented("recorder.Worker.Run")
-}
-
-// Ready reports readiness (storage reachable, capacity available).
-func (w *Worker) Ready() error { return nil }
