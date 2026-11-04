@@ -21,7 +21,8 @@ only its own section (rebase on conflict).
 ## WP1: SFU core
 
 Session A. Milestones follow the session plan (M1 core, M2 RTCP/resume, M3 simulcast,
-M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks).
+M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks). All e2e tests live in `test/e2e`
+(real server on loopback + Pion clients; full suite ~35 s under `-race`).
 
 - [x] M1 Signaling (`/rtc` WebSocket, protobuf + JSON framing, bounded write queue, ping timeout, close codes),
   JWT check + `Admit` before upgrade (401/403/404/409/426/503), rooms (auto-create, empty/departure timeouts,
@@ -32,22 +33,38 @@ M4 BWE/dynacast, M5 speakers/networking, M6 benchmarks).
   (munged SN -> original SN, per-SN throttle, 3 tries), PLI/FIR relay throttled per layer, SR per DownTrack
   from publisher SR, RR to publishers, resume within `resume_window` (server + Go client), hidden recorder
   participants, e2e tests: NACK, PLI throttle, resume, duplicate identity, permissions
-- [~] M3 Simulcast: VP8 + H.264 layer switching on keyframes (SN/TS/VP8 picture-id/TL0PICIDX/KEYIDX rewrite,
-  7->15 bit picture id, temporal-layer drop), subscriber preferences (`track_setting` quality/size/fps/disabled),
-  Go client simulcast publish, e2e switching test. Not done: dynacast, speakers (moved to M4/M5)
-- [ ] M4 TWCC estimator, allocator, probing, pause, connection quality
-- [ ] M5 TURN, ICE-TCP, NAT 1:1, drain, fuzzing and hardening
-
-Benchmarks (4 vCPU container, go1.27.3): `BenchmarkBufferWrite` 103 ns/op 0 allocs,
-`BenchmarkForwarderGetTranslation` 54 ns/op 0 allocs.
+- [x] M3 Simulcast: VP8 + H.264 layer switching on keyframes (SN/TS/VP8 picture-id/TL0PICIDX/KEYIDX rewrite,
+  7->15 bit picture id, temporal-layer drop with continuous picture ids), keyframe wait with PLI, subscriber
+  preferences (`track_setting` quality/size/fps/disabled/priority), Go client simulcast publish (stamps MID/RID),
+  e2e switching test (HIGH->LOW->HIGH->MEDIUM, continuous SN/TS/picture id), H.264 IDR switch unit test
+- [x] M4 TWCC send-side estimator (`pkg/rtc/bwe`: trendline overuse detector + AIMD + loss bound + ack-rate cap),
+  transport-wide sequence numbers stamped by DownTracks, per-subscriber allocator (500 ms tick, priorities,
+  3 s upgrade hold for bandwidth upgrades, immediate downgrade, pause + `StreamStateUpdate`), dynacast
+  (`SubscribedQualityUpdate`, 10 s grace), e2e: downgrade under a 600 kbit/s policed link and PAUSED at
+  50 kbit/s, dynacast on/off. Not done: padding probes (allocator relies on AIMD growth instead)
+- [x] M5 Active speaker detection (EMA + 2-interval activation + dominance margin, `speakers_changed`),
+  connection quality (`connection_quality` every 5 s, changed entries), mute, single UDP mux port with
+  datagram counters, ICE-TCP mux (`rtc.tcp_port`), NAT 1:1 (`rtc.node_ip` via address rewrite rules),
+  embedded TURN (`turn.enabled`, UDP + TCP, REST-style ephemeral credentials in `ice_servers`, relay restricted
+  to node addresses); e2e: speakers + quality, TURN relay-only client, ICE-TCP-only client, NAT 1:1
+- [~] M6 Zero-allocation benchmarks (`pkg/rtc/bench_test.go`: SRTP DownTrack write, fan-out 1/10/100/1000) and
+  `TestForwardingDoesNotAllocate`; notes in `docs/perf/WP1.md`. Numbers for the SRTP/fan-out benchmarks and
+  the pprof pass are still to be recorded (tooling became unavailable at the end of the session)
 
 Known issues / next steps (WP1):
-- Data packets (`_reliable`/`_lossy`) are accepted but not forwarded yet; `PublishData` returns unimplemented.
+- Last commit (M6 benchmarks) was pushed through the GitHub API without a final `golangci-lint`/full `-race` run;
+  `TestForwardingDoesNotAllocate` passed locally. Run `make lint test-race` first.
+- Data packets (`_reliable`/`_lossy`) are accepted but not forwarded yet; `client.PublishData` returns unimplemented
+  (WP2 data e2e depends on this).
+- WP4 request (open): expose RTCP sender reports on `client.RemoteTrack` for A/V alignment.
 - Subscriber transceivers are not reused after unsubscribe (SDP grows in long sessions).
-- `SyncState` is accepted but only answered with a participant update; ICE restart on resume not exercised.
-- Connection quality is computed in stats only (no `connection_quality` signal messages yet); no speaker detection.
-- TURN, ICE-TCP not implemented (`turn.enabled` is ignored); NAT 1:1 via `rtc.node_ip` is wired but untested.
-- `golangci-lint` currently reports errcheck/revive issues in WP3/WP4 packages (admin, hls, storage, webhook).
+- `SyncState` is accepted but only answered with a participant update; ICE restart on resume not exercised server-side.
+- RTX: negotiated with publishers but retransmissions on the RTX SSRC are not unwrapped; browser NACK recovery needs
+  this (Pion publishers resend on the primary SSRC, which works).
+- TURNS (TLS) not implemented (`turn.tls_port` ignored); no padding probes (`congestion_control.probe` ignored).
+- Drain sends `leave` with DISCONNECT rather than RESUME/RECONNECT migration; fuzzing only runs seeds.
+- `golangci-lint` reported errcheck/revive issues in WP3/WP4 packages (admin, hls, storage, webhook) mid-session;
+  WP1 packages were clean.
 
 ## WP2: Browser SDK and demo
 
@@ -101,6 +118,11 @@ Known issues / next steps:
 - Next steps: Playwright smoke test of `web/admin` against a live server (CI job `dashboard-web` already runs typecheck, vitest, build and the dist drift check); optional per-room history; `dashboard` config section in `pkg/config` instead of the env var.
 
 ## WP5: Integration, load and performance (after WP1 M3)
+
+Not started: session A spent the budget on WP1 M1 to M6 (the owner prioritised WP1). Starting points for
+whoever continues: `test/e2e/harness_test.go` (server + client helpers, synthetic VP8/Opus generators,
+simulcast generator and policed link in `simulcast_test.go`/`bwe_test.go`) can be reused for the
+full-system suite and `cmd/tessera-loadtest`.
 
 - [ ] M1 Load tester MVP
 - [ ] M2 Benchmark harness and regression gate

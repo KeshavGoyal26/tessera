@@ -166,9 +166,7 @@ func (r *ReceiverImpl) readLoop(l *layer) {
 		if ext.HasAudioLevel {
 			r.audio.observe(ext.AudioLevel, ext.VoiceActivity)
 		}
-		for _, dt := range *r.downs.Load() {
-			_ = dt.WriteRTP(ext, l.spatial)
-		}
+		r.fanout(ext, l.spatial)
 		if now-lastNack >= 20e6 {
 			lastNack = now
 			nackBuf = l.buf.MissingSequenceNumbers(nackBuf[:0], now)
@@ -182,6 +180,14 @@ func (r *ReceiverImpl) readLoop(l *layer) {
 		}
 	}
 	r.Close()
+}
+
+// fanout forwards one packet to every DownTrack inline, preserving
+// per-downtrack order.
+func (r *ReceiverImpl) fanout(ext *buffer.ExtPacket, spatial int32) {
+	for _, dt := range *r.downs.Load() {
+		_ = dt.WriteRTP(ext, spatial)
+	}
 }
 
 type timeoutError interface{ Timeout() bool }
