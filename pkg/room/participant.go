@@ -234,6 +234,9 @@ func (p *Participant) start() error {
 		est := bwe.NewEstimator(bcfg)
 		alloc := bwe.NewAllocator(bcfg, est)
 		alloc.OnPausedChanged(p.onStreamStates)
+		if err := t.CreateDataChannels(); err == nil {
+			t.Negotiate(false)
+		}
 		p.mu.Lock()
 		p.sub = t
 		if cc.Enabled {
@@ -1052,7 +1055,43 @@ func (p *Participant) onStreamStates(changed []bwe.Allocation) {
 	}
 }
 
-// onDataChannel handles the client's data channels (forwarding: M2).
+// onDataChannel forwards DataPackets from the client's publisher data
+// channels to the other participants' subscriber data channels.
 func (p *Participant) onDataChannel(dc *webrtc.DataChannel) {
-	dc.OnMessage(func(webrtc.DataChannelMessage) {})
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if !p.permission().GetCanPublishData() {
+			return
+		}
+		pkt := &tesserav1.DataPacket{}
+		if err := proto.Unmarshal(msg.Data, pkt); err != nil {
+			return
+		}
+		if pkt.Kind == tesserav1.DataPacket_KIND_UNSPECIFIED {
+			pkt.Kind = tesserav1.DataPacket_KIND_RELIABLE
+			if dc.Label() == rtc.LabelLossy {
+				pkt.Kind = tesserav1.DataPacket_KIND_LOSSY
+			}
+		}
+		pkt.ParticipantIdentity = p.identity
+		dest := map[string]bool{}
+		for _, d := range pkt.DestinationIdentities {
+			dest[d] = true
+		}
+		pkt.DestinationIdentities = nil
+		data, err := proto.Marshal(pkt)
+		if err != nil {
+			return
+		}
+		for _, o := range p.room.Participants() {
+			if o == p || (len(dest) > 0 && !dest[o.identity]) || !o.permission().GetCanSubscribe() {
+				continue
+			}
+			o.mu.Lock()
+			sub := o.sub
+			o.mu.Unlock()
+			if sub != nil {
+				_ = sub.SendDataPacket(pkt.Kind, data)
+			}
+		}
+	})
 }

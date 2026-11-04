@@ -77,6 +77,9 @@ type Transport interface {
 	AddDownTrack(dt DownTrack) error
 	RemoveDownTrack(dt DownTrack) error
 	SendDataPacket(kind tesserav1.DataPacket_Kind, data []byte) error
+	// CreateDataChannels creates the `_reliable`/`_lossy` channels
+	// (subscriber side).
+	CreateDataChannels() error
 	// WriteRTCP sends RTCP on this PeerConnection.
 	WriteRTCP(pkts []rtcp.Packet) error
 	// Stats returns connection statistics.

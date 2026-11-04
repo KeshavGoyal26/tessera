@@ -34,6 +34,7 @@ type transport struct {
 	timer         *time.Timer
 	closed        bool
 	senders       map[DownTrack]*webrtc.RTPSender
+	dcs           map[string]*webrtc.DataChannel
 	created       time.Time
 	iceConnected  time.Time
 	dtlsConnected time.Time
@@ -247,9 +248,44 @@ func (t *transport) RemoveDownTrack(dt DownTrack) error {
 	return nil
 }
 
+// Data channel labels (PROTOCOL.md 2.5).
+const (
+	LabelReliable = "_reliable"
+	LabelLossy    = "_lossy"
+)
+
+// CreateDataChannels creates the server-side `_reliable` and `_lossy`
+// channels (subscriber PC); the next offer carries them.
+func (t *transport) CreateDataChannels() error {
+	ordered := false
+	var zero uint16
+	rel, err := t.pc.CreateDataChannel(LabelReliable, nil)
+	if err != nil {
+		return err
+	}
+	lossy, err := t.pc.CreateDataChannel(LabelLossy, &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &zero})
+	if err != nil {
+		return err
+	}
+	t.mu.Lock()
+	t.dcs = map[string]*webrtc.DataChannel{LabelReliable: rel, LabelLossy: lossy}
+	t.mu.Unlock()
+	return nil
+}
+
 // SendDataPacket implements Transport; data channels are looked up by label.
 func (t *transport) SendDataPacket(kind tesserav1.DataPacket_Kind, data []byte) error {
-	return errs.NotImplemented("transport.SendDataPacket")
+	label := LabelReliable
+	if kind == tesserav1.DataPacket_KIND_LOSSY {
+		label = LabelLossy
+	}
+	t.mu.Lock()
+	dc := t.dcs[label]
+	t.mu.Unlock()
+	if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+		return errs.New(errs.CodeUnavailable, "data channel %s not open", label)
+	}
+	return dc.Send(data)
 }
 
 // WriteRTCP implements Transport.

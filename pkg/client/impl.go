@@ -107,6 +107,7 @@ type client struct {
 	done      chan struct{}
 	url       string
 	token     string
+	dcs       map[string]*webrtc.DataChannel
 }
 
 // New creates a client.
@@ -226,6 +227,20 @@ func (c *client) Connect(ctx context.Context, rawURL, token string) error {
 		return err
 	}
 	c.sub.OnTrack(c.onTrack)
+	c.sub.OnDataChannel(func(dc *webrtc.DataChannel) {
+		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+			p := &tesserav1.DataPacket{}
+			if proto.Unmarshal(msg.Data, p) != nil {
+				return
+			}
+			c.mu.Lock()
+			cb := c.cb.OnDataPacket
+			c.mu.Unlock()
+			if cb != nil {
+				cb(p)
+			}
+		})
+	})
 	go c.readLoop()
 	go c.pingLoop(time.Duration(max(join.PingInterval, 1)) * time.Second)
 	return nil
@@ -742,9 +757,60 @@ func (c *client) UpdateTrackSettings(_ context.Context, s *tesserav1.UpdateTrack
 	return c.send(&tesserav1.SignalRequest{Message: &tesserav1.SignalRequest_TrackSetting{TrackSetting: s}})
 }
 
-// PublishData implements Client (data channels arrive in a later milestone).
-func (c *client) PublishData(context.Context, *tesserav1.DataPacket) error {
-	return errs.NotImplemented("client.PublishData")
+// PublishData implements Client. The `_reliable` and `_lossy` publisher
+// data channels are created (and negotiated) on first use.
+func (c *client) PublishData(ctx context.Context, p *tesserav1.DataPacket) error {
+	if err := c.ensureDataChannels(ctx); err != nil {
+		return err
+	}
+	label := "_reliable"
+	if p.GetKind() == tesserav1.DataPacket_KIND_LOSSY {
+		label = "_lossy"
+	}
+	data, err := proto.Marshal(p)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	dc := c.dcs[label]
+	c.mu.Unlock()
+	return dc.Send(data)
+}
+
+func (c *client) ensureDataChannels(ctx context.Context) error {
+	c.mu.Lock()
+	if c.dcs != nil {
+		c.mu.Unlock()
+		return nil
+	}
+	ordered := false
+	var zero uint16
+	rel, err := c.pub.CreateDataChannel("_reliable", nil)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	lossy, err := c.pub.CreateDataChannel("_lossy", &webrtc.DataChannelInit{Ordered: &ordered, MaxRetransmits: &zero})
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.dcs = map[string]*webrtc.DataChannel{"_reliable": rel, "_lossy": lossy}
+	c.mu.Unlock()
+	opened := make(chan struct{}, 2)
+	rel.OnOpen(func() { opened <- struct{}{} })
+	lossy.OnOpen(func() { opened <- struct{}{} })
+	if err := c.negotiatePublisher(ctx); err != nil {
+		return err
+	}
+	for range 2 {
+		select {
+		case <-opened:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // SetCallbacks implements Client.
