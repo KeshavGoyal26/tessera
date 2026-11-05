@@ -134,17 +134,26 @@ Session A, after WP1 (budget-limited; owner prioritised WP1).
   subscribers, join / first-packet / latency (send time in payload) / loss / throughput, periodic and JSON
   reports. First results in `docs/perf/LOADTEST.md` (meeting 24 clients, webinar 61 clients, 0% loss,
   p99 latency < 3 ms; server and clients on the same 4 vCPUs).
-- [~] Deployment: compose adds the web demo (nginx image built from `sdk/js` + `examples/web-demo`),
-  Prometheus and Grafana (provisioning from `deploy/grafana`); README quick start. **Images and compose were not
-  built or started** (no Docker daemon in the session); verified instead: web demo `npm run build`, the server
-  boots with `deploy/config/tessera.yaml` and forwards media with `node_ip: 127.0.0.1`.
-- [~] Profiling: micro-benchmark pprof (`docs/perf/WP1.md`): SRTP crypto dominates; GCM path 4.5x faster
-  (already Pion's default). No pprof under load and no code optimisation round yet.
-- [ ] M2 Benchmark regression gate in CI (benchstat), M3 P1-P12 on the reference machine with separate
-  load-generator hosts, churn and recording-load scenarios, M5 Helm chart, runbook, multi-node ADR.
+- [~] Deployment (session E, 2026-11-05): Docker daemon was available. `tessera` and `web-demo` images build; the
+  stack (tessera, web demo, Prometheus, Grafana) came up healthy, Prometheus scrapes tessera, Grafana datasource and
+  dashboard are provisioned, and media flows through the container (load tester 0% loss). **Not verified:** the
+  `recorder` image (apt could not reach the Debian mirror in the sandbox) and MinIO (the pinned `minio/*` Docker Hub
+  tags no longer exist; compose now uses `quay.io/minio/*`, unreachable from the sandbox). Details in `deploy/README.md`.
+- [x] Profiling under load (50 rooms x 4 publishers): top hotspot is one `sendto` syscall per RTP packet (23% CPU),
+  SRTP crypto is only ~1-2% with AES-GCM, Tessera code <5%; 66% of heap is per-stream receive slabs. Findings and
+  recommendations (UDP write batching, smaller audio rings) in `docs/perf/LOADTEST.md`; nothing changed in `pkg/rtc`.
+- [x] Load scaling run: 12 to 200 clients, 0% loss, 0 join failures, p99 latency < 5 ms (`docs/perf/LOADTEST.md`);
+  same-host limits apply, P5/P6 targets on the reference machine are not confirmed.
+- [x] M2 Benchmark regression gate: `.github/workflows/bench.yml` + `docs/perf/benchgate.sh` (benchstat vs
+  `docs/perf/baseline/bench.txt`, fails on >40% significant sec/op regression, ~1 min). Baseline was recorded on a
+  dev container; refresh it from the first green CI run's `bench-results` artifact (`docs/perf/README.md`).
+- [x] Production runbook `docs/DEPLOYMENT.md` (ports, NAT 1:1, TURN, TLS, scaling limits, monitoring).
+- [ ] M3 P1-P12 on the reference machine with separate load-generator hosts, churn and recording-load scenarios,
+  M5 Helm chart, multi-node ADR.
 
-Next steps: `docker compose up` smoke test on a machine with Docker (check MinIO/Grafana image tags and that
-the recorder reaches the server's media address); run the load tester from a second host; add `bench` CI job.
+Next steps: build the recorder image and run the full compose stack on a machine with internet access; confirm the
+MinIO image tags; run the load tester from a second host; apply the UDP write batching and ring-sizing
+recommendations (owners of `pkg/rtc`); refresh the bench baseline from CI.
 
 ## Later phases
 
