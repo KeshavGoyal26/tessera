@@ -129,6 +129,8 @@ func TestDevTokenEndpoint(t *testing.T) {
 			}
 		}
 		cancel()
-		_ = <-done
+		if err := <-done; err != nil {
+			t.Errorf("server exited with %v", err)
+		}
 	}
 }
