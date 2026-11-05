@@ -187,6 +187,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   #reconnecting = false;
   #bySid = new Map<string, RemoteParticipant>();
   #pendingTracks = new Map<string, PendingTrack>();
+  /** Tracks to publish again after a full rejoin; survives failed rejoin attempts. */
+  #republish: { track: LocalTrack; options: TrackPublishOptions }[] | undefined;
   #speaking = new Map<string, number>();
   #waiters = new Map<string, { resolve: (i: TrackInfo) => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
   #local = new Map<LocalTrack, LocalEntry>();
@@ -855,7 +857,10 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   }
 
   async #fullReconnect(): Promise<void> {
-    const tracks = [...this.#local.values()].map((e) => ({ track: e.track, options: e.options }));
+    // Keep the list across attempts: a failed attempt has already cleared #local, so a retry
+    // that rebuilt it from #local would rejoin without any tracks.
+    this.#republish ??= [...this.#local.values()].map((e) => ({ track: e.track, options: e.options }));
+    const tracks = this.#republish;
     this.#closeSession();
     for (const t of tracks) {
       t.track.engine = undefined;
@@ -869,6 +874,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       if (t.track.mediaStreamTrack.readyState === "ended") continue;
       await this.publishTrack(t.track, t.options);
     }
+    this.#republish = undefined;
   }
 
   // ---- teardown ----
@@ -888,6 +894,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   }
 
   #cleanup(): void {
+    this.#republish = undefined;
     this.#closeSession();
     for (const identity of [...this.remoteParticipants.keys()]) this.#removeRemote(identity);
     for (const e of this.#local.values()) e.track.engine = undefined;

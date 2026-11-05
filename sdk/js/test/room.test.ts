@@ -335,6 +335,25 @@ describe("reconnect", () => {
     expect(sleeps).toEqual([reconnectDelay(0)]);
   });
 
+  it("republishes local tracks when an earlier rejoin attempt failed", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    vi.stubGlobal("MediaStream", class { id = "stream-1"; constructor(public tracks: unknown[] = []) {} });
+    const audio = { id: "cid-audio", kind: "audio", enabled: true, readyState: "live", stop: vi.fn(), getSettings: () => ({}) } as unknown as MediaStreamTrack;
+    const track = new LocalTrack(audio, TrackSource.Microphone);
+    const p = room.localParticipant.publishTrack(track);
+    sig().emit({ case: "trackPublished", value: { cid: "cid-audio", track: create(TrackInfoSchema, { sid: "TR_a", type: TrackType.AUDIO }) } });
+    await p;
+    FakeSignal.failResume = 99;
+    FakeSignal.failConnect = 1; // first rejoin fails, the second succeeds
+    sig().onClose?.({ code: 1006, reason: "", local: false });
+    await vi.waitFor(() => expect(sig().cases()).toContain("addTrack"));
+    sig().emit({ case: "trackPublished", value: { cid: "cid-audio", track: create(TrackInfoSchema, { sid: "TR_a2", type: TrackType.AUDIO }) } });
+    await vi.waitFor(() => expect(room.state).toBe(ConnectionState.Connected));
+    expect([...room.localParticipant.trackPublications.keys()]).toEqual(["TR_a2"]);
+    FakeSignal.failResume = 0;
+  });
+
   it("gives up after the maximum attempts and disconnects", async () => {
     const room = newRoom({ maxReconnectAttempts: 3 });
     await room.connect("ws://h", "t");
