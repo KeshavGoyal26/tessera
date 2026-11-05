@@ -164,6 +164,14 @@ Logged, not fixed (lower severity):
 6. **Scale-out**: multi-node with Redis (room placement, signal relay, job queue), then cascading
    relays for very large rooms; later VP9/AV1 SVC, WHIP/WHEP and E2EE.
 
+## Update, session F (2026-11-05, later)
+
+All ten CI jobs are green in [run 74](https://github.com/KeshavGoyal26/tessera/actions/runs/41981700160)
+(`94e498d`), with the e2e job now split per browser: Chromium 7/7; Firefox 6 run and pass, screen share
+skipped; WebKit 5 pass, layer selection and screen share skipped (reasons in the browser row above).
+ICE restart without rejoin and TURN over TLS (including the TLS-only Go e2e) are in that run.
+Run 75 (docs only) is the second run on the same code.
+
 ## Final CI state
 
 **All eight CI jobs are green** in [run 52](https://github.com/KeshavGoyal26/tessera/actions/runs/41968153953)
