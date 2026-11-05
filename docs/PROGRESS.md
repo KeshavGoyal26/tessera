@@ -180,6 +180,30 @@ Final report with feature matrix, CI state, findings and roadmap: [STATUS.md](ST
   no dashboard roles, data packets dropped before the subscriber channel opens, `buffer.Release` never called,
   TWCC feedback allocations, O(n^2) NACK queue shift, padding SNs missing from NACK history
 
+## Session F: browsers, ICE restart, TURN over TLS (2026-11-05)
+
+- [x] CI e2e job is a matrix (chromium, firefox, webkit), `fail-fast: false`; WebKit project in
+  `sdk/js/playwright.config.ts` (camera/microphone granted: without it WebKit rejects `getUserMedia`).
+  Firefox and WebKit downloads are blocked in the authoring sandbox, so both ran in CI only. Failing
+  waits dump the WebRTC state of every page (`e2e/helpers.ts`), which found the WebKit causes below.
+- [x] Firefox reconnect test no longer skipped: the outage is simulated at the signaling layer
+  (`routeWebSocket` closes and refuses WebSockets); Chromium additionally uses `setOffline`. Firefox
+  screen share was tried and could not be automated (no screen picker control), so it runs on Chromium only.
+- [x] Layer selection e2e compares what the subscriber receives (high, then low, then high) instead of a
+  fixed 640 px or Alice's local preview; skipped on Linux WebKit (single full-size layer, see STATUS.md).
+- [x] ICE restart on network change: `Room.restartIce()` (publisher by client offer with `iceRestart`,
+  subscriber by the server on `sync_state{ice_restart=true}`, new proto field 7), triggered by `online`,
+  `navigator.connection` `change` and a connection `disconnected` for 3 s. No rejoin, same sid and tracks.
+  Browser e2e (counts restart offers and PeerConnections, checks media and sid) and Go e2e
+  (`TestICERestartKeepsMedia`), vitest for the SDK. An unconditional restart on every resume made
+  `TestResumeKeepsTracks` lose a packet, hence the explicit flag.
+- [x] TURN over TLS: `turn.tls_port` (was parsed but ignored) now serves TURNS, the join response lists
+  `turns:host:port?transport=tcp`, default off; `client.Options.TURNSOnly` and `TestTURNOverTLSOnly`
+  (server with only a TLS TURN listener, relay-only client, fails without the CA); deployment guide for 443.
+- [x] Demo fixes needed by the e2e after the web demo redesign: join with a pasted token without name/room,
+  `.mic-off` tile class.
+- Open: real Safari, Firefox screen share, H.264 on WebKit, a browser test through TURN/TLS.
+
 ## Later phases
 
 - [ ] Phase 2: multi-node with Redis (room placement, signal relay, job queue)

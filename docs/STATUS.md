@@ -12,7 +12,7 @@ that are listed; **missing** = not implemented.
 
 | Requirement | Status | Evidence | Gaps |
 |-------------|--------|----------|------|
-| **WebRTC on modern browsers** | partial | Browser SDK (`sdk/js`) with Playwright e2e against a real `tessera --dev`: two-way video, mute, layer selection, data packets, screen share, reconnect, bad token. Chromium: 6/6. Firefox: two-way video and bad token pass after this session's msid fix; see the CI section for the rest. | Firefox reconnect cannot be simulated with Playwright (skipped); Firefox screen share is skipped by the suite. Safari/WebKit has never been tested. |
+| **WebRTC on modern browsers** | partial | Browser SDK (`sdk/js`) with Playwright e2e against a real `tessera --dev`, one CI job per browser. Chromium 7/7: two-way video, mute, layer selection, data packets, reconnect, ICE restart, screen share (plus bad token). Firefox: the same suite except screen share (not automatable there), including reconnect and ICE restart. WebKit (Playwright's Linux build, a stand-in for Safari): 5 tests pass (two-way video with mute, bad token, data packets, reconnect, ICE restart); layer selection and screen share are skipped with reasons. ICE restart without rejoin, TURN over TLS. | Real Safari (macOS/iOS) was never run: Linux WebKit sends one full-size simulcast layer (ignores `scaleResolutionDownBy`), so Safari simulcast and the H.264 profile are unverified. Screen share is only automated on Chromium (Firefox and WebKit need a picker). Playwright cannot cut UDP media in Firefox/WebKit, so network loss is simulated at the signaling layer there. |
 | **SFU with many feeds** | done | Pion for ICE/DTLS/SRTP only; own forwarding, NACK ring buffer, simulcast (VP8 + H.264) with SN/TS/picture-id rewrite, temporal-layer drop, TWCC send-side BWE, per-subscriber allocator with priorities and pause, dynacast, active speakers, connection quality, ICE-TCP, embedded TURN, NAT 1:1, resume. Go e2e suite (`test/e2e`) with real Pion clients, plus a full-system test (3 publishers, 5 subscribers, a policed link, HLS recording). | No padding probes (the allocator grows by AIMD only), single node only, inline fan-out only (no parallel shards), subscriber transceivers are not reused. |
 | **HLS recording** | done | `pkg/hls` (H.264 depacketiser, fMP4, segmenter, playlists), Opus in fMP4, AAC mode and VP8 fallback through FFmpeg, local and S3 storage, coordinator and worker protocol, participant and track recordings, A/V alignment from RTCP SR. Validated with ffprobe/ffmpeg in CI (`recorder`, `go-e2e`). | No composite (grid) recording; no automated hls.js playback check; no long soak; MinIO was never run (fake S3 in tests); native Apple playback of Opus-in-fMP4 is best effort. |
 | **Optimized for load** | partial | Forwarding path does 0 allocs/op (tested); 486k pkts/s/core with SRTP in micro-benchmarks (target 100k); load tester runs show 0% loss and p99 latency under 3 ms for 24- and 61-client scenarios (numbers below). | Load was only measured with server and clients on the same 4 vCPUs, so the capacity targets (250 meeting participants / 2,000 webinar subscribers per 4 vCPU) are **unverified**. Profiled under load; a same-machine comparison with LiveKit ([perf/COMPARISON.md](perf/COMPARISON.md)) shows Tessera at roughly half LiveKit's CPU per forwarded packet and about half its RSS, with caveats (different load generators, loopback). Fixed: BWE collapse that left application-limited subscribers without video; batched UDP egress (about -10% CPU). **Open:** no padding probes, so the allocator cannot climb to the top simulcast layer (66 vs 121 Mbit/s delivered in the 2-publisher/50-subscriber run); no LiveKit latency number. |
@@ -131,9 +131,14 @@ Logged, not fixed (lower severity):
 
 ## Known issues (carried over, still open)
 
-- Safari never tested; Firefox only through CI.
-- `SyncState` answers with participant state only; server-side ICE restart on resume is not
-  exercised. Drain sends `leave` with DISCONNECT instead of migrating.
+- Real Safari (macOS/iOS) never tested; Firefox and WebKit run only in CI (their downloads are
+  blocked in the authoring sandbox). Linux WebKit ignores `scaleResolutionDownBy`/`maxBitrate` in
+  `sendEncodings` and sends a single 1280x720 layer.
+- ICE restart: the subscriber side restarts only when the client sends `sync_state{ice_restart}`
+  (SDK: `Room.restartIce()`, `online`/`navigator.connection` change, 3 s `disconnected`); a server-side
+  trigger on ICE `disconnected` does not exist. Drain sends `leave` with DISCONNECT instead of migrating.
+- TURN over TLS needs a CA-trusted certificate and, on 443, its own address or an SNI router
+  (docs/DEPLOYMENT.md); only tested with a Go client and a self-signed CA, not with a browser.
 - Room broadcasts between admission and JoinResponse are dropped for that participant (narrow
   window).
 - `congestion_control.probe` ignored.
@@ -143,8 +148,9 @@ Logged, not fixed (lower severity):
 
 ## Roadmap (prioritised)
 
-1. **Browser coverage**: confirm Firefox green in CI over several runs. Add WebKit to Playwright and
-   do a manual Safari pass (H.264 simulcast, Opus-in-fMP4 playback).
+1. **Browser coverage**: confirm Firefox and WebKit stay green over several CI runs, find a way to
+   automate Firefox screen share, and do a manual Safari pass on a Mac/iPhone (H.264 profile, simulcast
+   layers, Opus-in-fMP4 playback).
 2. **Capacity on real hardware**: run the load tester from separate hosts against the reference
    4 vCPU machine to check the 250 / 2,000 targets. Profile under load (SRTP, `sendmmsg`
    batching) and add the benchmark regression gate (session E started this).
