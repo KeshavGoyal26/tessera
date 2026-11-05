@@ -69,16 +69,27 @@ test("subscriber layer selection changes the received resolution", async ({ brow
     await a.click("#cam");
     await expectVideoPlaying(b, "alice");
     const width = () => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
-    // The top layer is the publisher's capture size, which depends on the browser's fake camera
-    // (640 px in Chromium, smaller in Firefox), so compare against what Alice captures.
-    const captured = () => a.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
-    await expect.poll(captured, { timeout: 10_000 }).toBeGreaterThan(0);
-    const full = Math.min(640, await captured());
+    // Layer sizes depend on the browser's fake camera, so only compare what Bob receives. Alice's
+    // own preview is not used (WebKit does not size a muted local preview).
+    const settled = async (): Promise<number> => {
+      let prev = -1;
+      let same = 0;
+      for (let i = 0; i < 40 && same < 4; i++) {
+        const w = await width();
+        same = w > 0 && w === prev ? same + 1 : 0;
+        prev = w;
+        await b.waitForTimeout(500);
+      }
+      return prev;
+    };
     await b.selectOption("#quality", "high");
-    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThanOrEqual(full);
-    const high = await width();
+    const high = await settled();
+    expect(high).toBeGreaterThan(0);
     await b.selectOption("#quality", "low");
     await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
+    const low = await settled();
+    await b.selectOption("#quality", "high");
+    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThan(low);
   } finally {
     await ctxA.close();
     await ctxB.close();
