@@ -17,7 +17,52 @@ export function hasGo(): boolean {
   return spawnSync("go", ["version"]).status === 0;
 }
 
+/** Records every RTCPeerConnection so a failing wait can dump transport state. */
+const TRACK_PCS = () => {
+  const w = window as unknown as { __allPcs?: RTCPeerConnection[] };
+  w.__allPcs = [];
+  const Orig = window.RTCPeerConnection;
+  window.RTCPeerConnection = new Proxy(Orig, {
+    construct(target, args) {
+      const pc = Reflect.construct(target, args) as RTCPeerConnection;
+      w.__allPcs?.push(pc);
+      return pc;
+    },
+  });
+};
+
+/** One-line-per-fact dump of the page's WebRTC state, for CI logs of a failed wait. */
+export async function diagnose(page: Page, label: string): Promise<string> {
+  const out = await page
+    .evaluate(async () => {
+      const lines: string[] = [];
+      lines.push(`error: ${document.querySelector("#error")?.textContent ?? ""}`);
+      lines.push(`status: ${document.querySelector("#status")?.textContent ?? ""}`);
+      for (const v of document.querySelectorAll<HTMLVideoElement>("video"))
+        lines.push(`video ${v.closest("[id]")?.id}: ${v.videoWidth}x${v.videoHeight} ready=${v.readyState} paused=${v.paused} err=${v.error?.message ?? ""}`);
+      const pcs = (window as unknown as { __allPcs?: RTCPeerConnection[] }).__allPcs ?? [];
+      let i = 0;
+      for (const pc of pcs) {
+        lines.push(`pc${i} conn=${pc.connectionState} ice=${pc.iceConnectionState} sig=${pc.signalingState}`);
+        for (const t of pc.getTransceivers())
+          lines.push(`  tr mid=${t.mid} dir=${t.direction}/${t.currentDirection} kind=${t.receiver.track.kind} sender=${t.sender.track?.readyState ?? "-"}`);
+        const stats = await pc.getStats();
+        stats.forEach((r: Record<string, unknown>) => {
+          if (r.type === "outbound-rtp" || r.type === "inbound-rtp")
+            lines.push(`  ${String(r.type)} ${String(r.kind)} bytes=${String(r.bytesSent ?? r.bytesReceived)} frames=${String(r.framesEncoded ?? r.framesDecoded)} codec=${String(r.codecId)}`);
+          if (r.type === "codec") lines.push(`  codec ${String(r.id)} ${String(r.mimeType)} ${String(r.sdpFmtpLine ?? "")}`);
+          if (r.type === "candidate-pair" && r.state === "succeeded") lines.push(`  pair ${JSON.stringify({ n: r.nominated, rtt: r.currentRoundTripTime })}`);
+        });
+        i++;
+      }
+      return lines.join("\n");
+    })
+    .catch((e: unknown) => `diagnose failed: ${String(e)}`);
+  return `--- ${label} ---\n${out}`;
+}
+
 export async function join(page: Page, room: string, identity: string): Promise<void> {
+  await page.addInitScript(TRACK_PCS);
   const token = mintToken(room, identity);
   const q = new URLSearchParams({ url: SERVER, token, autojoin: "1" });
   await page.goto(`/?${q.toString()}`);
@@ -26,6 +71,15 @@ export async function join(page: Page, room: string, identity: string): Promise<
 
 /** Resolves when a <video> inside the tile of `identity` is rendering frames. */
 export async function expectVideoPlaying(page: Page, identity: string): Promise<void> {
+  try {
+    await waitVideo(page, identity);
+  } catch (err) {
+    console.log(await diagnose(page, `waiting for video of ${identity}`));
+    throw err;
+  }
+}
+
+async function waitVideo(page: Page, identity: string): Promise<void> {
   await page.waitForFunction(
     (id) => {
       const v = document.querySelector<HTMLVideoElement>(`#tile-${id} video`);
