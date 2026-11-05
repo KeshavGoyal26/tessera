@@ -25,9 +25,10 @@ test("two participants exchange video, mute propagates and leaving is observed",
     await a.click("#mic");
     await expectVideoPlaying(b, "alice");
 
-    // Mute propagates to the other participant.
+    // Mute propagates to the other participant (the tile shows .mic-off while muted or without a mic).
+    await expect(b.locator("#tile-alice.mic-off")).toHaveCount(0, { timeout: 10_000 });
     await a.click("#mic");
-    await expect(b.locator("#tile-alice.muted")).toBeVisible({ timeout: 10_000 });
+    await expect(b.locator("#tile-alice.mic-off")).toBeVisible({ timeout: 10_000 });
 
     // Bob publishes too; Alice sees Bob.
     await b.click("#cam");

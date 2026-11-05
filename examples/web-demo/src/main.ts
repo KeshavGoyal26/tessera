@@ -230,8 +230,9 @@ async function resolveConnection(roomName: string, name: string): Promise<{ url:
 
 async function join(): Promise<void> {
   errorEl.hidden = true;
-  const name = field("name").value.trim();
-  const roomName = field("room").value.trim();
+  const hasToken = field("token").value.trim() !== "";
+  const name = field("name").value.trim() || (hasToken ? "guest" : "");
+  const roomName = field("room").value.trim() || (hasToken ? "room" : ""); // the token decides the room
   if (!name || !roomName) return;
   try {
     localStorage.setItem("tessera-demo-name", name);
