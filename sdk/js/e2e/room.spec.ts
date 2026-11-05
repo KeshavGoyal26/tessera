@@ -242,7 +242,7 @@ test("ICE restart on network change keeps the session and media", async ({ brows
 });
 
 test("screen share is published and shown to the other participant", async ({ browser, browserName }) => {
-  test.skip(browserName !== "chromium", "automatic screen selection is only configured for Chromium");
+  test.skip(browserName === "webkit", "WebKit has no way to auto-select a screen in headless Playwright");
   const room = `e2e-screen-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();

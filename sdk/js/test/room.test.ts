@@ -306,6 +306,43 @@ describe("publishing", () => {
   });
 });
 
+describe("restartIce", () => {
+  it("restarts the publisher and asks the server to restart the subscriber, without reconnecting", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    const ev: string[] = [];
+    room.on(RoomEvent.Reconnecting, () => ev.push("reconnecting"));
+    await room.restartIce();
+    const [pub] = transports;
+    expect(pub?.negotiate).toHaveBeenCalledWith({ iceRestart: true });
+    const sync = sig().sent.find((m) => m?.case === "syncState");
+    expect(sync?.case === "syncState" && sync.value.iceRestart).toBe(true);
+    expect(ev).toEqual([]);
+    expect(FakeSignal.all).toHaveLength(1);
+    expect(transports).toHaveLength(2);
+    expect(room.state).toBe(ConnectionState.Connected);
+  });
+
+  it("is triggered by the browser's online event", async () => {
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal("addEventListener", (t: string, f: () => void) => listeners.set(t, f));
+    vi.stubGlobal("removeEventListener", (t: string) => listeners.delete(t));
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    listeners.get("online")?.();
+    await vi.waitFor(() => expect(transports[0]?.negotiate).toHaveBeenCalledWith({ iceRestart: true }));
+    await room.disconnect();
+    expect(listeners.has("online")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing while not connected", async () => {
+    const room = newRoom();
+    await room.restartIce();
+    expect(transports).toHaveLength(0);
+  });
+});
+
 describe("reconnect", () => {
   it("resumes on an unexpected close and emits Reconnecting/Reconnected", async () => {
     const room = newRoom();
