@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pion/ice/v4"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
@@ -53,6 +54,34 @@ func TestFullSystem(t *testing.T) {
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	t.Cleanup(func() { close(stop); wg.Wait() })
+	if !recordMedia {
+		// Without ffmpeg there is no real clip to send, but the forwarding
+		// assertions below still need media on these two tracks: send
+		// synthetic H.264 IDR NAL units and Opus silence frames instead.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vt := time.NewTicker(40 * time.Millisecond)
+			at := time.NewTicker(20 * time.Millisecond)
+			defer vt.Stop()
+			defer at.Stop()
+			var vseq, aseq uint16
+			idr := append([]byte{0x65, 0x88}, make([]byte, 400)...)
+			for {
+				select {
+				case <-stop:
+					return
+				case <-vt.C:
+					_ = vtrack.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 96, SequenceNumber: vseq,
+						Timestamp: uint32(vseq) * 3600, SSRC: 1, Marker: true}, Payload: idr})
+					vseq++
+				case <-at.C:
+					_ = atrack.WriteRTP(hlstest.OpusPacket(aseq, uint32(aseq)*960, 2, []byte{0xfc, 0xff, 0xfe}))
+					aseq++
+				}
+			}
+		}()
+	}
 	if recordMedia {
 		aus := hlstest.H264(t, 20)
 		opus := hlstest.Opus(t, 20)
