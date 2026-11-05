@@ -1,0 +1,37 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/livekit/livekit-cli/v2/pkg/loadtester"
+	"github.com/livekit/livekit-cli/v2/pkg/util"
+)
+
+func main() {
+	var p loadtester.Params
+	room := flag.String("room", "lt-room", "")
+	flag.IntVar(&p.VideoPublishers, "video-publishers", 0, "")
+	flag.IntVar(&p.AudioPublishers, "audio-publishers", 0, "")
+	flag.IntVar(&p.Subscribers, "subscribers", 0, "")
+	flag.StringVar(&p.VideoResolution, "video-resolution", "high", "")
+	flag.StringVar(&p.VideoCodec, "video-codec", "vp8", "")
+	flag.DurationVar(&p.Duration, "duration", 30*time.Second, "")
+	flag.Float64Var(&p.NumPerSecond, "num-per-second", 5, "")
+	nosim := flag.Bool("no-simulcast", false, "")
+	layout := flag.String("layout", "speaker", "")
+	url := flag.String("url", "ws://127.0.0.1:7880", "")
+	key := flag.String("api-key", "devkey", "")
+	sec := flag.String("api-secret", "secret", "")
+	flag.Parse()
+	util.SetDefault(util.NewPrinter(os.Stdout, os.Stderr, false))
+	p.Simulcast = !*nosim
+	p.TesterParams = loadtester.TesterParams{URL: *url, APIKey: *key, APISecret: *sec, Room: *room, IdentityPrefix: "lt", Layout: loadtester.LayoutFromString(*layout)}
+	if err := loadtester.NewLoadTest(p).Run(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

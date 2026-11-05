@@ -1,0 +1,7 @@
+development: true
+logging:
+  level: warn
+rtc:
+  ips: [127.0.0.1]
+keys:
+  devkey: devsecret-devsecret-devsecret-0000

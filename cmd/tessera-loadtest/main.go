@@ -25,6 +25,8 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,6 +56,12 @@ type Params struct {
 	ReportPeriod time.Duration
 	JSON         string
 	Loopback     bool
+	// PublishOnly makes publishers not subscribe to anyone (publisher
+	// tokens get can_subscribe=false), so only listen-only participants receive.
+	PublishOnly bool
+	// VideoKbps overrides the synthetic per-layer video bitrates (low to high,
+	// comma separated, e.g. "150,600,2000"); empty keeps the built-in sizes.
+	VideoKbps string
 }
 
 func main() {
@@ -71,6 +79,8 @@ func main() {
 	flag.DurationVar(&p.ReportPeriod, "report", 5*time.Second, "stats report period")
 	flag.StringVar(&p.JSON, "json", "", "write the final report as JSON to this file")
 	flag.BoolVar(&p.Loopback, "loopback", false, "restrict ICE to 127.0.0.1 (server with rtc.ips: [127.0.0.1])")
+	flag.BoolVar(&p.PublishOnly, "publish-only", false, "publishers do not subscribe (only --subscribers receive media)")
+	flag.StringVar(&p.VideoKbps, "video-kbps", "", "per-layer video bitrate in kbit/s, low to high (e.g. 150,600,2000); default ~90/290/530")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -235,6 +245,8 @@ func startClient(ctx context.Context, p Params, roomName, identity string, publi
 	g := &auth.RoomGrant{Room: roomName, RoomJoin: true}
 	if !publisher {
 		g.CanPublish = auth.Bool(false)
+	} else if p.PublishOnly {
+		g.CanSubscribe = auth.Bool(false)
 	}
 	tok, err := auth.NewAccessToken(p.APIKey, p.Secret).SetIdentity(identity).SetGrant(g).ToJWT()
 	if err != nil {
@@ -287,6 +299,22 @@ func publish(runCtx, ctx context.Context, c client.Client, id string, p Params) 
 	}
 	rids := []string{"q", "h", "f"}[3-p.VideoLayers:]
 	sizes := []int{180, 600, 1100}[3-p.VideoLayers:]
+	pkts := []int{2, 2, 2}[3-p.VideoLayers:]
+	if p.VideoKbps != "" {
+		kb := strings.Split(p.VideoKbps, ",")
+		if len(kb) != p.VideoLayers {
+			return fmt.Errorf("--video-kbps needs %d values", p.VideoLayers)
+		}
+		for i, v := range kb {
+			rate, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || rate <= 0 {
+				return fmt.Errorf("bad --video-kbps value %q", v)
+			}
+			frame := rate * 1000 / 8 / 30 // bytes per frame at 30 fps
+			pkts[i] = (frame + 1099) / 1100
+			sizes[i] = frame / pkts[i]
+		}
+	}
 	var tracks []*webrtc.TrackLocalStaticRTP
 	var locals []webrtc.TrackLocal
 	for _, rid := range rids {
@@ -305,7 +333,7 @@ func publish(runCtx, ctx context.Context, c client.Client, id string, p Params) 
 		return err
 	}
 	for i, t := range tracks {
-		go sendVideo(runCtx, t, sizes[i])
+		go sendVideo(runCtx, t, sizes[i], pkts[i])
 	}
 	return nil
 }
@@ -332,9 +360,9 @@ func sendAudio(ctx context.Context, t *webrtc.TrackLocalStaticRTP) {
 	}
 }
 
-// sendVideo sends 30 fps VP8 frames of 2 packets of size bytes, with a
+// sendVideo sends 30 fps VP8 frames of perFrame packets of size bytes, with a
 // 15-bit picture id, TL0PICIDX and a keyframe every 2 s.
-func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size int) {
+func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size, perFrame int) {
 	tk := time.NewTicker(33 * time.Millisecond)
 	defer tk.Stop()
 	var sn, pid uint16
@@ -348,7 +376,7 @@ func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size int) {
 			return
 		case <-tk.C:
 			key := frame%60 == 0
-			for i := range 2 {
+			for i := range perFrame {
 				s := byte(0)
 				if i == 0 {
 					s = 0x10
@@ -359,7 +387,7 @@ func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size int) {
 				}
 				copy(payload, []byte{0x80 | s, 0xC0, 0x80 | byte(pid>>8), byte(pid), tl0, hdr})
 				stamp(payload[6:])
-				_ = t.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: sn, Timestamp: ts, Marker: i == 1}, Payload: payload})
+				_ = t.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: sn, Timestamp: ts, Marker: i == perFrame-1}, Payload: payload})
 				sn++
 			}
 			frame++
