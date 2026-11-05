@@ -179,7 +179,18 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
 
-	ips := rtcCfg.IPs
+	var ips []string
+	seen := map[string]bool{}
+	for _, ip := range rtcCfg.IPs { // duplicates would bind the same UDP port twice
+		key := ip
+		if p := net.ParseIP(ip); p != nil {
+			key = p.String()
+		}
+		if !seen[key] {
+			seen[key] = true
+			ips = append(ips, ip)
+		}
+	}
 	if len(ips) == 0 {
 		ips = []string{"0.0.0.0"}
 	}

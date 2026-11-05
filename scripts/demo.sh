@@ -33,10 +33,21 @@ done
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing required tool: $1" >&2; exit 1; }; }
 need go; need node; need npm
 
-if [ -z "$HOST" ]; then
-  HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  HOST="${HOST:-localhost}"
-fi
+# Portable LAN IP detection: macOS ipconfig, Linux hostname -I, else loopback. Never fails.
+detect_ip() {
+  local ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    for ifc in en0 en1 en2; do
+      ip="$(ipconfig getifaddr "$ifc" 2>/dev/null || true)"
+      [ -n "$ip" ] && break
+    done
+  fi
+  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  echo "${ip:-127.0.0.1}"
+}
+[ -n "$HOST" ] || HOST="$(detect_ip)"
 
 for p in $PORT $WEB_PORT; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
@@ -57,8 +68,11 @@ fi
 [ -d examples/web-demo/node_modules ] || (cd examples/web-demo && npm ci --silent)
 
 RTC_IPS=""
-if [[ "$HOST" =~ ^[0-9.]+$ ]]; then RTC_IPS="rtc:
-  ips: [\"$HOST\", \"127.0.0.1\"]"; fi
+if [[ "$HOST" =~ ^[0-9.]+$ ]]; then
+  if [ "$HOST" = 127.0.0.1 ]; then ips='["127.0.0.1"]'; else ips="[\"$HOST\", \"127.0.0.1\"]"; fi
+  RTC_IPS="rtc:
+  ips: $ips"
+fi
 cat > "$DEMO/tessera.yaml" <<EOF
 development: true
 port: $PORT
