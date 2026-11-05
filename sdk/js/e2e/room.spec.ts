@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectVideoPlaying, hasGo, join } from "./helpers.js";
+import { dumpAll, expectVideoPlaying, hasGo, join } from "./helpers.js";
 
 test.skip(
   !hasGo() && process.env.TESSERA_E2E_URL === undefined,
@@ -86,7 +86,13 @@ test("subscriber layer selection changes the received resolution", async ({ brow
     const high = await settled();
     expect(high).toBeGreaterThan(0);
     await b.selectOption("#quality", "low");
-    await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
+    try {
+      await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
+    } catch (err) {
+      console.log(`layer selection: high=${high} now=${await width()}`);
+      await dumpAll("after selecting low");
+      throw err;
+    }
     const low = await settled();
     await b.selectOption("#quality", "high");
     await expect.poll(width, { timeout: 20_000 }).toBeGreaterThan(low);

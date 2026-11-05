@@ -52,7 +52,7 @@ export async function diagnose(page: Page, label: string): Promise<string> {
         const stats = await pc.getStats();
         stats.forEach((r: Record<string, unknown>) => {
           if (r.type === "outbound-rtp" || r.type === "inbound-rtp")
-            lines.push(`  ${String(r.type)} ${String(r.kind)} bytes=${String(r.bytesSent ?? r.bytesReceived)} frames=${String(r.framesEncoded ?? r.framesDecoded)} codec=${String(r.codecId)}`);
+            lines.push(`  ${String(r.type)} ${String(r.kind)} rid=${String(r.rid)} ${String(r.frameWidth)}x${String(r.frameHeight)} bytes=${String(r.bytesSent ?? r.bytesReceived)} frames=${String(r.framesEncoded ?? r.framesDecoded)} codec=${String(r.codecId)}`);
           if (r.type === "codec") lines.push(`  codec ${String(r.id)} ${String(r.mimeType)} ${String(r.sdpFmtpLine ?? "")}`);
           if (r.type === "candidate-pair" && r.state === "succeeded") lines.push(`  pair ${JSON.stringify({ n: r.nominated, rtt: r.currentRoundTripTime })}`);
         });
@@ -94,6 +94,10 @@ export async function expectVideoPlaying(page: Page, identity: string): Promise<
     }
     throw err;
   }
+}
+
+export async function dumpAll(label: string): Promise<void> {
+  for (const p of joined) if (!p.isClosed()) console.log(await diagnose(p, label));
 }
 
 async function waitVideo(page: Page, identity: string): Promise<void> {
