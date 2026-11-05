@@ -42,7 +42,7 @@ Upgrade: websocket
 
 HTTP errors before upgrade: `401` invalid/expired token, `403` missing grant,
 `404` room does not exist and auto-create is disabled, `409` resume impossible (`sid`
-unknown), `426` unsupported `protocol`, `429` rate limited, `503` draining.
+unknown), `426` unsupported `protocol`, `429` room, node or participant limit reached, `503` draining.
 The body is a JSON `{"code": "...", "msg": "..."}`.
 
 Subprotocol: clients may send `Sec-WebSocket-Protocol: tessera.v1`; the server echoes it.
