@@ -67,7 +67,7 @@ export default defineConfig({
     {
       // WebKit stands in for Safari. Playwright's WebKit build serves mock capture devices.
       name: "webkit",
-      use: { ...devices["Desktop Safari"] },
+      use: { ...devices["Desktop Safari"], permissions: ["camera", "microphone"] },
     },
   ],
 });
