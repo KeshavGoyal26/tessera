@@ -160,4 +160,9 @@ Logged, not fixed (lower severity):
 
 ## Final CI state
 
-Run 52 (`cb1bd4d`) was still in progress when this report was written; see the update below.
+**All eight CI jobs are green** in [run 52](https://github.com/KeshavGoyal26/tessera/actions/runs/41968153953)
+(`cb1bd4d`, the first fully green run on main). Browser e2e: Chromium 6/6 (two-way video, bad token,
+layer selection, data packets, reconnect, screen share). Firefox 4/4 run: two-way video, bad token,
+layer selection and data packets pass; reconnect and screen share are skipped. Firefox is still a
+required browser in CI; it did not need to be marked allowed-to-fail. Locally, `go test -race ./...`
+also passes on the final tree. The later commits (dashboard pruning, docs) run in follow-up CI runs.
