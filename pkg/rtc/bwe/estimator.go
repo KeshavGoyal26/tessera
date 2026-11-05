@@ -3,6 +3,7 @@ package bwe
 import (
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtcp"
@@ -15,11 +16,33 @@ const (
 )
 
 type sentRecord struct {
-	seq    uint16
-	size   uint16
-	sentAt int64 // monotonic ns
-	valid  bool
+	seq     uint16
+	size    uint16
+	sentAt  int64 // monotonic ns
+	valid   bool
+	cluster uint8 // probe cluster the packet was sent in (0 = none)
 }
+
+// probeCluster measures one probe: every packet sent on the connection while it
+// runs (media and padding) is counted on the send side and, from TWCC feedback,
+// on the receive side. The receive rate is what the path delivered.
+type probeCluster struct {
+	id                  uint8
+	sentBytes, sentPkts int
+	firstSent, lastSent int64
+	ackBytes, ackPkts   int
+	lostPkts            int
+	firstArr, lastArr   int64
+	firstAckSize        int
+	finishedAt          time.Time // sending stopped; zero while sending
+	done                bool
+	result              int64 // estimate after the probe (0 = probe failed)
+}
+
+const (
+	minProbeSpan   = 100 * time.Millisecond // shorter clusters say nothing reliable
+	probeFeedbackT = time.Second            // give up waiting for the last feedback after this
+)
 
 // estimator is a send-side bandwidth estimator: a GCC-style trendline
 // overuse detector on inter-group delay variation, an AIMD rate controller
@@ -29,6 +52,10 @@ type estimator struct {
 
 	sentMu sync.Mutex // OnPacketSent vs feedback (short critical sections)
 	sent   [historySize]sentRecord
+	// probing: the active cluster id (0 = none) is read on the hot path; the
+	// cluster's counters are updated under sentMu.
+	probeID atomic.Uint32
+	probe   probeCluster
 
 	mu        sync.Mutex
 	estimate  float64
@@ -73,9 +100,50 @@ func NewEstimator(cfg Config) Estimator {
 
 // OnPacketSent implements Estimator. No allocation.
 func (e *estimator) OnPacketSent(seq uint16, size int, sentAt int64, _ bool) {
+	cl := uint8(e.probeID.Load())
 	e.sentMu.Lock()
-	e.sent[seq%historySize] = sentRecord{seq: seq, size: uint16(min(size, math.MaxUint16)), sentAt: sentAt, valid: true}
+	e.sent[seq%historySize] = sentRecord{seq: seq, size: uint16(min(size, math.MaxUint16)), sentAt: sentAt, valid: true, cluster: cl}
+	if cl != 0 && cl == e.probe.id {
+		pc := &e.probe
+		if pc.sentPkts == 0 {
+			pc.firstSent = sentAt
+		}
+		pc.sentPkts++
+		pc.sentBytes += size
+		pc.lastSent = sentAt
+	}
 	e.sentMu.Unlock()
+}
+
+// StartProbe begins a probe cluster: packets sent from now on are measured until
+// FinishProbe. A running probe is replaced.
+func (e *estimator) StartProbe() {
+	e.sentMu.Lock()
+	id := e.probe.id + 1
+	if id == 0 {
+		id = 1
+	}
+	e.probe = probeCluster{id: id}
+	e.sentMu.Unlock()
+	e.probeID.Store(uint32(id))
+}
+
+// FinishProbe ends sending for the current probe; the result follows from feedback.
+func (e *estimator) FinishProbe(now time.Time) {
+	e.probeID.Store(0)
+	e.sentMu.Lock()
+	if e.probe.id != 0 && e.probe.finishedAt.IsZero() {
+		e.probe.finishedAt = now
+	}
+	e.sentMu.Unlock()
+}
+
+// ProbeResult reports the outcome of the last probe: done once it was evaluated,
+// and the estimate it established (0 if it failed).
+func (e *estimator) ProbeResult() (done bool, estimate int64) {
+	e.sentMu.Lock()
+	defer e.sentMu.Unlock()
+	return e.probe.done, e.probe.result
 }
 
 // OnRTT implements Estimator.
@@ -137,18 +205,26 @@ func (e *estimator) OnTransportFeedback(fb *rtcp.TransportLayerCC, receivedAt ti
 			}
 			total++
 			rec := e.sent[seq%historySize]
+			inProbe := rec.valid && rec.seq == seq && rec.cluster != 0 && rec.cluster == e.probe.id
 			if sym == rtcp.TypeTCCPacketNotReceived {
 				lost++
+				if inProbe {
+					e.probe.lostPkts++
+				}
 			} else if deltaIdx < len(fb.RecvDeltas) {
 				arrival += fb.RecvDeltas[deltaIdx].Delta * 1000 // us -> ns
 				deltaIdx++
 				if rec.valid && rec.seq == seq {
 					acks = append(acks, ack{sentAt: rec.sentAt, arrival: arrival, size: int(rec.size)})
+					if inProbe {
+						e.probe.addAck(arrival, int(rec.size))
+					}
 				}
 			}
 			seq++
 		}
 	}
+	probeEst := e.evalProbeLocked(receivedAt)
 	e.sentMu.Unlock()
 
 	e.mu.Lock()
@@ -177,6 +253,50 @@ func (e *estimator) OnTransportFeedback(fb *rtcp.TransportLayerCC, receivedAt ti
 		e.addAck(a)
 	}
 	e.update(receivedAt)
+	if probeEst > 0 && e.state != StateOveruse && float64(probeEst) > e.estimate {
+		// The path delivered the probe: jump to what it carried. This is the only way
+		// past the "1.5x acknowledged" growth bound, which otherwise keeps a
+		// subscriber on a lower layer whose rate is far below the next one.
+		e.estimate = math.Min(float64(probeEst), float64(e.cfg.MaxBitrate))
+	}
+}
+
+func (pc *probeCluster) addAck(arrival int64, size int) {
+	if pc.ackPkts == 0 || arrival < pc.firstArr {
+		pc.firstArr, pc.firstAckSize = arrival, size
+	}
+	pc.lastArr = max(pc.lastArr, arrival)
+	pc.ackBytes += size
+	pc.ackPkts++
+}
+
+// evalProbeLocked evaluates a finished probe once its feedback is in (or late).
+// Returns the estimate the probe supports, or 0. Caller holds sentMu.
+func (e *estimator) evalProbeLocked(now time.Time) int64 {
+	pc := &e.probe
+	if pc.id == 0 || pc.done || pc.finishedAt.IsZero() {
+		return 0
+	}
+	if pc.ackPkts+pc.lostPkts < pc.sentPkts*9/10 && now.Sub(pc.finishedAt) < probeFeedbackT {
+		return 0 // feedback still on its way
+	}
+	pc.done = true
+	sendSpan := time.Duration(pc.lastSent - pc.firstSent)
+	recvSpan := time.Duration(pc.lastArr - pc.firstArr)
+	if pc.ackPkts < 5 || sendSpan < minProbeSpan || recvSpan <= 0 {
+		return 0
+	}
+	if float64(pc.lostPkts) > 0.05*float64(pc.sentPkts) {
+		return 0 // the probe itself caused loss: no headroom
+	}
+	sendRate := float64(pc.sentBytes*8) / sendSpan.Seconds()
+	recvRate := float64((pc.ackBytes-pc.firstAckSize)*8) / recvSpan.Seconds()
+	// A path that cannot carry the probe delivers it slower than it was sent.
+	if recvRate < 0.8*sendRate {
+		return 0
+	}
+	pc.result = int64(0.95 * math.Min(sendRate, recvRate))
+	return pc.result
 }
 
 // addAck groups packets into 5 ms send bursts and feeds inter-group delay

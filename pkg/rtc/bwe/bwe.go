@@ -36,6 +36,23 @@ type Estimator interface {
 	State() CongestionState
 }
 
+// Prober is implemented by estimators that can measure a probe cluster.
+type Prober interface {
+	StartProbe()
+	FinishProbe(now time.Time)
+	ProbeResult() (done bool, estimate int64)
+}
+
+// Padder is implemented by tracks that can carry probe padding: it sends up to n
+// padding-only packets of PaddingPacketBytes and returns how many it sent.
+type Padder interface {
+	WritePadding(n int) int
+}
+
+// PaddingPacketBytes is the size accounted for one padding-only probe packet
+// (255 bytes of padding plus RTP header and extension).
+const PaddingPacketBytes = 255 + 20
+
 // AllocatableTrack is the allocator's view of a DownTrack.
 type AllocatableTrack interface {
 	ID() string

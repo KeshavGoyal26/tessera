@@ -139,11 +139,17 @@ baseline, a different machine), so it is machine drift; CI hardware is unaffecte
 
 ## Open
 
-- **Without probing, Tessera's allocator cannot climb to the top simulcast layer** when the subscriber is only
-  receiving lower layers: the increase limit (1.5x acknowledged rate) is smaller than the jump 600 -> 2000 kbit/s.
-  `rtc.congestion_control.probe` is accepted but not implemented (no padding probes). In scenario A subscribers
-  settle on the middle layers (66 Mbit/s of a possible 207). Implementing padding probes is the real fix; raising
-  the multiplier was not done because it could not be tested on a constrained link here.
+- ~~Without probing, Tessera's allocator cannot climb to the top simulcast layer~~ **Fixed (2026-11-05): padding
+  probes.** When a subscriber wants a higher layer than the estimate allows, the allocator sends padding-only RTP on
+  one of its video DownTracks (between frames, sequence numbers reserved in the forwarder) for 0.5 s at 20% above
+  what the upgrade needs. The estimator measures that cluster from TWCC feedback and, if the path delivered it
+  (receive rate >= 80% of send rate, < 5% loss, no overuse), sets the estimate to 95% of the measured rate. Failed
+  probes back off 2 s -> 30 s; after a success the upgrade skips the 3 s hold. Metrics:
+  `tessera_probes_started_total`, `tessera_probes_succeeded_total`, `tessera_padding_packets_total`.
+  Measured on loopback (Mac, demo server): 1 publisher with layers 150/600/2000 kbit/s and 3 subscribers went from
+  **~620 kbit/s (middle layer) for the whole 30 s** to **~2.05 Mbit/s (top layer) within 6 s** (3 probes, 3 succeeded,
+  1,262 padding packets). Chrome viewer of a Chrome publisher with a detailed 720p source: **1280x720 at 30 fps,
+  ~1.7 Mbit/s, by 6 s**, 0 loss, 0 freezes. The A/B rows above predate this fix.
 - Real-link behaviour (loss, delay), separate hosts, and a latency measurement for LiveKit remain unmeasured.
 
 ## Reproduce

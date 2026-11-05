@@ -17,6 +17,9 @@ var (
 	FIRsSent         Counter // FIRs sent to publishers
 	Retransmits      Counter // packets retransmitted to subscribers
 	LayerSwitches    Counter // simulcast layer switches
+	PaddingPackets   Counter // padding-only probe packets sent to subscribers
+	ProbesStarted    Counter // bandwidth probes started
+	ProbesSucceeded  Counter // bandwidth probes that raised the estimate
 	ParticipantJoins Counter
 	TrackPublishes   Counter
 )
@@ -86,6 +89,9 @@ func NewCollector(p Provider) *Collector {
 		{"fir_sent_total", "FIRs sent to publishers.", &FIRsSent},
 		{"retransmits_total", "Packets retransmitted to subscribers.", &Retransmits},
 		{"layer_switches_total", "Simulcast layer switches.", &LayerSwitches},
+		{"padding_packets_total", "Padding-only probe packets sent to subscribers.", &PaddingPackets},
+		{"probes_started_total", "Bandwidth probes started.", &ProbesStarted},
+		{"probes_succeeded_total", "Bandwidth probes that raised the estimate.", &ProbesSucceeded},
 		{"participant_joins_total", "Participant joins.", &ParticipantJoins},
 		{"track_publishes_total", "Tracks published.", &TrackPublishes},
 	} {

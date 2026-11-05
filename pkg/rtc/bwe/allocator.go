@@ -3,13 +3,27 @@ package bwe
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
+	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
 // allocTick is the allocator period.
 const allocTick = 500 * time.Millisecond
+
+// Probing: when a subscriber wants a higher layer than the estimate allows, the
+// allocator sends padding for probeDuration so the path's capacity can be
+// measured (see estimator probe clusters). Failed probes back off exponentially.
+const (
+	probeDuration   = 500 * time.Millisecond
+	probeMinBackoff = 2 * time.Second
+	probeMaxBackoff = 30 * time.Second
+	probeTimeout    = probeDuration + 2*time.Second
+	// After a successful probe, upgrades skip UpgradeHold for this long.
+	probeBoost = 2 * time.Second
+)
 
 type trackState struct {
 	t       AllocatableTrack
@@ -30,6 +44,15 @@ type allocator struct {
 	stop     chan struct{}
 	once     sync.Once
 	now      func() time.Time
+
+	// probe state, used only from Allocate
+	probing    bool
+	probeStart time.Time
+	nextProbe  time.Time
+	backoff    time.Duration
+	boostUntil time.Time
+	started    atomic.Uint64 // probes started
+	succeeded  atomic.Uint64 // probes that raised the estimate
 }
 
 // NewAllocator returns the stream allocator for one subscriber connection.
@@ -162,7 +185,7 @@ func (a *allocator) Allocate() []Allocation {
 		s.prevMax = maxNow
 		// Hysteresis: bandwidth-driven upgrades must be sustained for
 		// UpgradeHold; upgrades requested by the subscriber are immediate.
-		if s.set && want > s.applied.Spatial && s.applied.Spatial >= 0 && !prefRaised {
+		if s.set && want > s.applied.Spatial && s.applied.Spatial >= 0 && !prefRaised && !now.Before(a.boostUntil) {
 			if s.upSince.IsZero() {
 				s.upSince = now
 			}
@@ -194,5 +217,117 @@ func (a *allocator) Allocate() []Allocation {
 	if len(changed) > 0 && cb != nil {
 		cb(changed)
 	}
+	a.maybeProbe(now, states, videos, desired, rates)
 	return out
+}
+
+// maybeProbe starts a probe when the highest-priority video that wants more than
+// it gets could reach its next layer with more bandwidth, and tracks the outcome.
+func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired []int32, rates []types.Bitrates) {
+	p, ok := a.est.(Prober)
+	if !ok || !a.cfg.Probe {
+		return
+	}
+	if a.backoff == 0 {
+		a.backoff = probeMinBackoff
+	}
+	if a.probing {
+		done, res := p.ProbeResult()
+		if !done && now.Sub(a.probeStart) < probeTimeout {
+			return
+		}
+		a.probing = false
+		if done && res > 0 {
+			a.succeeded.Add(1)
+			stats.ProbesSucceeded.Inc()
+			a.backoff = probeMinBackoff
+			a.nextProbe = now.Add(allocTick) // the next layer may need another step
+			a.boostUntil = now.Add(probeBoost)
+		} else {
+			a.backoff = min(a.backoff*2, probeMaxBackoff)
+			a.nextProbe = now.Add(a.backoff)
+		}
+		return
+	}
+	if now.Before(a.nextProbe) || a.est.State() == StateOveruse {
+		return
+	}
+	var step int64
+	var pad Padder
+	for i, s := range videos {
+		if pd, ok := s.t.(Padder); ok && pad == nil && s.applied.IsValid() {
+			pad = pd // any track that is forwarding can carry the padding
+		}
+		if step != 0 {
+			continue
+		}
+		max := s.t.MaxLayer()
+		if !max.IsValid() {
+			continue
+		}
+		cur := int64(0)
+		if desired[i] >= 0 {
+			cur = layerRate(rates[i], desired[i])
+		}
+		for l := desired[i] + 1; l <= max.Spatial && l < types.MaxSpatialLayers; l++ {
+			if r := layerRate(rates[i], l); r > 0 {
+				step = r - cur
+				break
+			}
+		}
+	}
+	if step <= 0 {
+		a.backoff = probeMinBackoff // nothing to gain: probe promptly once there is
+		return
+	}
+	if pad == nil {
+		return
+	}
+	// Probe for 20% above what the upgrade needs, so the estimate that results
+	// (95% of the measured rate, then the allocator's own 95% budget) covers it.
+	var cur int64
+	for _, s := range all {
+		if !s.t.IsVideo() {
+			cur += layerRate(s.t.Bitrates(), 0)
+		} else if s.applied.IsValid() {
+			cur += layerRate(s.t.Bitrates(), s.applied.Spatial)
+		}
+	}
+	padRate := (cur+step)*6/5 - cur
+	a.probing, a.probeStart = true, now
+	a.started.Add(1)
+	stats.ProbesStarted.Inc()
+	p.StartProbe()
+	go a.sendPadding(p, pad, padRate, probeDuration)
+}
+
+// sendPadding paces padding packets at bps for dur, then ends the probe cluster.
+func (a *allocator) sendPadding(p Prober, pad Padder, bps int64, dur time.Duration) {
+	const tick = 5 * time.Millisecond
+	perTick := float64(bps) * tick.Seconds() / 8 / PaddingPacketBytes
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	end := time.Now().Add(dur)
+	debt := 0.0
+	for {
+		select {
+		case <-a.stop:
+			p.FinishProbe(time.Now())
+			return
+		case now := <-t.C:
+			if now.After(end) {
+				p.FinishProbe(now)
+				return
+			}
+			debt = min(debt+perTick, 4*perTick+1) // padding only at frame boundaries: allow catching up a little
+			if n := int(debt); n > 0 {
+				debt -= float64(pad.WritePadding(n))
+			}
+		}
+	}
+}
+
+// ProbeStats returns how many probes were started and how many raised the estimate.
+func (a *allocator) ProbeStats() (started, succeeded uint64) {
+	return a.started.Load(), a.succeeded.Load()
 }

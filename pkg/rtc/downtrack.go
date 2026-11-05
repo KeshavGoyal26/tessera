@@ -61,6 +61,9 @@ type DownTrackImpl struct {
 	twccID uint8
 	twccB  [2]byte
 	prio   atomic.Uint32
+	// lastMarker: the last forwarded packet ended a frame, so padding can be
+	// inserted without splitting a frame (guarded by mu).
+	lastMarker bool
 
 	firstPkt   atomic.Bool
 	onFirst    func()
@@ -196,7 +199,10 @@ func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket, layer int32) error {
 		n := simulcast.RewriteVP8(d.pay, pkt.Payload, &pkt.VP8, &tp.VP8)
 		payload = d.pay[:n]
 	}
-	err = d.writeLocked(tp.SequenceNumber, tp.Timestamp, pkt.Marker, payload)
+	err = d.writeLocked(tp.SequenceNumber, tp.Timestamp, pkt.Marker, payload, false)
+	if err == nil {
+		d.lastMarker = pkt.Marker
+	}
 	d.mu.Unlock()
 	if err == nil {
 		d.meter.Add(len(payload) + 12)
@@ -207,9 +213,15 @@ func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket, layer int32) error {
 	return err
 }
 
-func (d *DownTrackImpl) writeLocked(sn uint16, ts uint32, marker bool, payload []byte) error {
+func (d *DownTrackImpl) writeLocked(sn uint16, ts uint32, marker bool, payload []byte, padding bool) error {
 	h := &d.hdr
 	h.Version = 2
+	h.Padding, h.PaddingSize = padding, 0
+	size := len(payload) + 20
+	if padding {
+		h.PaddingSize = 255
+		size = bwe.PaddingPacketBytes
+	}
 	h.PayloadType = d.pt
 	h.SequenceNumber = sn
 	h.Timestamp = ts
@@ -219,10 +231,37 @@ func (d *DownTrackImpl) writeLocked(sn uint16, ts uint32, marker bool, payload [
 		seq := uint16(d.p.TWCC.seq.Add(1))
 		d.twccB[0], d.twccB[1] = byte(seq>>8), byte(seq)
 		_ = h.SetExtension(d.twccID, d.twccB[:])
-		d.p.TWCC.Est.OnPacketSent(seq, len(payload)+20, Now(), false)
+		d.p.TWCC.Est.OnPacketSent(seq, size, Now(), padding)
 	}
 	_, err := d.writer.WriteRTP(h, payload)
+	h.Padding, h.PaddingSize = false, 0
 	return err
+}
+
+// WritePadding implements bwe.Padder: it sends up to n padding-only packets (255
+// bytes each, no payload) on this video stream for bandwidth probing. Padding is
+// only inserted between frames, and only when TWCC can measure it. Receivers drop
+// padding after counting it; the sequence numbers stay continuous.
+func (d *DownTrackImpl) WritePadding(n int) int {
+	if n <= 0 || d.kind != webrtc.RTPCodecTypeVideo || !d.bound.Load() || d.closed.Load() {
+		return 0
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.twccID == 0 || !d.lastMarker {
+		return 0
+	}
+	sn, ts, err := d.fwd.PaddingParams(n)
+	if err != nil {
+		return 0
+	}
+	for i := range n {
+		if d.writeLocked(sn+uint16(i), ts, false, nil, true) != nil {
+			return i
+		}
+	}
+	stats.PaddingPackets.Add(uint64(n))
+	return n
 }
 
 // AllocID returns the track SID used by the allocator.
@@ -341,7 +380,7 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 		m := simulcast.RewriteVP8(d.pay, e.Payload, &e.VP8, &info.VP8)
 		payload = d.pay[:m]
 	}
-	if d.writeLocked(sn, info.Timestamp, e.Marker, payload) == nil {
+	if d.writeLocked(sn, info.Timestamp, e.Marker, payload, false) == nil {
 		d.retx.Inc()
 		stats.Retransmits.Inc()
 	}

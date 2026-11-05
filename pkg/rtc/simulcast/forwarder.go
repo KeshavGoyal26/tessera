@@ -431,6 +431,9 @@ func (f *Forwarder) PaddingParams(n int) (sn uint16, ts uint32, err error) {
 	sn = uint16(f.lastOutExtSN + 1)
 	f.lastOutExtSN += uint64(n)
 	f.snOffset -= uint64(n)
+	// A late packet from before this point would now map onto a padding sequence
+	// number: drop such packets like those from before a layer switch.
+	f.switchExt = max(f.switchExt, f.lastInExt+1)
 	return sn, uint32(f.lastOutExtTS), nil
 }
 

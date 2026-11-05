@@ -293,3 +293,33 @@ func TestH264SwitchOnIDR(t *testing.T) {
 		t.Fatal(c.forwarded)
 	}
 }
+
+// Padding reserves sequence numbers: media continues after them, and a late packet
+// from before the padding (which would collide with a padding number) is dropped.
+func TestPaddingKeepsSequenceContinuous(t *testing.T) {
+	f := NewForwarder("video/VP8")
+	f.SetAvailableLayers(0)
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 3})
+	src := newSrc(t, 0, 1000, 90000, 7)
+	if _, _, err := f.PaddingParams(3); err == nil {
+		t.Fatal("padding before the forwarder started must fail")
+	}
+	tp, _ := f.GetTranslation(src.next(true, 0, true), 0) // keyframe starts forwarding
+	if tp.Drop {
+		t.Fatalf("%+v", tp)
+	}
+	late := src.next(false, 0, true) // in 1001: held back, arrives after the padding
+	tp, _ = f.GetTranslation(src.next(false, 0, true), 0)
+	last := tp.SequenceNumber // in 1002 (1001 is a gap for now)
+	sn, ts, err := f.PaddingParams(3)
+	if err != nil || sn != last+1 || ts != tp.Timestamp {
+		t.Fatalf("padding sn=%d ts=%d err=%v, last media sn=%d ts=%d", sn, ts, err, last, tp.Timestamp)
+	}
+	if tp, _ := f.GetTranslation(late, 0); !tp.Drop {
+		t.Fatalf("late packet from before the padding must be dropped, got sn %d", tp.SequenceNumber)
+	}
+	tp, _ = f.GetTranslation(src.next(false, 0, true), 0)
+	if tp.Drop || tp.SequenceNumber != last+4 {
+		t.Fatalf("media after padding: %+v, want sn %d", tp, last+4)
+	}
+}
