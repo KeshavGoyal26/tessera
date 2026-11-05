@@ -83,8 +83,8 @@ E2E (`sdk/js/e2e`, Playwright, Chromium, real `tessera --dev`, fake media): two-
 
 Known issues / next steps:
 - Firefox and Safari are untested: no Firefox/WebKit download was possible in the build environment. The CI `e2e` job installs Chromium and Firefox; check its first run. Safari needs a manual pass.
-- Data-packet e2e is skipped (`TESSERA_E2E_DATA=1` enables it): the server stub `transport.SendDataPacket` / `OnDataPacket` is not implemented yet (WP1 M2).
-- The reconnect e2e failed once in about six full-suite runs (media did not resume after rejoin; passes 3/3 in isolation). Debug logs (`[tessera]` console lines) are printed on failure; investigate with server logs if it recurs.
+- Data-packet e2e: enabled in session D (server forwarding is implemented).
+- Reconnect e2e flakiness: root cause fixed in session D (republish list lost when a rejoin attempt failed).
 - Server `sync_state` handling only re-sends participant state (WP1): resume with dead PCs relies on the client's ICE restart.
 - `Room` publishes data channels lazily (first `publishData`), not at join.
 
@@ -154,6 +154,26 @@ Session A, after WP1 (budget-limited; owner prioritised WP1).
 Next steps: build the recorder image and run the full compose stack on a machine with internet access; confirm the
 MinIO image tags; run the load tester from a second host; apply the UDP write batching and ring-sizing
 recommendations (owners of `pkg/rtc`); refresh the bench baseline from CI.
+
+## Session D: final review and hardening (2026-11-05)
+
+Final report with feature matrix, CI state, findings and roadmap: [STATUS.md](STATUS.md).
+
+- [x] CI: `TestFullSystem` failed in the `go` job because that job has no ffmpeg, so the recorded publisher sent
+  nothing (not a race-detector issue); the test now sends synthetic H.264/Opus without ffmpeg
+- [x] Firefox: the SDK mapped remote tracks by `MediaStreamTrack.id`, which Firefox does not take from the msid;
+  now read from the remote SDP by transceiver mid. Firefox two-way video passes in CI
+- [x] SDK full rejoin lost all local tracks when the first rejoin attempt failed (the "flaky" reconnect e2e);
+  fixed with a unit test; Chromium e2e 6/6 locally, twice
+- [x] Browser data-packet e2e enabled; layer-selection e2e independent of the fake camera size; Firefox reconnect
+  e2e skipped (Playwright `setOffline` does not cut Firefox WebSocket/WebRTC)
+- [x] Review fixes with regression tests: DownTrack leak when `AddDownTrack` races `Receiver.Close`; room scope
+  not enforced for `CreateRoom`/`DeleteRoom`; dashboard failed-login map pruned for all addresses
+- [x] Docs: dashboard dev proxy port, PROTOCOL.md 429 wording; README, JS SDK README (snippets type-checked),
+  Java quick start, PROTOCOL.md signaling section and DASHBOARD.md checked against the code
+- Logged, not fixed (STATUS.md): dashboard login rate limit per proxy IP,
+  no dashboard roles, data packets dropped before the subscriber channel opens, `buffer.Release` never called,
+  TWCC feedback allocations, O(n^2) NACK queue shift, padding SNs missing from NACK history
 
 ## Later phases
 
