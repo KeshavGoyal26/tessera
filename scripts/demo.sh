@@ -120,7 +120,8 @@ start() { # name cmd...
   PIDS+=("$!")
 }
 
-start tessera "$DEMO/bin/tessera" --config "$DEMO/tessera.yaml" --dev
+# The dashboard shows the recorder's live stats and finished recordings.
+TESSERA_DASHBOARD_RECORDERS="http://127.0.0.1:6790" start tessera "$DEMO/bin/tessera" --config "$DEMO/tessera.yaml" --dev
 
 for _ in $(seq 1 50); do
   curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break

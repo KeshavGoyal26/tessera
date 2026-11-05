@@ -450,3 +450,47 @@ func (c *Coordinator) Reap() {
 		c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, e)
 	}
 }
+
+// ParticipantJoined starts recording identity in room, unless a recording of that
+// participant is already in progress. It implements room.RecordingTrigger for
+// participants who join with the auto_record grant or into a recording_enabled room.
+func (c *Coordinator) ParticipantJoined(roomName, identity string) {
+	c.mu.Lock()
+	for _, j := range c.jobs {
+		// A recording that is already ending (the participant rejoined) does not count.
+		if !terminal(j.info.Status) && !j.stopWanted && j.info.Status != tesserav1.RecordingStatus_RECORDING_STATUS_ENDING && j.info.Room == roomName && j.info.GetRequest().GetParticipant().GetIdentity() == identity {
+			c.mu.Unlock()
+			return
+		}
+	}
+	c.mu.Unlock()
+	info, err := c.StartRecording(context.Background(), &tesserav1.StartRecordingRequest{
+		Room:   roomName,
+		Target: &tesserav1.StartRecordingRequest_Participant{Participant: &tesserav1.ParticipantRecordingTarget{Identity: identity}},
+	})
+	if err != nil {
+		c.p.Logger.Warn("auto-record failed to start", "room", roomName, "identity", identity, "err", err)
+		return
+	}
+	c.p.Logger.Info("auto-record started", "room", roomName, "identity", identity, "recording", info.GetRecordingId())
+}
+
+// ParticipantLeft stops the in-progress recordings of identity in room: a participant
+// recording ends when its participant leaves.
+func (c *Coordinator) ParticipantLeft(roomName, identity string) {
+	c.mu.Lock()
+	var ids []string
+	for id, j := range c.jobs {
+		if !terminal(j.info.Status) && j.info.Room == roomName && j.info.GetRequest().GetParticipant().GetIdentity() == identity {
+			ids = append(ids, id)
+		}
+	}
+	c.mu.Unlock()
+	for _, id := range ids {
+		if _, err := c.StopRecording(context.Background(), id); err != nil {
+			c.p.Logger.Warn("stopping recording of departed participant failed", "recording", id, "err", err)
+			continue
+		}
+		c.p.Logger.Info("recording stopped: participant left", "room", roomName, "identity", identity, "recording", id)
+	}
+}

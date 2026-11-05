@@ -205,3 +205,40 @@ func TestCoordinatorHeartbeatTimeout(t *testing.T) {
 		t.Fatal("expected stop for failed job")
 	}
 }
+
+func TestCoordinatorAutoRecordJoinAndLeave(t *testing.T) {
+	c, _, _ := newTestCoordinator(t)
+	ctx := context.Background()
+	active := func() []*tesserav1.RecordingInfo {
+		l, _ := c.ListRecordings(ctx, &tesserav1.ListRecordingsRequest{Room: "r", ActiveOnly: true})
+		return l
+	}
+
+	c.ParticipantJoined("r", "alice")
+	c.ParticipantJoined("r", "alice") // a duplicate join does not start a second recording
+	l := active()
+	if len(l) != 1 || l[0].GetRequest().GetParticipant().GetIdentity() != "alice" {
+		t.Fatalf("want one recording of alice, got %v", l)
+	}
+	id := l[0].RecordingId
+	resp, err := c.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "w1", AvailableCapacity: 4})
+	if err != nil || resp.Job.GetRecording().GetRecordingId() != id {
+		t.Fatalf("%v %v", resp, err)
+	}
+
+	c.ParticipantLeft("r", "bob") // someone else leaving changes nothing
+	if got, _ := c.GetRecording(ctx, id); got.Status != tesserav1.RecordingStatus_RECORDING_STATUS_STARTING {
+		t.Fatal(got.Status)
+	}
+	c.ParticipantLeft("r", "alice")
+	if got, _ := c.GetRecording(ctx, id); got.Status != tesserav1.RecordingStatus_RECORDING_STATUS_ENDING {
+		t.Fatal(got.Status)
+	}
+
+	// Rejoining while the old recording is still ending starts a new one.
+	c.ParticipantJoined("r", "alice")
+	all, _ := c.ListRecordings(ctx, &tesserav1.ListRecordingsRequest{Room: "r"})
+	if len(all) != 2 {
+		t.Fatalf("want a new recording after rejoin, got %d", len(all))
+	}
+}

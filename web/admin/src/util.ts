@@ -1,3 +1,4 @@
+import type { CoordRecording } from './types';
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, (c) => ESC[c]!);
 
@@ -34,4 +35,17 @@ export function badge(text: string, kind: 'ok' | 'warn' | 'bad' | 'muted' = 'mut
 }
 export function qualityBadge(q: string): string {
   return badge(q, q === 'excellent' || q === 'good' ? 'ok' : q === 'poor' ? 'warn' : q === 'lost' ? 'bad' : 'muted');
+}
+
+// playUrl is what ▶ Play opens for a recording: its master playlist (video together with
+// its audio) when one was written, else its only playable track. The master sits next to
+// the per-track folders (<prefix>/master.m3u8 and <prefix>/<track>/index.m3u8).
+export function playUrl(c: CoordRecording): string | undefined {
+  const outs = (c.outputs ?? []).filter((o) => o.playlist_url);
+  if (!outs.length) return undefined;
+  if (c.master_playlist_location) {
+    const m = outs[0].playlist_url!.replace(/\/[^/]+\/index\.m3u8$/, '/master.m3u8');
+    if (m !== outs[0].playlist_url) return m;
+  }
+  return outs.length === 1 ? outs[0].playlist_url : undefined;
 }

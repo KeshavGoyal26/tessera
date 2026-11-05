@@ -101,11 +101,24 @@ per-track packets/bytes/loss/segments/backlog, segment delay, upload backlog, er
 | `tessera_recorder_finished_recordings_total{status}` | counter |
 | `tessera_recorder_segment_delay_seconds` | histogram |
 
+## Recording on join (`auto_record`)
+
+A participant whose token grant has `auto_record: true` (Java: `RoomGrant.builder().autoRecord(true)`)
+is recorded without any API call: when they join, the server starts a participant recording; when
+they leave, it stops every in-progress participant recording of that identity in that room. A
+room created with `recording_enabled` (token `room_config` or `CreateRoom`) records every
+participant who joins it this way. A participant who joins with camera and microphone off is
+recorded once they publish; until then the job waits instead of failing after 30 s. Rejoining
+starts a new recording. In `--dev`, `/dev/token?...&record=1` issues such a token and also sets
+the participant attribute `recorded=true` so clients can show a REC marker.
+
 ## Configuration (`recorder.yaml`)
 
 `server_url`, `api_key`, `secret`, `worker_id`, `capacity`, `heartbeat`, `ffmpeg_path`,
 `storage.kind: local|s3` (+ `local_root` or `s3.*`), `hls.segment_duration`, `hls.audio_codec`,
-`metrics.addr`. Per-request `StorageOptions` override the default; local directories are
+`metrics.addr`, `storage.local_base_url` (serve `local_root` read-only under `/recordings/` on the
+metrics listener and report playlist URLs below this prefix, so the dashboard can play local
+recordings). Per-request `StorageOptions` override the default; local directories are
 resolved below `local_root`.
 
 ## Known gaps

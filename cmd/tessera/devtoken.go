@@ -13,7 +13,7 @@ import (
 // the server runs with --dev (never from a config file alone).
 const devTokenPath = "/dev/token"
 
-// devTokenHandler answers GET /dev/token?room=X&identity=Y[&name=Z] with
+// devTokenHandler answers GET /dev/token?room=X&identity=Y[&name=Z][&record=1] with
 // {"token": "..."} signed by the given key. It sends permissive CORS headers so
 // the demo dev server on another port can call it. Dev only: it hands out
 // tokens to anyone who can reach the port.
@@ -36,8 +36,14 @@ func devTokenHandler(apiKey, secret string) http.Handler {
 			http.Error(w, "room and identity are required", http.StatusBadRequest)
 			return
 		}
-		tok, err := auth.NewAccessToken(apiKey, secret).SetIdentity(identity).SetName(q.Get("name")).
-			SetGrant(&auth.RoomGrant{Room: room, RoomJoin: true}).SetValidFor(6 * time.Hour).ToJWT()
+		record := q.Get("record") == "1"
+		at := auth.NewAccessToken(apiKey, secret).SetIdentity(identity).SetName(q.Get("name")).
+			SetGrant(&auth.RoomGrant{Room: room, RoomJoin: true, AutoRecord: record}).SetValidFor(6 * time.Hour)
+		if record {
+			// Lets every client show that this participant is being recorded.
+			at.SetAttributes(map[string]string{"recorded": "true"})
+		}
+		tok, err := at.ToJWT()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

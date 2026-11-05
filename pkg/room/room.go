@@ -67,14 +67,25 @@ type Params struct {
 	Keys     auth.KeyProvider
 	Registry prometheus.Registerer
 	Logger   *slog.Logger
+	// Recording, if set, records participants who join with the auto_record grant (or
+	// into a room created with recording_enabled) and is told when participants leave.
+	Recording RecordingTrigger
+}
+
+// RecordingTrigger starts and stops participant recordings as participants come and go.
+// Calls run on their own goroutine.
+type RecordingTrigger interface {
+	ParticipantJoined(room, identity string)
+	ParticipantLeft(room, identity string)
 }
 
 type manager struct {
-	cfg      *config.Config
-	engine   rtc.Engine
-	notifier webhook.Notifier
-	logger   *slog.Logger
-	sampler  *stats.NodeSampler
+	cfg       *config.Config
+	engine    rtc.Engine
+	notifier  webhook.Notifier
+	recording RecordingTrigger
+	logger    *slog.Logger
+	sampler   *stats.NodeSampler
 
 	mu       sync.RWMutex
 	rooms    map[string]*Room
@@ -99,7 +110,7 @@ func NewManager(p Params) (Manager, error) {
 		rtc.NegotiationDebounce = cfg.Signal.NegotiationDebounce
 	}
 	m := &manager{
-		cfg: cfg, engine: p.Engine, notifier: p.Notifier, logger: p.Logger,
+		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, logger: p.Logger,
 		sampler: stats.NewNodeSampler(cfg.NodeID),
 		rooms:   map[string]*Room{}, bySID: map[string]*Participant{},
 	}

@@ -78,6 +78,7 @@ class ContractTest {
     if (Boolean.TRUE.equals(g.get("can_update_own_metadata"))) b.canUpdateOwnMetadata(true);
     if (Boolean.TRUE.equals(g.get("hidden"))) b.hidden(true);
     if (Boolean.TRUE.equals(g.get("recorder"))) b.recorder(true);
+    if (Boolean.TRUE.equals(g.get("auto_record"))) b.autoRecord(true);
     if (g.get("room_config") instanceof Map<?, ?> rc) {
       b.roomConfig(
           RoomGrant.RoomConfig.of(

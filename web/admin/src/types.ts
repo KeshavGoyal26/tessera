@@ -42,9 +42,12 @@ export interface RecorderStats {
   segments_written: number; bytes_uploaded: number; upload_backlog: number; upload_errors: number; track_errors: number
   segment_delay_ms: number; segment_delay_max_ms: number; finished_total: number
   recordings: { recording_id: string; room: string; status: string; started_at: string; duration_ms: number; tracks: RecTrack[] }[]
-  finished: { recording_id: string; room: string; status: string; error?: string; ended_at: string; duration_ms: number; master_playlist?: string
+  finished: { recording_id: string; room: string; status: string; error?: string; ended_at: string; duration_ms: number; master_playlist?: string; master_url?: string
     outputs: { track_sid: string; participant: string; playlist_url?: string; playlist_location: string; segments: number; duration_ms: number }[] }[]
 }
 export interface RecorderStatus { url: string; ok: boolean; error?: string; stats?: RecorderStats }
 export interface Update { snapshot: Snapshot; recorders: RecorderStatus[]; alerts: Alert[]; point: Point }
-export interface CoordRecording { recording_id: string; room: string; status: string; started_at_ms?: string; error?: string; worker_id?: string }
+export interface CoordRecording { recording_id: string; room: string; status: string; started_at_ms?: string; ended_at_ms?: string; error?: string; worker_id?: string
+  request?: { participant?: { identity: string }; track?: { track_sid: string } }
+  master_playlist_location?: string
+  outputs?: { track_sid: string; participant_identity?: string; playlist_url?: string; duration_ms?: string }[] }

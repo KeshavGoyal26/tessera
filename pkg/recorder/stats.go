@@ -3,6 +3,7 @@ package recorder
 import (
 	"encoding/json"
 	"net/http"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,14 +69,16 @@ type TrackStats struct {
 
 // FinishedStats describes a finished recording and where to play it.
 type FinishedStats struct {
-	RecordingID    string           `json:"recording_id"`
-	Room           string           `json:"room"`
-	Status         string           `json:"status"`
-	Error          string           `json:"error,omitempty"`
-	EndedAt        time.Time        `json:"ended_at"`
-	DurationMs     int64            `json:"duration_ms"`
-	MasterPlaylist string           `json:"master_playlist,omitempty"`
-	Outputs        []FinishedOutput `json:"outputs"`
+	RecordingID    string    `json:"recording_id"`
+	Room           string    `json:"room"`
+	Status         string    `json:"status"`
+	Error          string    `json:"error,omitempty"`
+	EndedAt        time.Time `json:"ended_at"`
+	DurationMs     int64     `json:"duration_ms"`
+	MasterPlaylist string    `json:"master_playlist,omitempty"`
+	// MasterURL plays all tracks together (video with its audio), when storage has URLs.
+	MasterURL string           `json:"master_url,omitempty"`
+	Outputs   []FinishedOutput `json:"outputs"`
 }
 
 // FinishedOutput is one playlist of a finished recording.
@@ -133,6 +136,9 @@ func (s *workerStats) jobFinished(*jobRun) {}
 func (s *workerStats) recordFinished(r *jobRun, outs []*tesserav1.RecordingOutput, master string) {
 	f := FinishedStats{RecordingID: r.id, Room: r.job.GetRecording().GetRoom(), EndedAt: time.Now(), MasterPlaylist: master,
 		DurationMs: time.Since(r.started).Milliseconds()}
+	if master != "" && r.st != nil {
+		f.MasterURL = r.st.URL(path.Join(r.prefix, "master.m3u8"))
+	}
 	var segs uint64
 	var bytes uint64
 	for _, o := range outs {

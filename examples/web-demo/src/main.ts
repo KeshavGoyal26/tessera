@@ -40,6 +40,7 @@ for (const key of ["name", "room", "url", "token"] as const) {
   if (v) field(key).value = v;
 }
 if (params.get("url") || params.get("token")) advanced.open = true;
+if (params.get("record") === "1") field("record").checked = true;
 try {
   const saved = localStorage.getItem("tessera-demo-name");
   if (saved && !field("name").value) field("name").value = saved;
@@ -101,6 +102,11 @@ function tileFor(participant: Participant, screen = false): HTMLElement {
   }
   tile.append(avatar, label);
   if (!screen) {
+    const rec = document.createElement("div");
+    rec.className = "rec";
+    rec.title = "This participant is being recorded";
+    rec.textContent = "REC";
+    tile.append(rec);
     const badge = document.createElement("div");
     badge.className = "badge";
     badge.dataset.q = "3";
@@ -123,6 +129,7 @@ function refresh(): void {
     tile.classList.toggle("mic-off", !mic || mic.isMuted);
     tile.classList.toggle("cam-off", !cam || cam.isMuted);
     tile.classList.toggle("has-video", !!tile.querySelector("video") && !!cam && !cam.isMuted);
+    tile.classList.toggle("recorded", p.attributes?.recorded === "true");
   }
 }
 
@@ -217,6 +224,7 @@ async function resolveConnection(roomName: string, name: string): Promise<{ url:
   const http = url.replace(/^ws/, "http").replace(/\/rtc.*$/, "").replace(/\/$/, "");
   const identity = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "guest"}-${Math.random().toString(36).slice(2, 6)}`;
   const q = new URLSearchParams({ room: roomName, identity, name });
+  if (field("record").checked) q.set("record", "1");
   let res: Response;
   try {
     res = await fetch(`${http}/dev/token?${q}`);

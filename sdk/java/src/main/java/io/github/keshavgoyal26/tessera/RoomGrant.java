@@ -47,6 +47,7 @@ public final class RoomGrant {
   private final boolean canUpdateOwnMetadata;
   private final boolean hidden;
   private final boolean recorder;
+  private final boolean autoRecord;
   private final RoomConfig roomConfig;
 
   private RoomGrant(Builder b) {
@@ -64,6 +65,7 @@ public final class RoomGrant {
     this.canUpdateOwnMetadata = b.canUpdateOwnMetadata;
     this.hidden = b.hidden;
     this.recorder = b.recorder;
+    this.autoRecord = b.autoRecord;
     this.roomConfig = b.roomConfig;
   }
 
@@ -98,6 +100,7 @@ public final class RoomGrant {
     b.canUpdateOwnMetadata = canUpdateOwnMetadata;
     b.hidden = hidden;
     b.recorder = recorder;
+    b.autoRecord = autoRecord;
     return b;
   }
 
@@ -221,6 +224,15 @@ public final class RoomGrant {
   }
 
   /**
+   * Recorded from join until leave ({@code auto_record}).
+   *
+   * @return the flag
+   */
+  public boolean isAutoRecord() {
+    return autoRecord;
+  }
+
+  /**
    * Marks a recorder participant ({@code recorder}).
    *
    * @return the flag
@@ -313,6 +325,7 @@ public final class RoomGrant {
     putIfTrue(m, "can_update_own_metadata", canUpdateOwnMetadata);
     putIfTrue(m, "hidden", hidden);
     putIfTrue(m, "recorder", recorder);
+    putIfTrue(m, "auto_record", autoRecord);
     if (roomConfig != null) {
       Map<String, Object> rc = roomConfig.toClaims();
       if (!rc.isEmpty()) {
@@ -359,6 +372,7 @@ public final class RoomGrant {
     private boolean canUpdateOwnMetadata;
     private boolean hidden;
     private boolean recorder;
+    private boolean autoRecord;
     private RoomConfig roomConfig;
 
     private Builder() {}
@@ -520,6 +534,18 @@ public final class RoomGrant {
      */
     public Builder hidden(boolean value) {
       this.hidden = value;
+      return this;
+    }
+
+    /**
+     * Records the participant automatically: the server starts a recording when they
+     * join and stops it when they leave. Needs a recorder worker connected to the server.
+     *
+     * @param value the flag
+     * @return this builder
+     */
+    public Builder autoRecord(boolean value) {
+      this.autoRecord = value;
       return this;
     }
 

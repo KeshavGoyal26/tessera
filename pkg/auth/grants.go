@@ -31,6 +31,8 @@ type RoomGrant struct {
 	CanUpdateOwnMetadata bool `json:"can_update_own_metadata,omitempty"`
 	Hidden               bool `json:"hidden,omitempty"`
 	Recorder             bool `json:"recorder,omitempty"`
+	// AutoRecord records this participant from the moment they join until they leave.
+	AutoRecord bool `json:"auto_record,omitempty"`
 
 	// RoomConfig applies when a join auto-creates the room.
 	RoomConfig *RoomConfig `json:"room_config,omitempty"`

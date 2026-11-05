@@ -1,7 +1,7 @@
 import { action, recordings } from '../api';
 import { store } from '../store';
 import type { CoordRecording } from '../types';
-import { badge, esc, fmtBytes, fmtDur, fmtNum } from '../util';
+import { badge, esc, fmtBytes, fmtDur, fmtNum, playUrl } from '../util';
 import { table, toast } from './rooms';
 import type { View } from './view';
 
@@ -16,7 +16,7 @@ export class Recordings implements View {
   mount(root: HTMLElement): void {
     this.root = root;
     root.addEventListener('click', this.onClick);
-    root.innerHTML = '<h2>Recordings</h2><div class="body"></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><p class="muted player-msg"></p></div>';
+    root.innerHTML = '<h2>Recordings</h2><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><p class="muted player-msg"></p></div><div class="body"></div>';
     void this.refreshCoord();
     this.timer = window.setInterval(() => void this.refreshCoord(), 5000);
     this.update();
@@ -46,6 +46,7 @@ export class Recordings implements View {
     const video = box.querySelector('video')!;
     const msg = box.querySelector('.player-msg')!;
     box.hidden = false;
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     box.querySelector('.player-title')!.textContent = title;
     msg.textContent = '';
     this.hls?.destroy();
@@ -82,16 +83,42 @@ export class Recordings implements View {
     const activeRows = active.flatMap((a) => a.tracks.map((t) => `<tr><td>${esc(a.recording_id)}</td><td>${esc(a.room)}</td><td>${esc(t.participant)}/${esc(t.track_sid)} ${esc(t.kind)}</td><td>${esc(t.codec)}${t.width ? ` ${t.width}×${t.height}` : ''}</td>
       <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${(t.last_packet_age_ms / 1000).toFixed(1)}s</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : badge('ok', 'ok')}</td></tr>`));
     const fin = recs.flatMap((r) => r.stats?.finished ?? []).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
-    const finRows = fin.map((f) => `<tr><td>${esc(f.recording_id)}</td><td>${esc(f.room)}</td><td>${f.status === 'RECORDING_STATUS_COMPLETE' ? badge('complete', 'ok') : badge(f.status.replace('RECORDING_STATUS_', '').toLowerCase(), 'bad')}</td>
-      <td>${fmtDur(f.duration_ms)}</td><td>${f.outputs.map((o) => o.playlist_url
-        ? `<button data-act="play" data-url="${esc(o.playlist_url)}" data-title="${esc(f.recording_id + ' ' + o.track_sid)}">▶ ${esc(o.track_sid)}</button>`
-        : `<code title="not reachable over HTTP">${esc(o.playlist_location)}</code>`).join(' ')}</td><td>${esc(f.error ?? '')}</td></tr>`);
-    const coordRows = this.coord.slice().reverse().map((c) => `<tr><td>${esc(c.recording_id)}</td><td>${esc(c.room)}</td><td>${esc(c.status.replace('RECORDING_STATUS_', '').toLowerCase())}</td><td>${esc(c.worker_id ?? '')}</td><td>${esc(c.error ?? '')}</td>
-      <td class="actions">${/STARTING|ACTIVE/.test(c.status) ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">Stop</button>` : ''}</td></tr>`);
-    body.innerHTML = `<div class="cards">${workers || '<p class="muted">No recorder configured (set TESSERA_DASHBOARD_RECORDERS).</p>'}</div>
+    const finRows = fin.map((f) => {
+      const who = [...new Set(f.outputs.map((o) => o.participant).filter(Boolean))].join(', ') || '—';
+      const title = `${who} · ${f.room} · ${new Date(f.ended_at).toLocaleString()}`;
+      const playable = f.outputs.filter((o) => o.playlist_url);
+      // One click plays everything together: the master playlist pairs video with its audio.
+      const main = f.master_url ?? (playable.length === 1 ? playable[0].playlist_url : undefined);
+      const play = main
+        ? `<button class="primary" data-act="play" data-url="${esc(main)}" data-title="${esc(title)}">▶ Play</button>`
+        : playable.length ? '' : f.outputs.some((o) => o.playlist_location)
+          ? `<span class="muted" title="${esc(f.outputs.map((o) => o.playlist_location).join('\n'))}">files only</span>`
+          : '<span class="muted" title="Nothing was published while recording">—</span>';
+      const tracks = playable.length > 1 || (!main && playable.length)
+        ? playable.map((o) => `<button data-act="play" data-url="${esc(o.playlist_url!)}" data-title="${esc(title + ' · ' + o.track_sid)}" title="Play this track alone">${esc(o.track_sid.slice(-6))}</button>`).join(' ')
+        : '';
+      const st = f.status === 'RECORDING_STATUS_COMPLETE' ? badge('complete', 'ok') : badge(f.status.replace('RECORDING_STATUS_', '').toLowerCase(), 'bad');
+      return `<tr><td>${esc(who)}</td><td>${esc(f.room)}</td><td>${new Date(f.ended_at).toLocaleTimeString()}</td><td>${fmtDur(f.duration_ms)}</td><td>${st}</td>
+        <td class="actions">${play} ${tracks}</td><td>${esc(f.error ?? '')}</td></tr>`;
+    });
+    const coordRows = this.coord.slice().reverse().map((c) => {
+      const who = c.request?.participant?.identity ?? c.outputs?.find((o) => o.participant_identity)?.participant_identity ?? (c.request?.track ? `track ${c.request.track.track_sid}` : '');
+      const started = c.started_at_ms ? new Date(Number(c.started_at_ms)) : undefined;
+      const dur = started && c.ended_at_ms ? fmtDur(Number(c.ended_at_ms) - started.getTime()) : '';
+      const st = c.status.replace('RECORDING_STATUS_', '').toLowerCase();
+      const stBadge = st === 'complete' ? badge(st, 'ok') : /starting|active|ending/.test(st) ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
+      const url = playUrl(c);
+      const title = `${who || c.recording_id} · ${c.room}${started ? ' · ' + started.toLocaleString() : ''}`;
+      const act = /STARTING|ACTIVE/.test(c.status)
+        ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">■ Stop</button>`
+        : url ? `<button class="primary" data-act="play" data-url="${esc(url)}" data-title="${esc(title)}">▶ Play</button>` : '';
+      return `<tr><td>${esc(who)}</td><td>${esc(c.room)}</td><td>${started ? started.toLocaleTimeString() : ''}</td><td>${dur}</td><td>${stBadge}</td>
+      <td class="actions">${act}</td><td title="${esc(c.recording_id)}">${esc(c.error ?? '')}</td></tr>`;
+    });
+    body.innerHTML = `<h3>All recordings</h3>${this.coordErr ? `<p class="muted">${esc(this.coordErr)}</p>` : table(['Participant', 'Room', 'Started', 'Duration', 'Status', '', 'Error'], coordRows)}
+      <h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats configured (set TESSERA_DASHBOARD_RECORDERS).</p>'}</div>
       <h3>Active tracks</h3>${table(['Recording', 'Room', 'Track', 'Codec', 'Duration', 'Segments', 'Backlog', 'Lost', 'Last RTP', 'State'], activeRows)}
-      <h3>Jobs (coordinator)</h3>${this.coordErr ? `<p class="muted">${esc(this.coordErr)}</p>` : table(['Recording', 'Room', 'Status', 'Worker', 'Error', ''], coordRows)}
-      <h3>Finished</h3>${table(['Recording', 'Room', 'Status', 'Duration', 'Playback', 'Error'], finRows)}`;
+      <h3>Finished on this worker</h3>${table(['Participant', 'Room', 'Ended', 'Duration', 'Status', 'Watch', 'Error'], finRows)}`;
   }
 
   destroy(): void {
@@ -101,3 +128,4 @@ export class Recordings implements View {
     this.root.innerHTML = '';
   }
 }
+

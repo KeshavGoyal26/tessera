@@ -400,3 +400,64 @@ summary {
     overflow-x: auto;
   }
 }
+
+/* "Record me" checkbox on the join card */
+label.check {
+  align-items: center;
+  color: var(--text);
+  cursor: pointer;
+  flex-direction: row;
+  gap: 10px;
+}
+label.check input {
+  accent-color: var(--bad);
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  width: 16px;
+}
+label.check small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.72rem;
+}
+
+/* REC marker on tiles of participants who are being recorded */
+.tile .rec {
+  background: var(--bad);
+  border-radius: 6px;
+  color: #fff;
+  display: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  left: 8px;
+  letter-spacing: 0.06em;
+  padding: 3px 7px 3px 18px;
+  position: absolute;
+  top: 8px;
+}
+.tile .rec::before {
+  animation: rec-blink 1.4s ease-in-out infinite;
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  left: 7px;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+}
+.tile.recorded .rec {
+  display: block;
+}
+@keyframes rec-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile .rec::before {
+    animation: none;
+  }
+}

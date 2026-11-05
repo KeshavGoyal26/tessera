@@ -128,6 +128,13 @@ func (r *Room) removeSpeakerSource(trackSID string) {
 // Name returns the room name.
 func (r *Room) Name() string { return r.info.Name }
 
+// recordingEnabled reports whether every participant of the room is recorded on join.
+func (r *Room) recordingEnabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.info.RecordingEnabled
+}
+
 // ToProto returns a copy of the room info with current counts.
 func (r *Room) ToProto() *tesserav1.Room {
 	r.mu.RLock()
@@ -205,6 +212,9 @@ func (r *Room) join(claims *auth.Claims, cp signal.ConnectParams, conn signal.Co
 	}
 	stats.ParticipantJoins.Inc()
 	go r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_JOINED, r, p, nil)
+	if rt := r.m.recording; rt != nil && p.kind == tesserav1.ParticipantInfo_KIND_STANDARD && (p.autoRecord || r.recordingEnabled()) {
+		go rt.ParticipantJoined(r.Name(), p.identity)
+	}
 	r.broadcastParticipant(p)
 	// Subscribe the newcomer to existing tracks.
 	if p.autoSubscribe {
@@ -244,6 +254,9 @@ func (r *Room) removeParticipant(p *Participant, reason tesserav1.DisconnectReas
 	}
 	r.broadcastParticipant(p)
 	go r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_LEFT, r, p, nil)
+	if rt := r.m.recording; rt != nil && p.kind == tesserav1.ParticipantInfo_KIND_STANDARD {
+		go rt.ParticipantLeft(r.Name(), p.identity)
+	}
 	if empty {
 		r.armDepartureTimer()
 	}

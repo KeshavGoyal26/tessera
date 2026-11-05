@@ -51,12 +51,19 @@ tile. Stop sharing.
    subscriber's current and target layer. Flip B's Quality selector and watch the layer switch.
 4. *Connectivity*: ICE candidate types, RTT.
 
-**4:00 Recording (45 s).** In *Rooms*, click **Record** on a participant. Open *Recordings*: the job
-shows under *Jobs* as starting, then active, with a **Stop** button. Wait about 10 s and press **Stop**.
-The finished recording appears under *Finished* with a **▶** button per track that plays it in the
-dashboard. The files are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the
-recorder at `http://127.0.0.1:6790/recordings/` because `storage.local_base_url` is set in the demo's
-recorder config. To get an MP4: `ffmpeg -i <track>/index.m3u8 -c copy out.mp4`.
+**4:00 Recording (45 s).** Two ways to record:
+
+- **On join:** tick **Record me** on the join card (or open `?record=1`). The server starts a
+  recording of that participant when they join and stops it when they leave. Their tile shows a
+  red **REC** marker for everyone in the room.
+- **From the dashboard:** in *Rooms*, click **Record** next to a participant. **■ Stop** appears
+  in *Recordings* while it runs.
+
+Open *Recordings* in the dashboard: every recording is listed with participant, room, start time,
+duration and status. Click **▶ Play** to watch it with video and audio together. The files are HLS
+(fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the recorder at
+`http://127.0.0.1:6790/recordings/` because `storage.local_base_url` is set in the demo's recorder
+config. To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.m3u8 -c copy out.mp4`.
 
 **4:45 Load (15 s).** Start with `--loadtest` (or in another terminal
 `.demo/bin/tessera-loadtest --secret devsecret-devsecret-devsecret-0000 --rooms 5 --publishers 6`).

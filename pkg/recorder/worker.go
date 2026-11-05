@@ -375,7 +375,9 @@ wait:
 			}
 			break wait
 		case <-deadline:
-			if r.trackCount() == 0 {
+			// A participant may join with camera and microphone off and turn them on later;
+			// their recording waits until they publish or leave (ParticipantLeft stops it).
+			if r.trackCount() == 0 && r.req.GetParticipant() == nil {
 				failure = "no matching track appeared within " + trackWaitTimeout.String()
 				break wait
 			}

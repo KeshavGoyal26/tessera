@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -121,8 +122,12 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	}
 	defer func() { _ = engine.Close() }()
 
+	// The coordinator needs the room manager, and the manager triggers recordings
+	// through the coordinator, so the trigger is bound once both exist.
+	autoRec := &lateRecordingTrigger{}
 	rooms, err := room.NewManager(room.Params{
 		Config: cfg, Engine: engine, Notifier: notifier, Keys: keys, Registry: reg, Logger: logger,
+		Recording: autoRec,
 	})
 	if err != nil {
 		return err
@@ -141,6 +146,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		Config: cfg.Recording, Rooms: rooms, Notifier: notifier,
 		APIKey: recKey, Secret: recSecret, Registry: reg, Logger: logger,
 	})
+	autoRec.set(coordinator)
 	adminSrv := admin.NewServer(admin.Params{
 		Rooms: rooms, Recordings: coordinator, Workers: coordinator,
 		Verifier: verifier, Registry: reg, Logger: logger,
@@ -282,4 +288,22 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// lateRecordingTrigger forwards room.RecordingTrigger calls to a trigger bound after
+// the room manager is created. Calls before binding are dropped.
+type lateRecordingTrigger struct{ t atomic.Pointer[room.RecordingTrigger] }
+
+func (l *lateRecordingTrigger) set(t room.RecordingTrigger) { l.t.Store(&t) }
+
+func (l *lateRecordingTrigger) ParticipantJoined(roomName, identity string) {
+	if t := l.t.Load(); t != nil {
+		(*t).ParticipantJoined(roomName, identity)
+	}
+}
+
+func (l *lateRecordingTrigger) ParticipantLeft(roomName, identity string) {
+	if t := l.t.Load(); t != nil {
+		(*t).ParticipantLeft(roomName, identity)
+	}
 }

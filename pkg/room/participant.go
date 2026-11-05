@@ -105,6 +105,7 @@ type Participant struct {
 	metadata   string
 	attributes map[string]string
 	perm       *tesserav1.ParticipantPermission
+	autoRecord bool
 	state      tesserav1.ParticipantInfo_State
 	pub, sub   rtc.Transport
 	pending    map[string]*pubTrack // by cid, before media arrives
@@ -130,8 +131,9 @@ func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signa
 		room: r, sid: newSID("PA_"), identity: c.Identity(), kind: kind, joinedAt: time.Now(),
 		autoSubscribe: cp.AutoSubscribe, client: cp.Client, conn: conn,
 		name: c.Name, metadata: c.Metadata, attributes: c.Attributes, perm: perm,
-		state:   tesserav1.ParticipantInfo_STATE_JOINING,
-		pending: map[string]*pubTrack{}, tracks: map[string]*pubTrack{}, subs: map[string]*subscription{}, explicit: map[string]bool{},
+		autoRecord: c.Grants != nil && c.Grants.AutoRecord,
+		state:      tesserav1.ParticipantInfo_STATE_JOINING,
+		pending:    map[string]*pubTrack{}, tracks: map[string]*pubTrack{}, subs: map[string]*subscription{}, explicit: map[string]bool{},
 	}
 	p.lastSeen.Store(time.Now().UnixNano())
 	return p

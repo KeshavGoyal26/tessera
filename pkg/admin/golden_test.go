@@ -78,7 +78,7 @@ func TestGoldenTokens(t *testing.T) {
 		{Name: "join_basic", Identity: "alice", DispName: "Alice", Grants: &auth.RoomGrant{Room: "standup", RoomJoin: true}},
 		{Name: "join_full", Identity: "bob", DispName: "Bob", Metadata: `{"userId":42}`, Attributes: map[string]string{"role": "host", "lang": "en"},
 			Grants: &auth.RoomGrant{Room: "r1", RoomJoin: true, CanPublish: &fl, CanSubscribe: &tr, CanPublishData: &fl,
-				CanPublishSources: []string{"camera", "microphone"}, CanUpdateOwnMetadata: true,
+				CanPublishSources: []string{"camera", "microphone"}, CanUpdateOwnMetadata: true, AutoRecord: true,
 				RoomConfig: &auth.RoomConfig{EmptyTimeoutSeconds: 300, DepartureTimeoutSeconds: 20, MaxParticipants: 50, RecordingEnabled: true}}},
 		{Name: "recorder", Identity: "rec-1", Grants: &auth.RoomGrant{Room: "r1", RoomJoin: true, Hidden: true, Recorder: true, CanPublish: &fl}},
 		{Name: "admin_all", Grants: &auth.RoomGrant{RoomCreate: true, RoomList: true, RoomAdmin: true, RoomRecord: true}},
