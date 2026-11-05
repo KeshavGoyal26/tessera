@@ -92,7 +92,9 @@ Findings:
 Heap at the same moment (`inuse_space`, 700 MB): 459 MB (66%) `buffer.getSlab` (one `slots * MaxPacketSize`
 slab per receive stream), 20 MB `bwe.NewEstimator`, 19 MB `simulcast.NewForwarder`.
 
-### Hotspot recommendations (not applied)
+> Update 2026-11-05 (session F): recommendation 1 below (UDP write batching) is now implemented in `pkg/rtc/udpbatch.go`, and a same-machine LiveKit comparison is in [COMPARISON.md](COMPARISON.md).
+
+### Hotspot recommendations (not applied at the time)
 
 Nothing was changed: every hotspot lies in `pkg/rtc` (session D's area) or in Pion internals.
 

@@ -142,6 +142,11 @@ Session A, after WP1 (budget-limited; owner prioritised WP1).
 - [x] Profiling under load (50 rooms x 4 publishers): top hotspot is one `sendto` syscall per RTP packet (23% CPU),
   SRTP crypto is only ~1-2% with AES-GCM, Tessera code <5%; 66% of heap is per-stream receive slabs. Findings and
   recommendations (UDP write batching, smaller audio rings) in `docs/perf/LOADTEST.md`; nothing changed in `pkg/rtc`.
+- [x] LiveKit comparison and performance fixes (session F, 2026-11-05): LiveKit server v1.13.11 and its load tester built from
+  source and run against Tessera on the same machine (3 scenarios, `docs/perf/COMPARISON.md`, scripts in `docs/perf/scripts/`).
+  Fixed `pkg/rtc/bwe` (estimate was pulled down to the acknowledged rate, pausing all video of audio-only-so-far subscribers),
+  added batched UDP egress (`pkg/rtc/udpbatch.go`, sendmmsg, about -10% CPU on loopback), `-publish-only` and `-video-kbps` in
+  `tessera-loadtest`. Open: padding probes (`congestion_control.probe` is not implemented), latency for LiveKit, real network.
 - [x] Load scaling run: 12 to 200 clients, 0% loss, 0 join failures, p99 latency < 5 ms (`docs/perf/LOADTEST.md`);
   same-host limits apply, P5/P6 targets on the reference machine are not confirmed.
 - [x] M2 Benchmark regression gate: `.github/workflows/bench.yml` + `docs/perf/benchgate.sh` (benchstat vs
