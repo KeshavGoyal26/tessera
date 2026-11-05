@@ -79,7 +79,7 @@ flowchart LR
   synthetic or file-based RTP (no encoder), reporting latency, loss and join times.
 
 Listeners (defaults): `:7880/tcp` HTTP (signal `/rtc`, admin `/twirp/...`), `:7881/tcp`
-ICE-TCP, `:7882/udp` media mux, `:3478` TURN, `:5349` TURNS, `:6789` metrics/pprof/health.
+ICE-TCP, `:7882/udp` media mux, `:3478` TURN, `:443` or `:5349` TURNS (optional), `:6789` metrics/pprof/health.
 
 ## 3. Object model
 

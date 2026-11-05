@@ -67,7 +67,7 @@ Known issues / next steps (WP1):
 - `SyncState` is answered with a participant update only; ICE restart on resume not exercised server-side.
 - Room broadcasts that happen between a participant's admission and its JoinResponse are dropped for that
   participant (JoinResponse already carries the state; a narrow race window remains).
-- TURNS (TLS) not implemented (`turn.tls_port` ignored); no padding probes (`congestion_control.probe` ignored).
+- No padding probes (`congestion_control.probe` ignored).
 - Drain sends `leave` with DISCONNECT rather than RESUME/RECONNECT migration; fuzzing only runs the seeds.
 - Parallel fan-out shards above `fanout_inline_max` not implemented (inline fan-out only).
 

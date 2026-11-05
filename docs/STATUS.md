@@ -136,7 +136,7 @@ Logged, not fixed (lower severity):
   exercised. Drain sends `leave` with DISCONNECT instead of migrating.
 - Room broadcasts between admission and JoinResponse are dropped for that participant (narrow
   window).
-- TURNS (TLS) not implemented (`turn.tls_port` ignored); `congestion_control.probe` ignored.
+- `congestion_control.probe` ignored.
 - Recorder: `Room.active_recording` not set; composite recording unsupported.
 - Java SDK not on Maven Central; npm package not published (no dry run done).
 - Docker images and compose: see session E's results in PROGRESS.md (WP5) and `docs/perf/`.

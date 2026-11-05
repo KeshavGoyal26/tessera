@@ -95,7 +95,9 @@ type TURNConfig struct {
 	Domain  string `yaml:"domain"`
 	UDPPort int    `yaml:"udp_port"`
 	TCPPort int    `yaml:"tcp_port"`
-	// TLSPort serves TURNS; requires CertFile/KeyFile. 0 disables.
+	// TLSPort serves TURN over TLS (TURNS); requires CertFile/KeyFile. 0 (the default)
+	// disables it. Use 443 for networks that only allow HTTPS; the port needs privileges
+	// (CAP_NET_BIND_SERVICE) and its own address when the HTTPS signaling also uses 443.
 	TLSPort  int    `yaml:"tls_port"`
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
@@ -188,7 +190,7 @@ func Default() *Config {
 			CongestionControl: CongestionControlConfig{Enabled: true, AllowPause: true, Probe: true},
 			EnabledCodecs:     []string{"audio/opus", "audio/red", "video/VP8", "video/H264"},
 		},
-		TURN: TURNConfig{UDPPort: 3478, TCPPort: 3478, TLSPort: 5349, CredentialTTL: 24 * time.Hour},
+		TURN: TURNConfig{UDPPort: 3478, TCPPort: 3478, CredentialTTL: 24 * time.Hour},
 		Room: RoomConfig{AutoCreate: true, EmptyTimeout: 5 * time.Minute, DepartureTimeout: 20 * time.Second},
 		Signal: SignalConfig{
 			PingInterval:        5 * time.Second,

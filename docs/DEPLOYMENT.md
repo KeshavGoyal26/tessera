@@ -11,7 +11,8 @@ and by sharding rooms across independent nodes in your own routing layer. Measur
 | 7880 | TCP | HTTP + WebSocket signalling, admin API (JWT protected, see PROTOCOL.md) | via TLS reverse proxy only |
 | 7882 | UDP | WebRTC media (single muxed port, `rtc.udp_port`) | public, open in firewall / security group |
 | 7881 | TCP | ICE-TCP fallback (`rtc.tcp_port`); the server starts UDP-only if it cannot bind it | public, optional |
-| 3478 UDP/TCP, 5349 TCP | | Embedded TURN, TURNS (only if `turn.enabled`) | public |
+| 3478 UDP/TCP | | Embedded TURN (only if `turn.enabled`) | public |
+| 443 (or 5349) TCP | | TURN over TLS, `turn.tls_port` (needs `turn.cert_file`/`turn.key_file`; off by default) | public |
 | `turn.relay_range_start..end` | UDP | TURN relay allocations | public when TURN is enabled |
 | 6789 | TCP | `/metrics`, `/healthz`, `/readyz`, `/stats`, `/debug/pprof` | **private network only** |
 | 6790 | TCP | Recorder metrics | private |
@@ -55,9 +56,40 @@ rtc.example.com {
 
 Enable the embedded TURN when clients sit behind symmetric NATs or UDP-blocking firewalls (typically 10 to 15%
 of enterprise users): `turn.enabled: true`, `turn.domain`, a stable `turn.secret` (otherwise credentials do not
-survive a restart), and TLS on 5349 (or 443 via a TCP load balancer) for networks that only allow TLS.
-Relay traffic is not cheaper than SFU traffic: budget bandwidth for it. External coturn also works through
-`rtc.ice_servers`.
+survive a restart). Relay traffic is not cheaper than SFU traffic: budget bandwidth for it. External coturn also
+works through `rtc.ice_servers`.
+
+### TURN over TLS on 443
+
+Many corporate networks only let TLS on port 443 through. Serve TURNS there:
+
+```yaml
+turn:
+  enabled: true
+  domain: turn.example.com        # must match the certificate
+  secret: "<long random value>"   # stable across restarts
+  udp_port: 3478
+  tcp_port: 3478
+  tls_port: 443                   # 0 (default) disables TURNS
+  cert_file: /etc/tessera/turn.crt
+  key_file: /etc/tessera/turn.key
+```
+
+The join response then also lists `turns:turn.example.com:443?transport=tcp`, so browsers fall back to it
+automatically after UDP, ICE-TCP and `turn:` fail (the SDK passes the list to `RTCPeerConnection` unchanged; use
+`forceRelay` in the client configuration to test it).
+
+- The TURN listener binds port 443 on the node's media IP (`rtc.node_ip`). If the HTTPS reverse proxy for signalling
+  also uses 443, give TURN a second IP (or a separate hostname/IP), or put a TCP SNI router such as HAProxy or nginx
+  `stream` in front that sends `turn.example.com` to the TURN port and everything else to the proxy.
+- Binding 443 needs root or `CAP_NET_BIND_SERVICE` (`setcap cap_net_bind_service=+ep tessera`, or
+  `AmbientCapabilities=CAP_NET_BIND_SERVICE` in systemd). In containers use `--cap-add NET_BIND_SERVICE` or
+  publish `443:5349` and set `tls_port: 5349`.
+- The certificate must be valid for the TURN host name (Let's Encrypt works; reload by restarting). Browsers
+  reject self-signed certificates for `turns:`.
+- `go test ./test/e2e -run TestTURNOverTLSOnly` runs a client that can only reach the server through TURN/TLS: the
+  server has no UDP or TCP TURN listener and the client keeps only the `turns:` URL with relay-only candidates.
+  Without the CA in the client's trust store it fails, so the test also proves that TLS is verified.
 
 ## 5. Configuration checklist
 

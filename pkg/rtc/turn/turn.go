@@ -6,6 +6,7 @@ package turn
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,7 @@ type Server struct {
 	host    string
 	udpPort int
 	tcpPort int
+	tlsPort int
 	closers []func() error
 }
 
@@ -39,7 +41,7 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *
 		return nil, nil
 	}
 	if cfg.TLSPort > 0 && (cfg.CertFile == "" || cfg.KeyFile == "") {
-		cfg.TLSPort = 0
+		return nil, errs.New(errs.CodeInvalidArgument, "turn: tls_port requires cert_file and key_file")
 	}
 	s := &Server{cfg: cfg, secret: cfg.Secret, host: relayIP}
 	if s.secret == "" {
@@ -94,6 +96,24 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *
 		s.closers = append(s.closers, ln.Close)
 		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: gen(), PermissionHandler: permit})
 	}
+	if cfg.TLSPort > 0 {
+		// TURN over TLS (TURNS, RFC 7350) for networks that only let TCP/443 through.
+		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			s.close()
+			return nil, fmt.Errorf("turn: load tls certificate: %w", err)
+		}
+		var lc net.ListenConfig
+		raw, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.TLSPort)))
+		if err != nil {
+			s.close()
+			return nil, fmt.Errorf("turn: listen tls: %w", err)
+		}
+		ln := tls.NewListener(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"stun.turn"}})
+		s.tlsPort = raw.Addr().(*net.TCPAddr).Port
+		s.closers = append(s.closers, ln.Close)
+		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: gen(), PermissionHandler: permit})
+	}
 	srv, err := pturn.NewServer(sc)
 	if err != nil {
 		s.close()
@@ -101,7 +121,7 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *
 	}
 	s.srv = srv
 	if logger != nil {
-		logger.Info("turn listening", "udp", s.udpPort, "tcp", s.tcpPort, "relay", relayIP)
+		logger.Info("turn listening", "udp", s.udpPort, "tcp", s.tcpPort, "tls", s.tlsPort, "relay", relayIP)
 	}
 	return s, nil
 }
@@ -133,6 +153,9 @@ func (s *Server) URLs() []string {
 	}
 	if s.tcpPort > 0 {
 		out = append(out, fmt.Sprintf("turn:%s:%d?transport=tcp", s.host, s.tcpPort))
+	}
+	if s.tlsPort > 0 {
+		out = append(out, fmt.Sprintf("turns:%s:%d?transport=tcp", s.host, s.tlsPort))
 	}
 	return out
 }

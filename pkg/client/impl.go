@@ -239,10 +239,22 @@ func (c *client) Connect(ctx context.Context, rawURL, token string) error {
 	c.mu.Unlock()
 	var iceServers []webrtc.ICEServer
 	for _, s := range join.IceServers {
-		iceServers = append(iceServers, webrtc.ICEServer{URLs: s.Urls, Username: s.Username, Credential: s.Credential})
+		urls := s.Urls
+		if c.opts.TURNSOnly {
+			urls = nil
+			for _, u := range s.Urls {
+				if strings.HasPrefix(u, "turns:") {
+					urls = append(urls, u)
+				}
+			}
+			if len(urls) == 0 {
+				continue
+			}
+		}
+		iceServers = append(iceServers, webrtc.ICEServer{URLs: urls, Username: s.Username, Credential: s.Credential})
 	}
 	cfg := webrtc.Configuration{ICEServers: iceServers}
-	if c.opts.ForceRelay {
+	if c.opts.ForceRelay || c.opts.TURNSOnly {
 		cfg.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	}
 	if c.sub, err = c.newPC(cfg, tesserav1.SignalTarget_SIGNAL_TARGET_SUBSCRIBER); err != nil {
