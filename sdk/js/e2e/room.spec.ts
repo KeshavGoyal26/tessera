@@ -124,9 +124,9 @@ test("data packets are delivered between participants", async ({ browser }) => {
 });
 
 test("the client reconnects after a network outage and media resumes", async ({ browser, browserName }) => {
-  // Observed in CI: context.setOffline(true) leaves Firefox's WebSocket and WebRTC traffic
-  // untouched (status stays "connected" for 30 s), so the outage cannot be simulated there.
-  test.skip(browserName === "firefox", "Playwright setOffline does not interrupt WebSocket/WebRTC in Firefox");
+  // context.setOffline(true) leaves Firefox's and WebKit's WebSocket and WebRTC traffic untouched,
+  // so the outage is simulated at the signaling layer in every browser: the WebSocket is cut and
+  // new ones are refused until the network "returns". Chromium additionally goes offline for real.
   const room = `e2e-reconnect-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
@@ -137,14 +137,29 @@ test("the client reconnects after a network outage and media resumes", async ({ 
     p.on("console", (m) => logs.push(`${n}: ${m.text()}`));
     p.on("pageerror", (e) => logs.push(`${n} ERROR: ${e.message}`));
   }
+  let down = false;
+  const open: { close(): void }[] = [];
+  await ctxA.routeWebSocket(/\/rtc/, (ws) => {
+    if (down) {
+      void ws.close({ code: 1006 });
+      return;
+    }
+    const server = ws.connectToServer();
+    open.push(ws, server);
+  });
+  const setNetwork = async (up: boolean) => {
+    down = !up;
+    if (!up) for (const c of open.splice(0)) void c.close();
+    if (browserName === "chromium") await ctxA.setOffline(!up);
+  };
   try {
     await join(a, room, "alice");
     await join(b, room, "bob");
     await a.click("#cam");
     await expectVideoPlaying(b, "alice");
-    await ctxA.setOffline(true);
+    await setNetwork(false);
     await expect(a.locator("#status")).toHaveText("reconnecting", { timeout: 30_000 });
-    await ctxA.setOffline(false);
+    await setNetwork(true);
     await expect(a.locator("#status")).toHaveText("connected", { timeout: 45_000 });
     // Bob still sees Alice and a fresh frame flow.
     await expect(b.locator("#tile-alice")).toBeVisible();
