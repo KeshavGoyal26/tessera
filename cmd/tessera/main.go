@@ -292,7 +292,9 @@ func splitList(s string) []string {
 
 // lateRecordingTrigger forwards room.RecordingTrigger calls to a trigger bound after
 // the room manager is created. Calls before binding are dropped.
-type lateRecordingTrigger struct{ t atomic.Pointer[room.RecordingTrigger] }
+type lateRecordingTrigger struct {
+	t atomic.Pointer[room.RecordingTrigger]
+}
 
 func (l *lateRecordingTrigger) set(t room.RecordingTrigger) { l.t.Store(&t) }
 
