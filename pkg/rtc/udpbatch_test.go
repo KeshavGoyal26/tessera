@@ -13,7 +13,7 @@ func TestBatchWriterDeliversInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rx.Close()
+	defer func() { _ = rx.Close() }()
 	tx, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func BenchmarkUDPWrite(b *testing.B) {
 				b.Setenv("TESSERA_UDP_NOBATCH", "")
 			}
 			rx, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-			defer rx.Close()
+			defer func() { _ = rx.Close() }()
 			go func() {
 				buf := make([]byte, 2048)
 				for {
@@ -74,7 +74,7 @@ func BenchmarkUDPWrite(b *testing.B) {
 			}()
 			tx, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 			c := newCountingConn(tx)
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			to := rx.LocalAddr().(*net.UDPAddr).AddrPort()
 			pkt := make([]byte, 1000)
 			b.SetBytes(int64(len(pkt)))
