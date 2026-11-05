@@ -197,6 +197,10 @@ func isTimeout(err error) bool {
 	return ok && te.Timeout()
 }
 
+// testHookAddDownTrack runs between AddDownTrack's fast closed check and
+// taking dtMu (tests use it to force the Close race).
+var testHookAddDownTrack = func() {}
+
 // AddDownTrack implements Receiver.
 func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	if r.closed.Load() {
@@ -205,8 +209,14 @@ func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	if d, ok := dt.(*DownTrackImpl); ok {
 		d.fwd.SetAvailableLayers(r.maxL.Load())
 	}
+	testHookAddDownTrack()
 	r.dtMu.Lock()
 	defer r.dtMu.Unlock()
+	// Re-check under dtMu: Close sets closed before it takes dtMu to empty
+	// the list, so a DownTrack added after that point would never be closed.
+	if r.closed.Load() {
+		return errs.New(errs.CodeNotFound, "receiver closed")
+	}
 	old := *r.downs.Load()
 	next := make([]DownTrack, 0, len(old)+1)
 	for _, d := range old {
