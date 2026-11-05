@@ -322,14 +322,22 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	ip, now := clientIP(r), h.p.Now()
 	h.mu.Lock()
-	recent := h.fails[ip][:0]
-	for _, t := range h.fails[ip] {
-		if now.Sub(t) < failWindow {
-			recent = append(recent, t)
+	// Prune every address, not just this one, so addresses that failed once
+	// and never came back do not accumulate.
+	for addr, ts := range h.fails {
+		recent := ts[:0]
+		for _, t := range ts {
+			if now.Sub(t) < failWindow {
+				recent = append(recent, t)
+			}
+		}
+		if len(recent) == 0 {
+			delete(h.fails, addr)
+		} else {
+			h.fails[addr] = recent
 		}
 	}
-	h.fails[ip] = recent
-	limited := len(recent) >= maxFails
+	limited := len(h.fails[ip]) >= maxFails
 	h.mu.Unlock()
 	if limited {
 		jsonErr(w, http.StatusTooManyRequests, "too many failed attempts, retry in a minute")

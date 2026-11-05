@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -295,5 +296,40 @@ func TestRecorderAggregation(t *testing.T) {
 	}
 	if !rk || !down {
 		t.Fatalf("%+v", u.Alerts)
+	}
+}
+
+// Failed-login entries of addresses that never return must expire
+// (regression: only the requesting address was pruned).
+func TestLoginFailuresExpire(t *testing.T) {
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
+	h, err := New(Params{
+		Stats: stats.ProviderFunc(snap), Keys: auth.StaticKeys{"key": "s3cret"}, Rooms: &fakeRooms{}, Recordings: &fakeRecs{},
+		Interval: time.Hour, Now: func() time.Time { return time.Unix(0, now.Load()) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.Close)
+	login := func(addr, secret string) int {
+		r := httptest.NewRequest("POST", "/admin/api/login", strings.NewReader(`{"api_key":"key","secret":"`+secret+`"}`))
+		r.RemoteAddr = addr
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := range 50 {
+		login(fmt.Sprintf("10.0.0.%d:1000", i), "bad")
+	}
+	now.Add(int64(2 * failWindow))
+	if code := login("10.0.1.1:1000", "s3cret"); code != 200 {
+		t.Fatalf("login: %d", code)
+	}
+	h.mu.Lock()
+	n := len(h.fails)
+	h.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d stale failed-login entries kept", n)
 	}
 }
