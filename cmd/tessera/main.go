@@ -77,7 +77,7 @@ func realMain() int {
 	logger := cfg.NewLogger()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, cfg, logger, nil); err != nil {
+	if err := run(ctx, cfg, logger, nil, withDevToken(*dev)); err != nil {
 		logger.Error("tessera exited", "err", err)
 		return 1
 	}
@@ -89,8 +89,19 @@ type listeners struct {
 	http, metrics net.Listener
 }
 
+type runOptions struct{ devToken bool }
+
+type runOption func(*runOptions)
+
+// withDevToken serves GET /dev/token; set only by the --dev flag.
+func withDevToken(on bool) runOption { return func(o *runOptions) { o.devToken = on } }
+
 // run wires all components and serves until ctx is cancelled.
-func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *listeners) error {
+func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *listeners, opts ...runOption) error {
+	var o runOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -145,6 +156,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	mux.Handle(admin.PathPrefix, adminSrv)
 	mux.Handle(dashboard.PathPrefix+"/", dash)
 	mux.Handle(dashboard.PathPrefix, dash)
+	if o.devToken {
+		mux.Handle(devTokenPath, devTokenHandler(recKey, recSecret))
+		logger.Warn("dev token endpoint enabled: anyone who can reach this port can join any room", "path", devTokenPath)
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
