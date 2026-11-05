@@ -78,7 +78,7 @@ export async function join(page: Page, room: string, identity: string): Promise<
   await page.addInitScript(TRACK_PCS);
   const token = mintToken(room, identity);
   const q = new URLSearchParams({ url: SERVER, token, autojoin: "1" });
-  await page.goto(`/?${q.toString()}`);
+  await page.goto(`/call.html?${q.toString()}`);
   await page.locator("#status[data-state=connected]").waitFor({ timeout: 20_000 });
 }
 

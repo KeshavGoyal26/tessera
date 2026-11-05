@@ -1,92 +1,90 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>Tessera demo</title>
+    <title>Tessera Live</title>
     <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/live.css" />
   </head>
   <body>
     <section id="landing" class="landing">
       <form id="join" class="card">
-        <div class="brand"><span class="logo">▦</span> Tessera</div>
-        <p class="tag">Open-source WebRTC SFU. Join a room in one click.</p>
+        <div class="brand"><span class="logo">▦</span> Tessera <span class="pill">Live</span></div>
+        <p class="tag">Presenters stream to the server. Viewers pick one or more presenters to watch.</p>
         <label>
           Your name
           <input name="name" type="text" required maxlength="40" autocomplete="nickname" placeholder="Alex" />
         </label>
-        <label>
-          Room name
-          <input name="room" type="text" required maxlength="64" value="demo" placeholder="demo" />
-        </label>
         <label class="check">
           <input name="record" type="checkbox" />
-          <span>Record me <small>(from join until I leave; watch it in the admin dashboard)</small></span>
+          <span>Record me when I present <small>(play it later in the admin dashboard)</small></span>
         </label>
-        <button id="join-button" class="primary" type="submit">Join</button>
-        <p class="switch"><a href="/live.html">Presenter / viewer mode: present to many, watch who you choose →</a></p>
-        <details id="advanced">
-          <summary>Advanced: use your own server and token</summary>
-          <label>
-            Server URL
-            <input name="url" type="text" placeholder="ws://localhost:7880 (default: same host)" />
-          </label>
-          <label>
-            Access token
-            <input name="token" type="password" autocomplete="off" placeholder="paste a JWT to skip /dev/token" />
-          </label>
-        </details>
+        <div class="actions">
+          <button class="primary" type="submit" value="presenter">Go live</button>
+          <button class="secondary" type="submit" value="viewer">Watch</button>
+        </div>
+        <p class="switch"><a href="/call.html">Video call demo</a></p>
         <p id="error" class="error" role="alert" hidden></p>
       </form>
     </section>
 
-    <section id="call" class="call" hidden>
+    <!-- Presenter -->
+    <section id="present" class="call" hidden>
       <header class="topbar">
         <span class="brand"><span class="logo">▦</span> Tessera</span>
-        <span id="room-name" class="room-name"></span>
-        <span id="status" class="status" role="status">disconnected</span>
-        <button id="invite" class="ghost" type="button" title="Copy a link others can open to join this room">Copy invite link</button>
+        <span class="room-name" data-room></span>
+        <span class="onair">LIVE</span>
+        <span class="status" data-status role="status">disconnected</span>
       </header>
-
-      <main id="grid" class="grid" aria-label="Participants"></main>
-
-      <pre id="stats" class="stats" hidden aria-live="off"></pre>
-      <p id="toast" class="toast" role="status" hidden></p>
-
-      <nav class="bar" aria-label="Call controls">
-        <button id="mic" class="ctl" type="button" disabled aria-pressed="false" title="Microphone">
-          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/><path class="slash" d="M4 4l16 16"/></svg>
-          <span>Mic</span>
+      <main class="stage" id="present-stage" data-count="1">
+        <div class="tile self" id="preview">
+          <div class="avatar" id="preview-avatar"></div>
+          <div class="label"><span class="nm" id="preview-name"></span></div>
+          <div class="rec" title="Your stream is being recorded">REC</div>
+        </div>
+      </main>
+      <nav class="bar" aria-label="Presenter controls">
+        <button id="p-mic" class="ctl" type="button" aria-pressed="false" title="Microphone">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/><path class="slash" d="M4 4l16 16"/></svg>Mic
         </button>
-        <button id="cam" class="ctl" type="button" disabled aria-pressed="false" title="Camera">
-          <svg viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2ZM15 6H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1.5l4 3V7.5l-4 3V8a2 2 0 0 0-2-2Z"/><path class="slash" d="M4 4l16 16"/></svg>
-          <span>Camera</span>
+        <button id="p-cam" class="ctl" type="button" aria-pressed="false" title="Camera">
+          <svg viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2Z"/><path class="slash" d="M4 4l16 16"/></svg>Camera
         </button>
-        <button id="screen" class="ctl" type="button" disabled aria-pressed="false" title="Share your screen">
-          <svg viewBox="0 0 24 24"><path d="M3 5h18v11H3V5Zm2 2v7h14V7H5Zm-2 11h18v2H3v-2Z"/></svg>
-          <span>Share</span>
+        <button id="p-screen" class="ctl" type="button" aria-pressed="false" title="Share your screen">
+          <svg viewBox="0 0 24 24"><path d="M3 5h18v11H3V5Zm2 2v7h14V7H5Zm3 11h8v2H8v-2Z"/></svg>Screen
         </button>
-        <label class="quality" title="Which simulcast layer you receive from others">
-          <span>Quality</span>
-          <select id="quality" disabled>
-            <option value="auto">Auto</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </label>
-        <button id="stats-toggle" class="ctl" type="button" aria-pressed="false" title="Show network statistics">
-          <svg viewBox="0 0 24 24"><path d="M4 20V10h3v10H4Zm6 0V4h3v16h-3Zm6 0v-7h3v7h-3Z"/></svg>
-          <span>Stats</span>
-        </button>
-        <button id="leave" class="ctl danger" type="button" disabled title="Leave the room">
-          <svg viewBox="0 0 24 24"><path d="M10 4H4v16h6v-2H6V6h4V4Zm5.6 4.6L14.2 10l1.9 2H9v2h7.1l-1.9 2 1.4 1.4L20 13l-4.4-4.4Z"/></svg>
-          <span>Leave</span>
+        <button id="p-leave" class="ctl danger" type="button" title="Stop presenting">
+          <svg viewBox="0 0 24 24"><path d="M10 4h9v16h-9v-2h7V6h-7V4Zm-1 4 1.4 1.4L8.8 11H15v2H8.8l1.6 1.6L9 16l-4-4 4-4Z"/></svg>End
         </button>
       </nav>
     </section>
 
-    <script type="module" src="/src/main.ts"></script>
+    <!-- Viewer -->
+    <section id="watch" class="call" hidden>
+      <header class="topbar">
+        <span class="brand"><span class="logo">▦</span> Tessera</span>
+        <span class="room-name" data-room></span>
+        <span class="status" data-status role="status">disconnected</span>
+        <button id="w-leave" class="ghost" type="button">Leave</button>
+      </header>
+      <div class="watch-body">
+        <aside class="presenters" aria-label="Presenters">
+          <div class="presenters-head">
+            <b id="live-count">0 live</b>
+            <button id="watch-all" class="ghost small" type="button">Watch all</button>
+          </div>
+          <ul id="presenter-list"></ul>
+          <p class="muted empty" id="no-presenters">No one is live yet. This list updates by itself.</p>
+        </aside>
+        <main class="stage" id="watch-stage" data-count="0">
+          <p class="muted empty stage-empty" id="stage-empty"></p>
+        </main>
+      </div>
+    </section>
+
+    <p id="toast" class="toast" role="status" hidden></p>
+    <script type="module" src="/src/live.ts"></script>
   </body>
 </html>

@@ -52,7 +52,7 @@ test("two participants exchange video, mute propagates and leaving is observed",
 
 test("a bad token is rejected with a visible error", async ({ page }) => {
   const q = new URLSearchParams({ url: process.env.TESSERA_E2E_URL ?? "ws://127.0.0.1:7880", token: "nope", autojoin: "1" });
-  await page.goto(`/?${q.toString()}`);
+  await page.goto(`/call.html?${q.toString()}`);
   await expect(page.locator("#error")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#status")).toHaveText("disconnected");
 });

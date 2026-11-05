@@ -14,78 +14,76 @@ It builds the binaries into `.demo/bin`, writes configs under `.demo/`, and prin
 
 | What | URL |
 |------|-----|
-| Web demo | `http://localhost:5173/` |
+| Live demo (present / watch) | `http://localhost:5173/` |
+| Video call demo | `http://localhost:5173/call.html` |
 | Dashboard | `http://localhost:7880/admin/`, sign in with `devkey` / `devsecret-devsecret-devsecret-0000` |
 | Live stats | `http://localhost:6789/stats` |
-| Dev token API | `http://localhost:7880/dev/token?room=demo&identity=me` (only with `--dev`) |
+| Dev token API | `http://localhost:7880/dev/token?room=live&identity=me&role=presenter` (only with `--dev`) |
 
 Ctrl-C stops everything. Logs are in `.demo/logs/`, recordings in `.demo/recordings/`.
 `scripts/demo.sh --host <ip>` overrides the address printed and advertised for media.
 
-Before the audience arrives: open the web demo in **two browser windows** (or a laptop and a
-phone, see LAN below), allow camera and microphone once, and leave the dashboard open in a third
+Before the audience arrives: open `http://localhost:5173/` in **three browser windows** (or add a
+phone, see LAN below), allow camera and microphone once, and leave the dashboard open in another
 tab, signed in.
+
+## The live demo
+
+Presenters stream to the server; viewers see every presenter and watch one or more at a time. It is
+not a call: presenters receive nothing and never see viewers.
+
+The page has one field (your name), a **Record me when I present** tick, and two buttons:
+
+- **Go live** streams camera and mic. The bar has Mic, Camera, Screen and End.
+- **Watch** opens the viewer: a live list of presenters (with camera, mic, screen and REC state) and
+  a stage. The first presenter is shown straight away; click others in the list to add them, or
+  **Watch all**. Each tile has its own mute and ✕. Presenters you are not watching cost no
+  bandwidth, and each tile gets the simulcast layer that fits its size.
+
+Everyone lands in the channel `live`; open `?room=<name>` for another one. `?url=ws://host:7880`
+points the page at another server.
 
 ## The 5-minute script
 
-**0:00 Join (45 s).** In window A enter a name and the room `demo`, press **Join**. No token
-pasting: the page fetched one from `/dev/token`. Click **Copy invite link**, open it in window B,
-type another name, **Join**. Turn on mic and camera in both. Point out the tiles, name labels,
-mute icons and the connection quality bars.
+**0:00 Go live (45 s).** In window A type a name, tick **Record me**, press **Go live**. In window B,
+another name, **Go live** (no tick). No token pasting: the page fetched one from `/dev/token`.
 
-**0:45 Active speaker (30 s).** Talk in A: its tile gets the glowing green ring in both windows.
-Mute the mic and show the red muted icon on the other side.
+**0:45 Watch (60 s).** In window C type a name and press **Watch**. A's stream appears at once and
+both presenters are in the list, A with a **REC** marker. Click B to add it beside A, ✕ to drop it,
+**Watch all** to bring it back. Mute one tile. Press **Screen** in B: C gets a separate
+"(screen)" tile. Say: each presenter uploads once, the SFU sends each viewer only what they watch.
 
-**1:15 Simulcast quality (60 s).** In B open **Stats**: note receive resolution and bitrate for
-A's video. Change **Quality** to Low, then High. Resolution and bitrate move (for example 320x180
-at about 150 kbps against 1280x720 at about 1.3 Mbps) with no renegotiation or reconnect.
-Switch back to Auto. Say: one upload from A, the SFU picks which layer each viewer receives.
+**1:45 Quality (30 s).** Tiles start at 720p within a few seconds: the server probes for spare
+bandwidth before stepping a viewer up a simulcast layer, so there is no blurry warm-up.
 
-**2:15 Screen share (30 s).** Press **Share** in A, pick a window. B gets a separate "(screen)"
-tile. Stop sharing.
-
-**2:45 Dashboard (75 s).** Switch to the dashboard tab.
+**2:15 Dashboard (90 s).** Switch to the dashboard tab.
 1. *Overview*: CPU, bandwidth, packets, and the room and participant counts.
-2. *Rooms*: expand `demo` → participant → tracks.
-3. *Track quality*: select A's video. Per-layer bitrate, fps, resolution, loss, and the
-   subscriber's current and target layer. Flip B's Quality selector and watch the layer switch.
+2. *Rooms*: expand `live` → presenter → tracks.
+3. *Track quality*: select A's video. Per-layer bitrate, fps, resolution, loss, and each
+   subscriber's current and target layer.
 4. *Connectivity*: ICE candidate types, RTT.
 
-**4:00 Recording (45 s).** Two ways to record:
-
-- **On join:** tick **Record me** on the join card (or open `?record=1`). The server starts a
-  recording of that participant when they join and stops it when they leave. Their tile shows a
-  red **REC** marker for everyone in the room.
-- **From the dashboard:** in *Rooms*, click **Record** next to a participant. **■ Stop** appears
-  in *Recordings* while it runs.
-
-Open *Recordings* in the dashboard: every recording is listed with participant, room, start time,
-duration and status. Click **▶ Play** to watch it with video and audio together. The files are HLS
-(fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the recorder at
+**3:45 Recording (45 s).** Press **End** in A. In the dashboard open *Recordings*: A's recording is
+listed with room, start time, duration and status. Click **▶ Play** to watch it with video and audio.
+You can also record anyone from *Rooms* with **Record** (and **■ Stop** in *Recordings*). The files
+are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the recorder at
 `http://127.0.0.1:6790/recordings/` because `storage.local_base_url` is set in the demo's recorder
 config. To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.m3u8 -c copy out.mp4`.
 
-**4:45 Load (15 s).** Start with `--loadtest` (or in another terminal
+**4:30 Load (30 s).** Start with `--loadtest` (or in another terminal
 `.demo/bin/tessera-loadtest --secret devsecret-devsecret-devsecret-0000 --rooms 5 --publishers 6`).
-Show the Overview charts and `/stats` filling up while the two live calls stay smooth.
+Show the Overview charts and `/stats` filling up while the live channel stays smooth.
 
-## Presenter / viewer mode (`/live.html`)
+The classic video call (everyone sees everyone, active-speaker ring, quality selector, stats
+overlay) is still at `/call.html`.
 
-For broadcasts, classrooms, monitoring walls: not a call. Open `http://localhost:5173/live.html`
-(also linked from the call demo's join card).
+## Tokens for your own backend
 
-- **Present:** streams camera and mic (and optionally the screen) to the server. Presenters receive no
-  media and do not see viewers. Optional *Record my stream*.
-- **Watch:** lists every presenter in the channel, live, with their camera, mic and screen state.
-  Click a presenter to watch, click again to stop; watch several at once, *Watch all* or *Clear*.
-  Each tile has its own mute and close buttons. Nothing is downloaded for presenters you are not
-  watching, and each tile gets the simulcast layer that fits its size.
-
-Tokens: the dev endpoint takes `role=presenter|viewer`. In production, issue the same grants from your
-backend, for example with the Java SDK:
+The dev endpoint takes `role=presenter|viewer` and `record=1`. In production, issue the same grants
+from your backend, for example with the Java SDK:
 
 ```java
-// presenter: publish only
+// presenter: publish only; autoRecord(true) records them from join until they leave
 RoomGrant.builder().room("live").roomJoin(true).canSubscribe(false).build();
 // viewer: subscribe only, invisible to others; connect with autoSubscribe: false and
 // subscribe per presenter (RemoteTrackPublication.setSubscribed(true))

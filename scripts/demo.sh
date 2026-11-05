@@ -143,10 +143,11 @@ cat <<EOF
 
   Tessera demo is running
   ------------------------------------------------------------
-  Web demo      http://localhost:$WEB_PORT/          (open in two tabs; LAN: http://$HOST:$WEB_PORT/)
+  Live demo     http://localhost:$WEB_PORT/          Go live in some tabs, Watch in another (LAN: http://$HOST:$WEB_PORT/)
+  Video call    http://localhost:$WEB_PORT/call.html
   Dashboard     http://localhost:$PORT/admin/        login: $KEY / $SECRET
   Live stats    http://localhost:6789/stats
-  Token API     http://localhost:$PORT/dev/token?room=demo&identity=me
+  Token API     http://localhost:$PORT/dev/token?room=live&identity=me&role=presenter
   Recordings    $DEMO/recordings
   Logs          $DEMO/logs/*.log
 EOF

@@ -1,116 +1,93 @@
-// Presenter / viewer demo: presenters publish to the server and receive nothing;
-// viewers are hidden, see every presenter and subscribe only to the ones they watch.
+// Presenter / viewer demo. Presenters publish to the server and receive nothing.
+// Viewers are hidden, see every presenter and subscribe only to the ones they watch.
+//
+// Query parameters: ?room= (channel, default "live"), ?url= (server, default ws://<host>:7880),
+// ?name=, ?record=1. window.room exposes the Room for debugging.
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 
 type Role = "presenter" | "viewer";
 
-const $ = <T extends HTMLElement>(id: string): T => {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`missing #${id}`);
-  return node as T;
-};
-const form = $<HTMLFormElement>("join");
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T | null;
+const el = <T extends HTMLElement = HTMLElement>(id: string) => $<T>(id)!;
+const form = el<HTMLFormElement>("join");
 const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
-const joinButton = $<HTMLButtonElement>("join-button");
-const errorEl = $<HTMLParagraphElement>("error");
-const toastEl = $<HTMLParagraphElement>("toast");
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+const params = new URLSearchParams(location.search);
+const channel = params.get("room") || "live";
+const serverUrl = params.get("url") || `ws://${location.hostname}:7880`;
 
 let room: Room | undefined;
-let role: Role = "presenter";
 let toastTimer: number | undefined;
 
 function toast(msg: string): void {
-  toastEl.textContent = msg;
-  toastEl.hidden = false;
+  const t = el("toast");
+  t.textContent = msg;
+  t.hidden = false;
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toastEl.hidden = true), 2500);
+  toastTimer = window.setTimeout(() => (t.hidden = true), 2500);
 }
-const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+function store(key: string, value?: string): string | null {
+  try {
+    if (value !== undefined) localStorage.setItem(key, value);
+    return localStorage.getItem(key);
+  } catch {
+    return null; // storage blocked
+  }
+}
 
 // ---- landing ---------------------------------------------------------------
 
-const params = new URLSearchParams(location.search);
-for (const key of ["name", "room", "url"] as const) {
-  const v = params.get(key);
-  if (v) field(key).value = v;
-}
-if (params.get("role") === "viewer") (form.querySelector('input[value="viewer"]') as HTMLInputElement).checked = true;
-if (params.get("record") === "1") field("record").checked = true;
-try {
-  const saved = localStorage.getItem("tessera-demo-name");
-  if (saved && !field("name").value) field("name").value = saved;
-} catch {
-  /* storage blocked */
-}
+field("name").value = params.get("name") ?? store("tessera-demo-name") ?? "";
+field("record").checked = params.get("record") === "1";
 
-function selectedRole(): Role {
-  return (form.querySelector<HTMLInputElement>('input[name="role"]:checked')?.value as Role) ?? "presenter";
-}
-function syncLanding(): void {
-  const r = selectedRole();
-  $("record-row").hidden = r !== "presenter";
-  joinButton.textContent = r === "presenter" ? "Go live" : "Start watching";
-}
-form.addEventListener("change", syncLanding);
-syncLanding();
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const role = ((e.submitter as HTMLButtonElement | null)?.value as Role) || "presenter";
+  void join(role);
+});
 
-async function fetchToken(url: string, roomName: string, name: string, r: Role, record: boolean): Promise<string> {
-  const http = url.replace(/^ws/, "http").replace(/\/rtc.*$/, "").replace(/\/$/, "");
-  const identity = `${r === "viewer" ? "v" : "p"}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "guest"}-${Math.random().toString(36).slice(2, 6)}`;
-  const q = new URLSearchParams({ room: roomName, identity, name, role: r });
+async function fetchToken(name: string, role: Role, record: boolean): Promise<string> {
+  const http = serverUrl.replace(/^ws/, "http").replace(/\/$/, "");
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "guest";
+  const q = new URLSearchParams({ room: channel, identity: `${role[0]}-${slug}-${Math.random().toString(36).slice(2, 6)}`, name, role });
   if (record) q.set("record", "1");
-  let res: Response;
-  try {
-    res = await fetch(`${http}/dev/token?${q}`);
-  } catch {
+  const res = await fetch(`${http}/dev/token?${q}`).catch(() => {
     throw new Error(`Cannot reach ${http}. Is the server running with --dev?`);
-  }
-  if (res.status === 404) throw new Error("This server has no /dev/token (start it with --dev).");
+  });
   if (!res.ok) throw new Error(`Token request failed: ${res.status} ${await res.text()}`);
   return ((await res.json()) as { token: string }).token;
 }
 
-form.addEventListener("submit", (e) => {
-  e.preventDefault();
-  void join();
-});
-
-async function join(): Promise<void> {
-  errorEl.hidden = true;
+async function join(role: Role): Promise<void> {
   const name = field("name").value.trim();
-  const roomName = field("room").value.trim();
-  if (!name || !roomName) return;
-  try {
-    localStorage.setItem("tessera-demo-name", name);
-  } catch {
-    /* storage blocked */
-  }
-  role = selectedRole();
-  joinButton.disabled = true;
-  // Viewers subscribe only to what they choose; presenters cannot subscribe at all.
+  if (!name) return;
+  store("tessera-demo-name", name);
+  el("error").hidden = true;
+  const buttons = form.querySelectorAll("button");
+  for (const b of buttons) b.disabled = true;
+  // Nobody auto-subscribes: presenters cannot subscribe, viewers choose.
   const r = new Room({ adaptiveStream: true, dynacast: true, autoSubscribe: false });
   try {
-    const url = field("url").value.trim() || `ws://${location.hostname}:7880`;
-    const token = await fetchToken(url, roomName, name, role, role === "presenter" && field("record").checked);
-    await r.connect(url, token);
+    await r.connect(serverUrl, await fetchToken(name, role, field("record").checked));
     room = r;
     (window as unknown as { room: Room }).room = r;
-    for (const n of document.querySelectorAll("[data-room]")) n.textContent = roomName;
-    $("landing").hidden = true;
     r.on(RoomEvent.Reconnecting, () => setStatus(ConnectionState.Reconnecting))
       .on(RoomEvent.Reconnected, () => setStatus(ConnectionState.Connected))
-      .on(RoomEvent.Disconnected, () => backToLanding());
+      .on(RoomEvent.Disconnected, () => location.reload());
+    for (const n of document.querySelectorAll("[data-room]")) n.textContent = channel;
     setStatus(ConnectionState.Connected);
-    if (role === "presenter") await startPresenting(r, name);
-    else startWatching(r);
+    el("landing").hidden = true;
+    if (role === "presenter") await present(r, name);
+    else watchRoom(r);
   } catch (err) {
-    r.removeAllListeners();
     void r.disconnect().catch(() => undefined);
-    errorEl.textContent = errText(err);
-    errorEl.hidden = false;
+    el("error").textContent = errText(err);
+    el("error").hidden = false;
   } finally {
-    joinButton.disabled = false;
+    for (const b of buttons) b.disabled = false;
   }
 }
 
@@ -121,223 +98,187 @@ function setStatus(state: ConnectionState): void {
   }
 }
 
-function backToLanding(): void {
-  room?.removeAllListeners();
-  room = undefined;
-  watched.clear();
-  $("present").hidden = true;
-  $("watch").hidden = true;
-  $("landing").hidden = false;
-  $("presenter-list").replaceChildren();
-  for (const t of document.querySelectorAll("#watch-stage .tile")) t.remove();
-  for (const v of document.querySelectorAll("#preview video")) v.remove();
-  setStatus(ConnectionState.Disconnected);
-}
-
 // ---- presenter -------------------------------------------------------------
 
-async function startPresenting(r: Room, name: string): Promise<void> {
-  $("present").hidden = false;
-  $("preview-name").textContent = `${name} (you)`;
-  $("preview-avatar").textContent = name.slice(0, 1).toUpperCase();
-  $("preview").classList.toggle("recorded", r.localParticipant.attributes?.recorded === "true");
-  // Go live with camera and mic; either may be refused, presenting continues with what works.
+async function present(r: Room, name: string): Promise<void> {
+  el("present").hidden = false;
+  el("preview-name").textContent = `${name} (you)`;
+  el("preview-avatar").textContent = name.charAt(0).toUpperCase();
+  el("preview").classList.toggle("recorded", r.localParticipant.attributes?.recorded === "true");
+  // Go live with camera and mic; if one is refused, present with what works.
   await setCam(true).catch((err) => toast(`Camera: ${errText(err)}`));
   await setMic(true).catch((err) => toast(`Microphone: ${errText(err)}`));
 }
 
+const pressed = (id: string) => el(id).getAttribute("aria-pressed") === "true";
+
 async function setMic(on: boolean): Promise<void> {
   await room?.localParticipant.setMicrophoneEnabled(on);
-  $("p-mic").setAttribute("aria-pressed", String(on));
+  el("p-mic").setAttribute("aria-pressed", String(on));
 }
 
 async function setCam(on: boolean): Promise<void> {
-  if (!room) return;
-  const pub = await room.localParticipant.setCameraEnabled(on);
-  $("p-cam").setAttribute("aria-pressed", String(on));
-  const preview = $("preview");
-  preview.querySelector("video:not(.screen)")?.remove();
+  const pub = await room?.localParticipant.setCameraEnabled(on);
+  el("p-cam").setAttribute("aria-pressed", String(on));
+  const preview = el("preview");
+  preview.querySelector("video")?.remove();
   if (on && pub) {
     const v = pub.track.attach() as HTMLVideoElement;
     v.muted = true;
     preview.prepend(v);
   }
-  preview.classList.toggle("has-video", on);
-  $("preview-hint").hidden = on;
+  preview.classList.toggle("has-video", on && !!pub);
 }
 
-$("p-mic").addEventListener("click", () => {
-  void setMic($("p-mic").getAttribute("aria-pressed") !== "true").catch((err) => toast(errText(err)));
-});
-$("p-cam").addEventListener("click", () => {
-  void setCam($("p-cam").getAttribute("aria-pressed") !== "true").catch((err) => toast(errText(err)));
-});
-$("p-screen").addEventListener("click", async () => {
-  if (!room) return;
-  const btn = $("p-screen");
-  const on = btn.getAttribute("aria-pressed") !== "true";
-  try {
-    const pub = await room.localParticipant.setScreenShareEnabled(on);
-    btn.setAttribute("aria-pressed", String(on));
-    const stage = $("present-stage");
-    document.getElementById("preview-screen")?.remove();
-    if (on && pub) {
-      const tile = document.createElement("div");
-      tile.className = "tile screen has-video";
-      tile.id = "preview-screen";
-      tile.append(pub.track.attach());
-      tile.insertAdjacentHTML("beforeend", '<div class="label"><span class="nm">Your screen</span></div>');
-      stage.append(tile);
-    }
-    stage.dataset.count = String(stage.querySelectorAll(".tile").length);
-  } catch (err) {
-    toast(errText(err));
+async function setScreen(on: boolean): Promise<void> {
+  const pub = await room?.localParticipant.setScreenShareEnabled(on);
+  el("p-screen").setAttribute("aria-pressed", String(on));
+  $("preview-screen")?.remove();
+  const stage = el("present-stage");
+  if (on && pub) {
+    const tile = document.createElement("div");
+    tile.className = "tile screen has-video";
+    tile.id = "preview-screen";
+    tile.append(pub.track.attach());
+    tile.insertAdjacentHTML("beforeend", '<div class="label"><span class="nm">Your screen</span></div>');
+    stage.append(tile);
   }
-});
-$("p-leave").addEventListener("click", () => void room?.disconnect());
+  stage.dataset.count = String(stage.querySelectorAll(".tile").length);
+}
+
+const onClick = (id: string, fn: () => Promise<unknown>) =>
+  el(id).addEventListener("click", () => void fn().catch((err) => toast(errText(err))));
+onClick("p-mic", () => setMic(!pressed("p-mic")));
+onClick("p-cam", () => setCam(!pressed("p-cam")));
+onClick("p-screen", () => setScreen(!pressed("p-screen")));
+onClick("p-leave", async () => room?.disconnect());
 
 // ---- viewer ----------------------------------------------------------------
 
-/** Identities the viewer is watching. Subscriptions follow this set. */
+/** Identities being watched. Subscriptions follow this set. */
 const watched = new Set<string>();
+/** Once the viewer picks or drops someone, stop choosing for them. */
+let viewerChose = false;
 
-function isPresenter(p: RemoteParticipant): boolean {
-  // Presenters announce themselves; anyone else who publishes (e.g. call participants in the same room) also counts.
-  return p.attributes?.role === "presenter" || p.trackPublications.size > 0;
-}
+const isPresenter = (p: RemoteParticipant) => p.attributes?.role === "presenter" || p.trackPublications.size > 0;
+const presenters = () =>
+  [...(room?.remoteParticipants.values() ?? [])].filter(isPresenter).sort((a, b) => (a.name || a.identity).localeCompare(b.name || b.identity));
+const sending = (p: RemoteParticipant, s: TrackSource) => {
+  const pub = p.getTrackPublication(s);
+  return !!pub && !pub.isMuted;
+};
+const tileId = (identity: string, screen = false) => `w-${identity}${screen ? "-screen" : ""}`;
 
-function presenters(): RemoteParticipant[] {
-  return [...(room?.remoteParticipants.values() ?? [])].filter(isPresenter).sort((a, b) => (a.name || a.identity).localeCompare(b.name || b.identity));
-}
-
-function startWatching(r: Room): void {
-  $("watch").hidden = false;
-  r.on(RoomEvent.ParticipantConnected, renderList)
-    .on(RoomEvent.ParticipantDisconnected, (p) => {
-      unwatch(p.identity);
-      renderList();
-    })
+function watchRoom(r: Room): void {
+  el("watch").hidden = false;
+  r.on(RoomEvent.ParticipantConnected, render)
+    .on(RoomEvent.ParticipantDisconnected, (p) => unwatch(p.identity))
     .on(RoomEvent.TrackPublished, (pub, p) => {
       if (watched.has(p.identity)) pub.setSubscribed(true);
-      renderList();
+      render();
     })
-    .on(RoomEvent.TrackUnpublished, (_pub, p) => {
-      renderList();
-      if (watched.has(p.identity)) syncTile(p);
-    })
-    .on(RoomEvent.TrackMuted, () => renderList())
-    .on(RoomEvent.TrackUnmuted, () => renderList())
+    .on(RoomEvent.TrackUnpublished, render)
+    .on(RoomEvent.TrackMuted, render)
+    .on(RoomEvent.TrackUnmuted, render)
     .on(RoomEvent.TrackSubscribed, onSubscribed)
     .on(RoomEvent.TrackUnsubscribed, (track) => {
-      for (const el of track.detach()) el.remove();
+      for (const m of track.detach()) m.remove();
     });
-  renderList();
-  // With a single presenter there is nothing to choose: start watching right away.
-  const ps = presenters();
-  const only = ps[0];
-  if (ps.length === 1 && only) watch(only);
-}
-
-const ICON = {
-  cam: '<svg class="ico" viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2Z"/></svg>',
-  mic: '<svg class="ico" viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg>',
-  screen: '<svg class="ico" viewBox="0 0 24 24"><path d="M3 5h18v11H3V5Zm2 2v7h14V7H5Zm3 11h8v2H8v-2Z"/></svg>',
-};
-
-function live(p: RemoteParticipant, source: TrackSource): boolean {
-  const pub = p.getTrackPublication(source);
-  return !!pub && !pub.isMuted;
-}
-
-function renderList(): void {
-  const list = $("presenter-list");
-  const ps = presenters();
-  $("no-presenters").hidden = ps.length > 0;
-  $("live-count").textContent = `${ps.length} live`;
-  list.replaceChildren(
-    ...ps.map((p) => {
-      const li = document.createElement("li");
-      const on = watched.has(p.identity);
-      li.className = on ? "watching" : "";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "presenter";
-      btn.setAttribute("aria-pressed", String(on));
-      btn.title = on ? "Stop watching" : "Watch";
-      const name = p.name || p.identity;
-      const media = [
-        live(p, TrackSource.Camera) ? ICON.cam : "",
-        live(p, TrackSource.Microphone) ? ICON.mic : "",
-        live(p, TrackSource.ScreenShare) ? ICON.screen : "",
-      ].join("");
-      btn.innerHTML = `<span class="av"></span><span class="who"><span class="pn"></span><span class="media">${media || '<span class="muted">no media yet</span>'}</span></span><span class="go">${on ? "Watching" : "Watch"}</span>`;
-      btn.querySelector(".av")!.textContent = name.slice(0, 1).toUpperCase();
-      btn.querySelector(".pn")!.textContent = name;
-      if (p.attributes?.recorded === "true") btn.querySelector(".pn")!.insertAdjacentHTML("afterend", '<span class="rec-dot" title="Recorded">REC</span>');
-      btn.addEventListener("click", () => (watched.has(p.identity) ? unwatch(p.identity) : watch(p)));
-      li.append(btn);
-      return li;
-    }),
-  );
-  // Drop watched presenters that are gone.
-  const stale = [...watched].filter((id) => !ps.some((p) => p.identity === id));
-  for (const id of stale) unwatch(id);
-  layoutStage();
+  render();
 }
 
 function watch(p: RemoteParticipant): void {
   watched.add(p.identity);
   for (const pub of p.trackPublications.values()) pub.setSubscribed(true);
-  syncTile(p);
-  renderList();
+  render();
 }
 
 function unwatch(identity: string): void {
-  if (!watched.delete(identity)) return;
-  const p = room?.remoteParticipants.get(identity) ?? [...(room?.remoteParticipants.values() ?? [])].find((x) => x.identity === identity);
+  watched.delete(identity);
+  const p = [...(room?.remoteParticipants.values() ?? [])].find((x) => x.identity === identity);
   if (p) for (const pub of p.trackPublications.values()) pub.setSubscribed(false);
-  document.getElementById(tileId(identity))?.remove();
-  document.getElementById(tileId(identity, true))?.remove();
-  renderList();
+  $(tileId(identity))?.remove();
+  $(tileId(identity, true))?.remove();
+  render();
 }
 
-$("watch-all").addEventListener("click", () => {
+el("watch-all").addEventListener("click", () => {
+  viewerChose = true;
   for (const p of presenters()) if (!watched.has(p.identity)) watch(p);
 });
-$("watch-none").addEventListener("click", () => {
-  for (const id of [...watched]) unwatch(id);
-});
-$("w-leave").addEventListener("click", () => void room?.disconnect());
+el("w-leave").addEventListener("click", () => void room?.disconnect());
 
-const tileId = (identity: string, screen = false) => `w-${identity}${screen ? "-screen" : ""}`;
+const MEDIA: [TrackSource, string][] = [
+  [TrackSource.Camera, '<svg class="ico" viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2Z"/></svg>'],
+  [TrackSource.Microphone, '<svg class="ico" viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg>'],
+  [TrackSource.ScreenShare, '<svg class="ico" viewBox="0 0 24 24"><path d="M3 5h18v11H3V5Zm2 2v7h14V7H5Zm3 11h8v2H8v-2Z"/></svg>'],
+];
 
-/** Creates the presenter's tile (and a screen tile while they share) and keeps its state current. */
+/** Redraws the presenter list and the stage from room state. */
+function render(): void {
+  const ps = presenters();
+  for (const id of watched) if (!ps.some((p) => p.identity === id)) unwatch(id);
+  // Until the viewer chooses, show the first presenter so the stage is never empty.
+  const first = ps[0];
+  if (!viewerChose && watched.size === 0 && first) return watch(first);
+
+  el("live-count").textContent = `${ps.length} live`;
+  el("no-presenters").hidden = ps.length > 0;
+  el("presenter-list").replaceChildren(
+    ...ps.map((p) => {
+      const on = watched.has(p.identity);
+      const name = p.name || p.identity;
+      const li = document.createElement("li");
+      li.className = on ? "watching" : "";
+      const media = MEDIA.filter(([s]) => sending(p, s))
+        .map(([, icon]) => icon)
+        .join("");
+      li.innerHTML = `<button type="button" class="presenter" aria-pressed="${on}"><span class="av"></span><span class="who"><span class="pn"></span><span class="media">${media}</span></span><span class="go">${on ? "Watching" : "Watch"}</span></button>`;
+      li.querySelector(".av")!.textContent = name.charAt(0).toUpperCase();
+      li.querySelector(".pn")!.textContent = name;
+      if (p.attributes?.recorded === "true") li.querySelector(".pn")!.insertAdjacentHTML("afterend", '<span class="rec-dot">REC</span>');
+      li.querySelector("button")!.addEventListener("click", () => {
+        viewerChose = true;
+        if (on) unwatch(p.identity);
+        else watch(p);
+      });
+      return li;
+    }),
+  );
+
+  for (const p of ps) if (watched.has(p.identity)) syncTile(p);
+  const stage = el("watch-stage");
+  const n = stage.querySelectorAll(".tile").length;
+  stage.dataset.count = String(Math.min(n, 5));
+  el("stage-empty").hidden = n > 0;
+  el("stage-empty").textContent = ps.length ? "Pick a presenter to watch." : "Waiting for someone to go live.";
+}
+
+/** Creates or updates the presenter's tile; drops the screen tile once sharing stops. */
 function syncTile(p: RemoteParticipant): HTMLElement {
-  const stage = $("watch-stage");
-  let tile = document.getElementById(tileId(p.identity));
-  const name = p.name || p.identity;
-  if (!tile) {
-    tile = document.createElement("div");
+  const existing = $(tileId(p.identity));
+  const tile = existing ?? document.createElement("div");
+  if (!existing) {
+    const name = p.name || p.identity;
     tile.id = tileId(p.identity);
     tile.className = "tile";
     tile.innerHTML = `<div class="avatar"></div><div class="label"><span class="nm"></span></div>
-      <div class="tile-actions"><button class="icon-btn" data-act="audio" type="button" aria-pressed="true" title="Mute this presenter">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
-    tile.querySelector(".avatar")!.textContent = name.slice(0, 1).toUpperCase();
+      <div class="tile-actions"><button class="icon-btn" data-act="audio" type="button" title="Mute">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
+    tile.querySelector(".avatar")!.textContent = name.charAt(0).toUpperCase();
     tile.querySelector(".nm")!.textContent = name;
-    tile.querySelector('[data-act="close"]')!.addEventListener("click", () => unwatch(p.identity));
-    tile.querySelector('[data-act="audio"]')!.addEventListener("click", (e) => {
-      const b = e.currentTarget as HTMLButtonElement;
-      const on = b.getAttribute("aria-pressed") !== "true";
-      b.setAttribute("aria-pressed", String(on));
-      b.textContent = on ? "🔊" : "🔇";
-      b.title = on ? "Mute this presenter" : "Unmute this presenter";
-      for (const a of tile!.querySelectorAll("audio")) a.muted = !on;
+    tile.querySelector('[data-act="close"]')!.addEventListener("click", () => {
+      viewerChose = true;
+      unwatch(p.identity);
     });
-    stage.append(tile);
+    tile.querySelector('[data-act="audio"]')!.addEventListener("click", (e) => {
+      const muted = tile.classList.toggle("muted-audio");
+      (e.currentTarget as HTMLButtonElement).textContent = muted ? "🔇" : "🔊";
+      for (const a of tile.querySelectorAll("audio")) a.muted = muted;
+    });
+    el("watch-stage").append(tile);
   }
-  tile.classList.toggle("has-video", !!tile.querySelector("video") && live(p, TrackSource.Camera));
-  if (!live(p, TrackSource.ScreenShare)) document.getElementById(tileId(p.identity, true))?.remove();
-  layoutStage();
+  tile.classList.toggle("has-video", !!tile.querySelector("video") && sending(p, TrackSource.Camera));
+  if (!sending(p, TrackSource.ScreenShare)) $(tileId(p.identity, true))?.remove();
   return tile;
 }
 
@@ -347,9 +288,9 @@ function onSubscribed(track: RemoteTrack, pub: RemoteTrackPublication, p: Remote
     return;
   }
   const tile = syncTile(p);
-  const el = track.attach();
+  const media = track.attach();
   if (pub.source === TrackSource.ScreenShare) {
-    let st = document.getElementById(tileId(p.identity, true));
+    let st = $(tileId(p.identity, true));
     if (!st) {
       st = document.createElement("div");
       st.id = tileId(p.identity, true);
@@ -358,21 +299,13 @@ function onSubscribed(track: RemoteTrack, pub: RemoteTrackPublication, p: Remote
       st.querySelector(".nm")!.textContent = `${p.name || p.identity} (screen)`;
       tile.after(st);
     }
-    st.prepend(el);
-  } else if (el instanceof HTMLVideoElement) {
-    el.playsInline = true;
-    tile.prepend(el);
+    st.prepend(media);
+  } else if (media instanceof HTMLVideoElement) {
+    media.playsInline = true;
+    tile.prepend(media);
   } else {
-    el.muted = tile.querySelector('[data-act="audio"]')?.getAttribute("aria-pressed") === "false";
-    tile.append(el);
+    media.muted = tile.classList.contains("muted-audio");
+    tile.append(media);
   }
-  syncTile(p);
-}
-
-function layoutStage(): void {
-  const stage = $("watch-stage");
-  const n = stage.querySelectorAll(".tile").length;
-  stage.dataset.count = String(Math.min(n, 5));
-  $("stage-empty").hidden = n > 0;
-  $("stage-empty").textContent = presenters().length ? "Choose a presenter to start watching." : "Waiting for someone to go live.";
+  render();
 }
