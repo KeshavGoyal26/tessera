@@ -166,3 +166,31 @@ func TestAllocatorBacksOffAfterFailedProbe(t *testing.T) {
 		t.Fatalf("a failed probe must not change the allocation, got %v", cam.target)
 	}
 }
+
+// A probe whose result falls short of the upgrade (a capped link) is not a success:
+// re-probing every tick kept such a link congested and the layer oscillating.
+func TestAllocatorBacksOffWhenProbeFallsShort(t *testing.T) {
+	est := &probeEst{fakeEst: fakeEst{bps: 1_500_000}}
+	a := NewAllocator(Config{Enabled: true, AllowPause: true, Probe: true}, est).(*allocator)
+	clock := time.Unix(1000, 0)
+	a.now = func() time.Time { return clock }
+	defer a.Stop()
+	cam := &padTrack{fakeTrack: video("cam", 1, 150_000, 600_000, 2_000_000)}
+	a.AddTrack(cam)
+	a.Allocate()
+	est.mu.Lock()
+	est.done, est.result = true, 1_600_000 // the path carried more, but not the 2 Mbit/s layer
+	est.mu.Unlock()
+	clock = clock.Add(allocTick)
+	a.Allocate()
+	for range 6 {
+		clock = clock.Add(allocTick)
+		a.Allocate()
+	}
+	if s, _ := est.counts(); s != 1 {
+		t.Fatalf("re-probed within the back-off after a short result, started=%d", s)
+	}
+	if _, ok := a.ProbeStats(); ok != 0 {
+		t.Fatalf("a short probe counted as a success")
+	}
+}

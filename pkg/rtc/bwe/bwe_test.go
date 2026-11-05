@@ -142,3 +142,116 @@ func TestEstimatorHoldsWhenApplicationLimited(t *testing.T) {
 		t.Fatalf("estimate fell from %d to %d with no congestion signal", start, got)
 	}
 }
+
+// feedLoss simulates n feedback reports, 128 ms apart, each covering 32 packets of
+// 1000 bytes sent every 4 ms (2 Mbit/s) and arriving with the same spacing (no
+// queueing), with packet seq lost when lost(seq). Returns the time after the last.
+func feedLoss(e *estimator, now time.Time, from, n int, lost func(seq int) bool) time.Time {
+	const per, gap = 32, 4 * time.Millisecond
+	for i := from; i < from+n; i++ {
+		base := i * per
+		fb := &rtcp.TransportLayerCC{BaseSequenceNumber: uint16(base), PacketStatusCount: per, ReferenceTime: uint32(2 * i)}
+		var syms []uint16
+		lastRecv := -1
+		for k := range per {
+			seq := base + k
+			e.OnPacketSent(uint16(seq), 1000, int64(seq)*int64(gap), false)
+			if lost(seq) {
+				syms = append(syms, rtcp.TypeTCCPacketNotReceived)
+				continue
+			}
+			syms = append(syms, rtcp.TypeTCCPacketReceivedSmallDelta)
+			d := time.Duration(k-lastRecv) * gap
+			if lastRecv < 0 {
+				d = 0
+			}
+			fb.RecvDeltas = append(fb.RecvDeltas, &rtcp.RecvDelta{Type: rtcp.TypeTCCPacketReceivedSmallDelta, Delta: d.Microseconds()})
+			lastRecv = k
+		}
+		for len(syms) > 0 {
+			c := syms[:min(14, len(syms))]
+			syms = syms[len(c):]
+			fb.PacketChunks = append(fb.PacketChunks, &rtcp.StatusVectorChunk{SymbolSize: rtcp.TypeTCCSymbolSizeOneBit, SymbolList: c})
+		}
+		now = now.Add(128 * time.Millisecond)
+		e.OnTransportFeedback(fb, now)
+	}
+	return now
+}
+
+// Steady random loss (lossy Wi-Fi) is not congestion: the estimate must not ratchet
+// down. With a per-report loss average, 8% random loss regularly crossed the 10%
+// decrease threshold and the rate never recovered (2-10% allowed no increase).
+func TestEstimatorToleratesSteadyRandomLoss(t *testing.T) {
+	e := NewEstimator(Config{}).(*estimator)
+	start := e.Estimate()
+	rng := uint32(1)
+	random8 := func(int) bool { rng = rng*1664525 + 1013904223; return rng%100 < 8 }
+	feedLoss(e, time.Now(), 0, 160, random8) // ~20 s
+	if got := e.Estimate(); got < start*9/10 {
+		t.Fatalf("estimate %d fell from %d under steady 8%% random loss", got, start)
+	}
+}
+
+// Loss that rises well above the link's usual level is congestion.
+func TestEstimatorBacksOffWhenLossRises(t *testing.T) {
+	e := NewEstimator(Config{}).(*estimator)
+	rng := uint32(7)
+	random := func(pct uint32) func(int) bool {
+		return func(int) bool { rng = rng*1664525 + 1013904223; return rng%100 < pct }
+	}
+	now := feedLoss(e, time.Now(), 0, 80, random(1)) // 10 s at 1%
+	before := e.Estimate()
+	feedLoss(e, now, 80, 24, random(20)) // 3 s at 20%
+	if got := e.Estimate(); got > before*7/10 {
+		t.Fatalf("estimate %d, want well below %d after loss rose from 1%% to 20%%", got, before)
+	}
+}
+
+// feedDelay is feedLoss without loss and with arrival gaps from arrGap(seq).
+func feedDelay(e *estimator, now time.Time, from, n int, arrGap func(seq int) time.Duration) time.Time {
+	const per, gap = 32, 4 * time.Millisecond
+	arr := time.Duration(from*per) * gap // receiver clock: true arrival times across reports
+	for i := from; i < from+n; i++ {
+		base := i * per
+		ref := arr / (64 * time.Millisecond)
+		fb := &rtcp.TransportLayerCC{BaseSequenceNumber: uint16(base), PacketStatusCount: per, ReferenceTime: uint32(ref),
+			PacketChunks: []rtcp.PacketStatusChunk{&rtcp.RunLengthChunk{PacketStatusSymbol: rtcp.TypeTCCPacketReceivedSmallDelta, RunLength: per}}}
+		prev := ref * 64 * time.Millisecond
+		for k := range per {
+			seq := base + k
+			e.OnPacketSent(uint16(seq), 1000, int64(seq)*int64(gap), false)
+			fb.RecvDeltas = append(fb.RecvDeltas, &rtcp.RecvDelta{Type: rtcp.TypeTCCPacketReceivedSmallDelta, Delta: (arr - prev).Microseconds()})
+			prev = arr
+			arr += arrGap(seq)
+		}
+		now = now.Add(128 * time.Millisecond)
+		e.OnTransportFeedback(fb, now)
+	}
+	return now
+}
+
+// Arrival jitter without a growing queue is not congestion.
+func TestEstimatorIgnoresJitter(t *testing.T) {
+	e := NewEstimator(Config{}).(*estimator)
+	start := e.Estimate()
+	rng := uint32(3)
+	jitter := func(int) time.Duration { // 4 ms +/- 3 ms, mean unchanged
+		rng = rng*1664525 + 1013904223
+		return time.Duration(1000+int(rng%6000)) * time.Microsecond
+	}
+	feedDelay(e, time.Now(), 0, 120, jitter)
+	if got := e.Estimate(); got < start*9/10 {
+		t.Fatalf("estimate %d fell from %d under jitter alone", got, start)
+	}
+}
+
+// A queue that keeps growing (arrivals slower than sends) is congestion.
+func TestEstimatorBacksOffOnGrowingQueue(t *testing.T) {
+	e := NewEstimator(Config{}).(*estimator)
+	start := e.Estimate()
+	feedDelay(e, time.Now(), 0, 40, func(int) time.Duration { return 5 * time.Millisecond }) // 25% over capacity
+	if got := e.Estimate(); got > start*8/10 {
+		t.Fatalf("estimate %d, want well below %d with a growing queue", got, start)
+	}
+}

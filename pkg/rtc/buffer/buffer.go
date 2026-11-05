@@ -54,6 +54,9 @@ type ExtPacket struct {
 	Marker         bool
 	// Padding-only packets are tracked but not forwarded.
 	PaddingOnly bool
+	// Late is set when a higher sequence number was already received on this
+	// stream (NACK recovery or reordering).
+	Late bool
 
 	// Raw is the full packet in the ring slot; Payload is a sub-slice.
 	Raw        []byte
@@ -261,6 +264,7 @@ func (b *Buffer) Write(pkt []byte, arrival int64) (*ExtPacket, error) {
 		Spatial:           b.cfg.Spatial,
 	}
 	e.PaddingOnly = len(e.Payload) == 0
+	e.Late = !inOrder
 	b.parsePayload(e, raw, h)
 
 	b.received.Add(1)

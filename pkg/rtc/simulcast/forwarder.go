@@ -47,6 +47,19 @@ type VP8Translation struct {
 // nackHistory is the number of forwarded packets remembered for NACK translation.
 const nackHistory = 512
 
+// offsetRanges is how many offset changes are remembered for late packets.
+const offsetRanges = 64
+
+// offsetRange holds the munging offsets for incoming packets with ext SN >= from,
+// up to the next range. Offsets change when packets are absorbed (temporal-layer
+// or padding drops) or probes are inserted; a packet that arrives late (NACK
+// recovery, reordering) must use the offsets of its own range, not the current ones.
+type offsetRange struct {
+	from uint64
+	sn   uint64
+	pid  uint16
+}
+
 type sentPacket struct {
 	inSN   uint16
 	layer  int8
@@ -103,6 +116,38 @@ type Forwarder struct {
 	droppedPIDValid       bool
 
 	sent [nackHistory]sentPacket
+
+	// Ring of offset ranges, newest at rangeHead.
+	ranges    [offsetRanges]offsetRange
+	nRanges   int
+	rangeHead int
+}
+
+// resetRanges starts a new range history at a layer (re)start.
+func (f *Forwarder) resetRanges(from uint64) {
+	f.rangeHead, f.nRanges = 0, 1
+	f.ranges[0] = offsetRange{from: from, sn: f.snOffset, pid: f.pidOffset}
+}
+
+// pushRange records that packets from `from` on use the current offsets.
+func (f *Forwarder) pushRange(from uint64) {
+	f.rangeHead = (f.rangeHead + 1) % offsetRanges
+	f.ranges[f.rangeHead] = offsetRange{from: from, sn: f.snOffset, pid: f.pidOffset}
+	if f.nRanges < offsetRanges {
+		f.nRanges++
+	}
+}
+
+// offsetsFor returns the offsets that applied when packet ext would have been
+// in order; ok is false when it is older than the remembered history.
+func (f *Forwarder) offsetsFor(ext uint64) (r offsetRange, ok bool) {
+	for i := range f.nRanges {
+		r = f.ranges[(f.rangeHead-i+offsetRanges)%offsetRanges]
+		if ext >= r.from {
+			return r, true
+		}
+	}
+	return offsetRange{}, false
 }
 
 // NewForwarder creates a forwarder for the codec MIME type. Video defaults to
@@ -256,7 +301,12 @@ func (f *Forwarder) GetTranslation(pkt *buffer.ExtPacket, layer int32) (Translat
 	}
 	cur := f.current
 	if layer == target.Spatial && layer != cur.Spatial {
-		if pkt.KeyFrame {
+		// Switch only on a keyframe start that arrives in order. A late one (its
+		// first packet was lost and recovered) follows packets of the same
+		// keyframe that were already dropped while waiting: forwarding it would
+		// send a keyframe with holes no one can fill, and every frame after it
+		// would be undecodable. Ask for a fresh keyframe instead.
+		if pkt.KeyFrame && !pkt.Late {
 			f.startLayer(pkt, layer)
 			f.current = types.VideoLayer{Spatial: layer, Temporal: target.Temporal}
 			f.switches++
@@ -274,9 +324,9 @@ func (f *Forwarder) GetTranslation(pkt *buffer.ExtPacket, layer int32) (Translat
 		}
 		return TranslationParams{Drop: true}, nil
 	}
-	f.current.Temporal = target.Temporal
+	f.updateTemporal(pkt, target.Temporal)
 	// Temporal layer filter (VP8 with TID).
-	if f.isVP8 && pkt.VP8.TIDPresent && int32(pkt.VP8.TID) > target.Temporal {
+	if f.isVP8 && pkt.VP8.TIDPresent && int32(pkt.VP8.TID) > f.current.Temporal {
 		if pkt.ExtSequenceNumber == f.lastInExt+1 && pkt.VP8.PictureIDPresent &&
 			(!f.droppedPIDValid || pkt.VP8.PictureID != f.droppedPID) {
 			// Hide the dropped picture so picture ids stay continuous.
@@ -287,6 +337,25 @@ func (f *Forwarder) GetTranslation(pkt *buffer.ExtPacket, layer int32) (Translat
 		return TranslationParams{Drop: true}, nil
 	}
 	return f.forwardCurrent(pkt, layer), nil
+}
+
+// updateTemporal moves the forwarded temporal layer towards target. Going down is
+// immediate. Going up waits for a frame the receiver can decode without the
+// frames it has not seen: a keyframe, or the first packet of a frame of a higher
+// layer that carries the VP8 layer-sync (Y) bit, i.e. depends only on the base
+// layer. Switching up at any other point forwards frames that reference pictures
+// the receiver never got; they cannot be decoded and, as nothing is lost, the
+// receiver only asks for a keyframe after its ~3 s timeout: a long freeze.
+func (f *Forwarder) updateTemporal(pkt *buffer.ExtPacket, target int32) {
+	cur := f.current.Temporal
+	switch {
+	case target <= cur || !f.isVP8 || !pkt.VP8.TIDPresent || pkt.KeyFrame:
+		f.current.Temporal = target
+	case pkt.VP8.Y && pkt.VP8.FirstByte&0x17 == 0x10: // S bit, partition 0: frame start
+		if tid := int32(pkt.VP8.TID); tid > cur && tid <= target {
+			f.current.Temporal = tid
+		}
+	}
 }
 
 // startLayer computes offsets so pkt continues the outgoing stream.
@@ -319,6 +388,7 @@ func (f *Forwarder) startLayer(pkt *buffer.ExtPacket, layer int32) {
 			f.keyOffset = (pkt.VP8.KEYIDX - (f.lastOutKey + 1)) & 0x1f
 		}
 	}
+	f.resetRanges(pkt.ExtSequenceNumber)
 	_ = layer
 }
 
@@ -328,6 +398,7 @@ func (f *Forwarder) dropInOrder(pkt *buffer.ExtPacket) {
 	if pkt.ExtSequenceNumber == f.lastInExt+1 {
 		f.snOffset++
 		f.lastInExt = pkt.ExtSequenceNumber
+		f.pushRange(pkt.ExtSequenceNumber + 1)
 	}
 }
 
@@ -339,11 +410,23 @@ func (f *Forwarder) forwardCurrent(pkt *buffer.ExtPacket, layer int32) Translati
 		f.dropInOrder(pkt)
 		return TranslationParams{Drop: true}
 	}
+	if pkt.ExtSequenceNumber <= f.lastInExt {
+		// Late packet: translate with the offsets of its own range.
+		r, ok := f.offsetsFor(pkt.ExtSequenceNumber)
+		if !ok {
+			return TranslationParams{Drop: true}
+		}
+		return f.translateWith(pkt, layer, false, r.sn, r.pid)
+	}
 	return f.translate(pkt, layer, false)
 }
 
 func (f *Forwarder) translate(pkt *buffer.ExtPacket, layer int32, isSwitch bool) TranslationParams {
-	outSN := pkt.ExtSequenceNumber - f.snOffset
+	return f.translateWith(pkt, layer, isSwitch, f.snOffset, f.pidOffset)
+}
+
+func (f *Forwarder) translateWith(pkt *buffer.ExtPacket, layer int32, isSwitch bool, snOffset uint64, pidOffset uint16) TranslationParams {
+	outSN := pkt.ExtSequenceNumber - snOffset
 	outTS := pkt.ExtTimestamp - f.tsOffset
 	if pkt.ExtSequenceNumber > f.lastInExt {
 		f.lastInExt = pkt.ExtSequenceNumber
@@ -356,7 +439,7 @@ func (f *Forwarder) translate(pkt *buffer.ExtPacket, layer int32, isSwitch bool)
 	tp := TranslationParams{IsSwitch: isSwitch, SequenceNumber: uint16(outSN), Timestamp: uint32(outTS)}
 	if f.isVP8 && pkt.VP8.PictureIDPresent {
 		tp.HasVP8 = true
-		pid := (pkt.VP8.PictureID - f.pidOffset) & 0x7fff
+		pid := (pkt.VP8.PictureID - pidOffset) & 0x7fff
 		tl0 := pkt.VP8.TL0PICIDX - f.tl0Offset
 		key := (pkt.VP8.KEYIDX - f.keyOffset) & 0x1f
 		tp.VP8 = VP8Translation{PictureID: pid, TL0PICIDX: tl0, KEYIDX: key}
@@ -431,9 +514,9 @@ func (f *Forwarder) PaddingParams(n int) (sn uint16, ts uint32, err error) {
 	sn = uint16(f.lastOutExtSN + 1)
 	f.lastOutExtSN += uint64(n)
 	f.snOffset -= uint64(n)
-	// A late packet from before this point would now map onto a padding sequence
-	// number: drop such packets like those from before a layer switch.
-	f.switchExt = max(f.switchExt, f.lastInExt+1)
+	// Packets after this point shift by n; late packets from before it keep
+	// their old offset and fill their original gap.
+	f.pushRange(f.lastInExt + 1)
 	return sn, uint32(f.lastOutExtTS), nil
 }
 

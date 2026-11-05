@@ -51,6 +51,7 @@ type allocator struct {
 	nextProbe  time.Time
 	backoff    time.Duration
 	boostUntil time.Time
+	probeNeed  int64         // total rate the running probe must prove for its upgrade
 	started    atomic.Uint64 // probes started
 	succeeded  atomic.Uint64 // probes that raised the estimate
 }
@@ -237,7 +238,10 @@ func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired
 			return
 		}
 		a.probing = false
-		if done && res > 0 {
+		// Success means the path carries the upgrade the probe was for. A lower
+		// result still informs the estimate, but probing again right away would
+		// only keep a capped link congested and the layer oscillating.
+		if done && res >= a.probeNeed {
 			a.succeeded.Add(1)
 			stats.ProbesSucceeded.Inc()
 			a.backoff = probeMinBackoff
@@ -294,7 +298,7 @@ func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired
 		}
 	}
 	padRate := (cur+step)*6/5 - cur
-	a.probing, a.probeStart = true, now
+	a.probing, a.probeStart, a.probeNeed = true, now, cur+step
 	a.started.Add(1)
 	stats.ProbesStarted.Inc()
 	p.StartProbe()

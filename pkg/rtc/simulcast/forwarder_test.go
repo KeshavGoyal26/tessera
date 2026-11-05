@@ -18,6 +18,7 @@ type layerSrc struct {
 	pid   uint16
 	tl0   uint8
 	m     bool // 15-bit picture id
+	y     bool // VP8 layer-sync bit on the next packets
 	clock int64
 }
 
@@ -33,6 +34,9 @@ func (s *layerSrc) next(key bool, tid uint8, advanceFrame bool) *buffer.ExtPacke
 		desc = []byte{0x90, 0xE0, 0x80 | byte(s.pid>>8), byte(s.pid), s.tl0, tid << 6}
 	} else {
 		desc = []byte{0x90, 0xE0, byte(s.pid & 0x7f), s.tl0, tid << 6}
+	}
+	if s.y {
+		desc[len(desc)-1] |= 0x20
 	}
 	first := byte(0x01)
 	if key {
@@ -315,11 +319,123 @@ func TestPaddingKeepsSequenceContinuous(t *testing.T) {
 	if err != nil || sn != last+1 || ts != tp.Timestamp {
 		t.Fatalf("padding sn=%d ts=%d err=%v, last media sn=%d ts=%d", sn, ts, err, last, tp.Timestamp)
 	}
-	if tp, _ := f.GetTranslation(late, 0); !tp.Drop {
-		t.Fatalf("late packet from before the padding must be dropped, got sn %d", tp.SequenceNumber)
+	// A late packet from before the padding fills its own gap: it must not land on a padding SN.
+	if tp, _ := f.GetTranslation(late, 0); tp.Drop || tp.SequenceNumber != last-1 {
+		t.Fatalf("late packet from before the padding: %+v, want sn %d", tp, last-1)
 	}
 	tp, _ = f.GetTranslation(src.next(false, 0, true), 0)
 	if tp.Drop || tp.SequenceNumber != last+4 {
 		t.Fatalf("media after padding: %+v, want sn %d", tp, last+4)
+	}
+}
+
+// A packet recovered late (upstream NACK) after the forwarder absorbed a dropped
+// temporal-layer packet must keep the sequence number and picture id of its own
+// position. With a single offset it used to collide with the packet before it,
+// leaving a hole the subscriber could never get retransmitted.
+func TestLatePacketAfterTemporalDropKeepsItsPosition(t *testing.T) {
+	f := NewForwarder("video/VP8")
+	f.SetAvailableLayers(0)
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 0})
+	src := newSrc(t, 0, 1000, 90000, 7)
+	key, _ := f.GetTranslation(src.next(true, 0, true), 0) // in 1000, pid 7
+	if key.Drop {
+		t.Fatalf("%+v", key)
+	}
+	late := src.next(false, 0, true) // in 1001, pid 8: lost upstream, recovered later
+	if tp, _ := f.GetTranslation(src.next(false, 0, true), 0); tp.Drop || tp.SequenceNumber != key.SequenceNumber+2 {
+		t.Fatalf("in 1002: %+v", tp)
+	}
+	if tp, _ := f.GetTranslation(src.next(false, 1, true), 0); !tp.Drop { // in 1003, TID 1: filtered
+		t.Fatalf("TID 1 must be dropped: %+v", tp)
+	}
+	after, _ := f.GetTranslation(src.next(false, 0, true), 0) // in 1004
+	if after.Drop || after.SequenceNumber != key.SequenceNumber+3 {
+		t.Fatalf("in 1004: %+v, want sn %d (the filtered packet is absorbed)", after, key.SequenceNumber+3)
+	}
+	tp, _ := f.GetTranslation(late, 0)
+	if tp.Drop || tp.SequenceNumber != key.SequenceNumber+1 {
+		t.Fatalf("late in 1001: sn %d drop=%v, want sn %d", tp.SequenceNumber, tp.Drop, key.SequenceNumber+1)
+	}
+	if tp.VP8.PictureID != key.VP8.PictureID+1 {
+		t.Fatalf("late in 1001: picture id %d, want %d", tp.VP8.PictureID, key.VP8.PictureID+1)
+	}
+	if after.VP8.PictureID != key.VP8.PictureID+3 {
+		t.Fatalf("in 1004: picture id %d, want %d (filtered picture hidden)", after.VP8.PictureID, key.VP8.PictureID+3)
+	}
+	// The late packet is now retransmittable under its munged SN.
+	if _, orig, ok := f.TranslateNACK(tp.SequenceNumber); !ok || orig != 1001 {
+		t.Fatalf("NACK for the late packet: orig=%d ok=%v", orig, ok)
+	}
+}
+
+// Raising the temporal layer must wait for a layer-sync frame: a higher-layer frame
+// without it references pictures the subscriber never received.
+func TestTemporalUpSwitchWaitsForLayerSync(t *testing.T) {
+	f := NewForwarder("video/VP8")
+	f.SetAvailableLayers(0)
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 0})
+	src := newSrc(t, 0, 1000, 90000, 7)
+	if tp, _ := f.GetTranslation(src.next(true, 0, true), 0); tp.Drop {
+		t.Fatalf("keyframe: %+v", tp)
+	}
+	if tp, _ := f.GetTranslation(src.next(false, 2, true), 0); !tp.Drop {
+		t.Fatal("TID 2 forwarded while the target is T0")
+	}
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 2})
+	if tp, _ := f.GetTranslation(src.next(false, 2, true), 0); !tp.Drop {
+		t.Fatal("TID 2 without layer sync forwarded right after the target went up")
+	}
+	if tp, _ := f.GetTranslation(src.next(false, 0, true), 0); tp.Drop {
+		t.Fatal("TID 0 dropped")
+	}
+	src.y = true
+	if tp, _ := f.GetTranslation(src.next(false, 1, true), 0); tp.Drop {
+		t.Fatal("TID 1 with layer sync must start layer 1")
+	}
+	src.y = false
+	if tp, _ := f.GetTranslation(src.next(false, 2, true), 0); !tp.Drop {
+		t.Fatal("TID 2 without layer sync forwarded: only layer 1 is synced")
+	}
+	if tp, _ := f.GetTranslation(src.next(false, 1, true), 0); tp.Drop {
+		t.Fatal("TID 1 dropped after layer 1 was synced")
+	}
+	src.y = true
+	if tp, _ := f.GetTranslation(src.next(false, 2, true), 0); tp.Drop {
+		t.Fatal("TID 2 with layer sync must start layer 2")
+	}
+	if got := f.CurrentLayer().Temporal; got != 2 {
+		t.Fatalf("current temporal %d, want 2", got)
+	}
+	// Going down is immediate.
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 0})
+	if tp, _ := f.GetTranslation(src.next(false, 1, true), 0); !tp.Drop {
+		t.Fatal("TID 1 forwarded after the target went down to T0")
+	}
+}
+
+// A keyframe whose first packet arrives late (lost, then recovered) must not start
+// a layer: its other packets were already dropped while waiting, so the receiver
+// would get a keyframe with holes nothing can fill.
+func TestSwitchIgnoresLateKeyframeStart(t *testing.T) {
+	f := NewForwarder("video/VP8")
+	f.SetAvailableLayers(0)
+	src := newSrc(t, 0, 1000, 90000, 7)
+	src.sn = 1001
+	rest := src.next(false, 0, false) // in 1001: rest of the keyframe arrives first
+	if tp, _ := f.GetTranslation(rest, 0); !tp.Drop || !tp.RequestKeyFrame {
+		t.Fatalf("before any keyframe: %+v", tp)
+	}
+	src.sn = 1000
+	first := src.next(true, 0, true) // in 1000: the recovered keyframe start, late
+	if !first.Late {
+		t.Fatal("buffer did not mark the recovered packet late")
+	}
+	if tp, _ := f.GetTranslation(first, 0); !tp.Drop || !tp.RequestKeyFrame {
+		t.Fatalf("switched on a late keyframe start: %+v", tp)
+	}
+	src.sn = 1002
+	if tp, _ := f.GetTranslation(src.next(true, 0, true), 0); tp.Drop { // the next, in-order keyframe
+		t.Fatalf("in-order keyframe must start the layer: %+v", tp)
 	}
 }

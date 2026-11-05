@@ -70,10 +70,74 @@ type estimator struct {
 	smoothedDelay float64
 	trend         []trendPoint
 	firstArrival  int64
-	lossFrac      float64
 	ackRate       float64
 	feedbacks     uint64
+	// Overuse must persist (GCC): above the threshold for overuseTime over more
+	// than one update with a non-decreasing trend. A single jitter spike is not
+	// congestion.
+	overStart time.Time
+	overCount int
+	prevSlope float64
+
+	// Loss over the last lossWindow (winLoss, from winPkts packets) and over the
+	// last lossFloorSpan (the link's inherent loss). Only loss significantly above
+	// the inherent level counts as congestion, so a lossy Wi-Fi link keeps its rate.
+	lossSamples [lossRing]lossSample
+	lossHead    int
+	winLoss     float64
+	winPkts     int
+	lossFloor   atomic.Uint64 // float64 bits; read by probe evaluation under sentMu
 }
+
+// overuseTime is how long the delay trend must stay above the threshold (GCC: 10 ms).
+const overuseTime = 10 * time.Millisecond
+
+const (
+	lossWindow    = time.Second
+	lossFloorSpan = 10 * time.Second
+	lossRing      = 256 // feedback reports kept for lossFloorSpan (~10-20 per second)
+)
+
+type lossSample struct {
+	at          time.Time
+	lost, total int
+}
+
+// addLoss records one feedback's loss and refreshes the window and floor.
+func (e *estimator) addLoss(now time.Time, lost, total int) {
+	e.lossHead = (e.lossHead + 1) % lossRing
+	e.lossSamples[e.lossHead] = lossSample{at: now, lost: lost, total: total}
+	var wl, wt, fl, ft int
+	for i := range lossRing {
+		s := e.lossSamples[(e.lossHead-i+lossRing)%lossRing]
+		age := now.Sub(s.at)
+		if s.total == 0 || age > lossFloorSpan {
+			break
+		}
+		if age <= lossWindow {
+			wl += s.lost
+			wt += s.total
+		}
+		fl += s.lost
+		ft += s.total
+	}
+	if wt < 20 {
+		return // too few packets to say anything
+	}
+	e.winLoss, e.winPkts = float64(wl)/float64(wt), wt
+	e.lossFloor.Store(math.Float64bits(float64(fl) / float64(ft)))
+}
+
+// lossMargin is two standard deviations of a loss rate p measured over n packets:
+// below it, a difference from the floor is noise.
+func lossMargin(p float64, n int) float64 {
+	if n <= 0 {
+		return 1
+	}
+	return 2 * math.Sqrt(p*(1-p)/float64(n))
+}
+
+func (e *estimator) floor() float64 { return math.Float64frombits(e.lossFloor.Load()) }
 
 type group struct {
 	firstSent, lastSent int64
@@ -231,8 +295,7 @@ func (e *estimator) OnTransportFeedback(fb *rtcp.TransportLayerCC, receivedAt ti
 	defer e.mu.Unlock()
 	e.feedbacks++
 	if total > 0 {
-		f := float64(lost) / float64(total)
-		e.lossFrac = 0.7*e.lossFrac + 0.3*f
+		e.addLoss(receivedAt, lost, total)
 	}
 	if len(acks) >= 2 {
 		var bytes int
@@ -286,8 +349,8 @@ func (e *estimator) evalProbeLocked(now time.Time) int64 {
 	if pc.ackPkts < 5 || sendSpan < minProbeSpan || recvSpan <= 0 {
 		return 0
 	}
-	if float64(pc.lostPkts) > 0.05*float64(pc.sentPkts) {
-		return 0 // the probe itself caused loss: no headroom
+	if fl := e.floor(); float64(pc.lostPkts) > (0.05+fl+lossMargin(fl, pc.sentPkts))*float64(pc.sentPkts) {
+		return 0 // the probe caused loss beyond the link's usual: no headroom
 	}
 	sendRate := float64(pc.sentBytes*8) / sendSpan.Seconds()
 	recvRate := float64((pc.ackBytes-pc.firstAckSize)*8) / recvSpan.Seconds()
@@ -359,15 +422,26 @@ func (e *estimator) slope() float64 {
 
 func (e *estimator) update(now time.Time) {
 	// Delay-based detector: modified trend compared with an adaptive threshold.
-	modified := e.slope() * float64(len(e.trend)) * 4
+	slope := e.slope()
+	modified := slope * float64(len(e.trend)) * 4
 	switch {
 	case modified > e.threshold:
-		e.state = StateOveruse
+		if e.overStart.IsZero() {
+			e.overStart = now
+		}
+		e.overCount++
+		if now.Sub(e.overStart) >= overuseTime && e.overCount > 1 && slope >= e.prevSlope {
+			e.state = StateOveruse
+			e.overStart, e.overCount = time.Time{}, 0
+		}
 	case modified < -e.threshold:
 		e.state = StateUnderuse
+		e.overStart, e.overCount = time.Time{}, 0
 	default:
 		e.state = StateNormal
+		e.overStart, e.overCount = time.Time{}, 0
 	}
+	e.prevSlope = slope
 	k := 0.039
 	if math.Abs(modified) < e.threshold {
 		k = 0.0087
@@ -375,23 +449,35 @@ func (e *estimator) update(now time.Time) {
 	e.threshold += k * (math.Abs(modified) - e.threshold) * 0.05
 	e.threshold = math.Min(math.Max(e.threshold, 6), 600)
 
+	// Loss is congestion when it rises well above the link's inherent loss, or is
+	// very high. Steady random loss (Wi-Fi, mobile) must not ratchet the rate down.
+	floor := e.floor()
+	excess := e.winLoss - floor
+	margin := lossMargin(floor, e.winPkts)
+	lossCongested := (e.winLoss > 0.10 && excess > 0.05+margin) || e.winLoss > 0.25
 	est := e.estimate
 	switch {
-	case e.state == StateOveruse || e.lossFrac > 0.1:
-		if now.Sub(e.lastDecr) > 200*time.Millisecond {
-			base := est
-			if e.ackRate > 0 && e.ackRate < base {
-				base = e.ackRate
-			}
-			factor := 0.85
-			if e.lossFrac > 0.1 {
-				factor = math.Min(factor, 1-0.5*e.lossFrac)
-			}
-			est = base * factor
-			e.lastDecr = now
-			e.state = StateOveruse
+	// One decrease per round trip at most: the effect of a cut shows in feedback
+	// only an RTT later, and cutting again before that overshoots (high-RTT links).
+	case e.state == StateOveruse && now.Sub(e.lastDecr) > max(200*time.Millisecond, e.rtt),
+		lossCongested && now.Sub(e.lastDecr) > 300*time.Millisecond+e.rtt:
+		base := est
+		if e.ackRate > 0 && e.ackRate < base {
+			base = e.ackRate
 		}
-	case e.state == StateNormal && e.lossFrac < 0.02:
+		factor := 1.0
+		if e.state == StateOveruse {
+			factor = 0.85
+		}
+		if lossCongested {
+			factor = math.Min(factor, 1-0.5*math.Max(excess, 0.1))
+		}
+		est = base * factor
+		e.lastDecr = now
+		e.state = StateOveruse
+	case e.state == StateOveruse || lossCongested:
+		// Decreased recently: hold.
+	case e.state == StateNormal && e.winLoss < math.Max(0.02, floor+0.02+margin):
 		if !e.lastIncr.IsZero() {
 			dt := now.Sub(e.lastIncr).Seconds()
 			est *= math.Pow(1.08, math.Min(dt, 1))
