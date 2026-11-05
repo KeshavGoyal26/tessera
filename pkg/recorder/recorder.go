@@ -85,7 +85,11 @@ type StorageConfig struct {
 	// Kind: "local" or "s3".
 	Kind      string `yaml:"kind"`
 	LocalRoot string `yaml:"local_root"`
-	S3        struct {
+	// LocalBaseURL, when set, makes the recorder's ops listener serve LocalRoot read-only
+	// under /recordings/ and report playlist URLs below this prefix (e.g.
+	// "http://localhost:6790/recordings"), so the dashboard can play local recordings.
+	LocalBaseURL string `yaml:"local_base_url"`
+	S3           struct {
 		Bucket         string `yaml:"bucket"`
 		Region         string `yaml:"region"`
 		Endpoint       string `yaml:"endpoint"`

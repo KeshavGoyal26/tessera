@@ -103,7 +103,7 @@ func (w *Worker) buildDefaultStorage() (storage.Storage, error) {
 			Secret: sc.S3.Secret, Prefix: sc.S3.Prefix, ForcePathStyle: sc.S3.ForcePathStyle,
 		})
 	}
-	return storage.NewLocal(sc.LocalRoot)
+	return storage.NewLocal(sc.LocalRoot, storage.WithBaseURL(sc.LocalBaseURL))
 }
 
 // Ready reports readiness (storage reachable, capacity available).
@@ -331,7 +331,12 @@ func (r *jobRun) execute(ctx context.Context) {
 	st, err := storage.FromOptions(ctx, r.req.GetStorage(), w.defStorage)
 	if err == nil && r.req.GetStorage().GetLocal() != nil {
 		// Per-request local directories live below the configured root.
-		st, err = storage.NewLocal(path.Join(w.cfg.Storage.LocalRoot, path.Clean("/"+r.req.GetStorage().GetLocal().GetDirectory())))
+		dir := path.Clean("/" + r.req.GetStorage().GetLocal().GetDirectory())
+		var opts []storage.LocalOption
+		if base := w.cfg.Storage.LocalBaseURL; base != "" {
+			opts = append(opts, storage.WithBaseURL(strings.TrimRight(base, "/")+dir))
+		}
+		st, err = storage.NewLocal(path.Join(w.cfg.Storage.LocalRoot, dir), opts...)
 	}
 	if err != nil {
 		r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_FAILED, "storage: "+err.Error(), nil, "")

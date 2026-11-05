@@ -100,6 +100,7 @@ func TestDevTokenEndpoint(t *testing.T) {
 		cfg.Keys = map[string]string{devAPIKey: devSecret}
 		cfg.RTC.UDPPort, cfg.RTC.TCPPort = 0, 0
 		cfg.RTC.IPs = []string{"127.0.0.1"}
+		cfg.Metrics.Addr = "" // do not collide with a server already on :6789
 		httpLn, _ := net.Listen("tcp", "127.0.0.1:0")
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)

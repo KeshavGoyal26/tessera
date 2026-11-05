@@ -51,14 +51,12 @@ tile. Stop sharing.
    subscriber's current and target layer. Flip B's Quality selector and watch the layer switch.
 4. *Connectivity*: ICE candidate types, RTT.
 
-**4:00 Recording (45 s).** In *Rooms* start a recording of the room (or a participant). Wait about
-10 s, then **Stop**. The *Recordings* view lists the job and its segments. Files are HLS (fMP4)
-under `.demo/recordings/<room>/<recording_id>/master.m3u8`.
-Note: with local-disk storage the recorder has no public URL, so in-dashboard playback
-is not available. Play it with any HLS player, for example
-`npx http-server .demo/recordings -p 8081 --cors` and open
-`http://localhost:8081/<room>/<recording_id>/master.m3u8` in Safari or a hls.js page. Use an
-S3/MinIO bucket (`deploy/docker-compose.yml`) if you need playback inside the dashboard.
+**4:00 Recording (45 s).** In *Rooms*, click **Record** on a participant. Open *Recordings*: the job
+shows under *Jobs* as starting, then active, with a **Stop** button. Wait about 10 s and press **Stop**.
+The finished recording appears under *Finished* with a **▶** button per track that plays it in the
+dashboard. The files are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the
+recorder at `http://127.0.0.1:6790/recordings/` because `storage.local_base_url` is set in the demo's
+recorder config. To get an MP4: `ffmpeg -i <track>/index.m3u8 -c copy out.mp4`.
 
 **4:45 Load (15 s).** Start with `--loadtest` (or in another terminal
 `.demo/bin/tessera-loadtest --secret devsecret-devsecret-devsecret-0000 --rooms 5 --publishers 6`).

@@ -132,6 +132,11 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	metrics.HandleExtra(stats.Path, stats.Handler(rooms))
 
 	recKey, recSecret := firstKey(cfg)
+	if cfg.Recording.WSURL == "" {
+		// Recorders on the same host (the common single-node case) reach signaling over loopback.
+		cfg.Recording.WSURL = fmt.Sprintf("ws://127.0.0.1:%d", cfg.Port)
+		logger.Info("recording.ws_url not set, recorders will join via loopback", "ws_url", cfg.Recording.WSURL)
+	}
 	coordinator := recorder.NewCoordinator(recorder.CoordinatorParams{
 		Config: cfg.Recording, Rooms: rooms, Notifier: notifier,
 		APIKey: recKey, Secret: recSecret, Registry: reg, Logger: logger,

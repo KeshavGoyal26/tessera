@@ -92,6 +92,7 @@ temp_dir: $DEMO/tmp
 storage:
   kind: local
   local_root: $DEMO/recordings
+  local_base_url: http://127.0.0.1:6790/recordings
 hls:
   segment_duration: 4s
   audio_codec: opus
