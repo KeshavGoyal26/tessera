@@ -132,7 +132,21 @@ type engine struct {
 }
 
 // countingConn counts media datagrams for node statistics.
-type countingConn struct{ *net.UDPConn }
+type countingConn struct {
+	*net.UDPConn
+	bw *batchWriter // nil: write each datagram directly
+}
+
+func newCountingConn(c *net.UDPConn) countingConn {
+	return countingConn{UDPConn: c, bw: newBatchWriter(c)}
+}
+
+func (c countingConn) Close() error {
+	if c.bw != nil {
+		c.bw.close()
+	}
+	return c.UDPConn.Close()
+}
 
 func (c countingConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	n, a, err := c.UDPConn.ReadFrom(b)
@@ -159,6 +173,11 @@ func (c countingConn) ReadFromAddrPort(b []byte) (int, netip.AddrPort, error) {
 }
 
 func (c countingConn) WriteToAddrPort(b []byte, a netip.AddrPort) (int, error) {
+	if c.bw != nil {
+		if n, ok := c.bw.write(b, a); ok {
+			return n, nil
+		}
+	}
 	n, err := c.WriteToUDPAddrPort(b, a)
 	if n > 0 {
 		stats.UDPOut.Add(n)
@@ -206,8 +225,9 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 			_ = c.SetReadBuffer(rtcCfg.SocketBufferSize)
 			_ = c.SetWriteBuffer(rtcCfg.SocketBufferSize)
 		}
-		e.conns = append(e.conns, c)
-		muxes = append(muxes, ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: countingConn{c}}))
+		cc := newCountingConn(c)
+		e.conns = append(e.conns, cc)
+		muxes = append(muxes, ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: cc}))
 	}
 	if len(muxes) == 1 {
 		e.udpMux = muxes[0]
