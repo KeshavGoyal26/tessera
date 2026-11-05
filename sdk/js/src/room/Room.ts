@@ -185,6 +185,9 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   #join: JoinResponse | undefined;
   #intentional = false;
   #reconnecting = false;
+  #iceRestarting = false;
+  #netCleanup: (() => void) | undefined;
+  #disconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #bySid = new Map<string, RemoteParticipant>();
   #pendingTracks = new Map<string, PendingTrack>();
   /** Tracks to publish again after a full rejoin; survives failed rejoin attempts. */
@@ -418,6 +421,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     signal.onClose = (info) => this.#onSignalClose(info);
     const join = await signal.connect(this.#url, this.#token, { autoSubscribe: this.options.autoSubscribe ?? true });
     this.#join = join;
+    this.#watchNetwork();
     signal.startPing(join.pingInterval, join.pingTimeout);
     this.#createTransports(join.iceServers, join.clientConfiguration);
     this.sid = join.room?.sid ?? "";
@@ -444,6 +448,12 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     sub.onIceCandidate = (c) => this.#trickle(c, SignalTarget.SUBSCRIBER);
     const onState = (state: RTCPeerConnectionState) => {
       if (state === "failed" && this.#state === ConnectionState.Connected) void this.#reconnect(false);
+      // "disconnected" often heals itself; if it does not within a few seconds, restart ICE
+      // in place before it escalates to "failed".
+      clearTimeout(this.#disconnectTimer);
+      if (state === "disconnected") {
+        this.#disconnectTimer = setTimeout(() => void this.restartIce(), 3000);
+      }
     };
     pub.onConnectionState = onState;
     sub.onConnectionState = onState;
@@ -841,8 +851,16 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     signal.onClose = (info) => this.#onSignalClose(info);
     await signal.resume(this.#url, this.#token, { autoSubscribe: this.options.autoSubscribe ?? true, sid: this.localParticipant.sid });
     signal.startPing(this.#join?.pingInterval ?? 5, this.#join?.pingTimeout ?? 15);
+    // Restart ICE only when a connection is dead: a restart briefly interrupts media, and a
+    // plain signaling drop leaves healthy connections alone.
     const stale = (t: PCTransport | undefined) => !t || ["failed", "disconnected", "closed"].includes(t.pc.connectionState);
     const restart = stale(this.#pub) || (this.#sub !== undefined && stale(this.#sub) && this.#sub.pc.connectionState !== "new");
+    this.#sendSyncState(signal, restart);
+    if (restart && this.#pub) await this.#pub.negotiate({ iceRestart: true });
+    for (const e of this.#local.values()) if (e.track.isMuted) signal.sendMute(e.sid, true);
+  }
+
+  #sendSyncState(signal: SignalClient, iceRestart = false): void {
     const answer = this.#sub?.lastAnswer;
     signal.sendSyncState({
       ...(answer ? { answer: { type: answer.type, sdp: answer.sdp ?? "", id: 0 } } : {}),
@@ -851,9 +869,51 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
         .filter((e) => e.info)
         .map((e) => ({ cid: e.cid, track: e.info })),
       trackSidsSubscribed: [...this.#subscribed],
+      iceRestart,
     });
-    if (restart && this.#pub) await this.#pub.negotiate({ iceRestart: true });
-    for (const e of this.#local.values()) if (e.track.isMuted) signal.sendMute(e.sid, true);
+  }
+
+  /**
+   * Restarts ICE on both connections without leaving the room, for example after the device
+   * switched networks. The publisher restarts with a new client offer, the subscriber when the
+   * server answers the sync message with an ICE-restart offer. Tracks, subscriptions and the
+   * participant keep their identity. Falls back to a resume if signaling is down. A no-op unless
+   * connected.
+   */
+  async restartIce(): Promise<void> {
+    if (this.#state !== ConnectionState.Connected || !this.#signal || !this.#pub) return;
+    if (this.#iceRestarting) return;
+    this.#iceRestarting = true;
+    try {
+      this.#sendSyncState(this.#signal, true);
+      await this.#pub.negotiate({ iceRestart: true });
+    } catch {
+      void this.#reconnect(false);
+    } finally {
+      this.#iceRestarting = false;
+    }
+  }
+
+  #watchNetwork(): void {
+    this.#unwatchNetwork();
+    const g = globalThis as unknown as {
+      addEventListener?: (t: string, f: () => void) => void;
+      removeEventListener?: (t: string, f: () => void) => void;
+      navigator?: { connection?: { addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void } };
+    };
+    const onChange = () => void this.restartIce();
+    const conn = g.navigator?.connection;
+    g.addEventListener?.("online", onChange);
+    conn?.addEventListener?.("change", onChange);
+    this.#netCleanup = () => {
+      g.removeEventListener?.("online", onChange);
+      conn?.removeEventListener?.("change", onChange);
+    };
+  }
+
+  #unwatchNetwork(): void {
+    this.#netCleanup?.();
+    this.#netCleanup = undefined;
   }
 
   async #fullReconnect(): Promise<void> {
@@ -880,6 +940,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   // ---- teardown ----
 
   #closeSession(): void {
+    this.#unwatchNetwork();
+    clearTimeout(this.#disconnectTimer);
     this.#signal?.close();
     this.#signal = undefined;
     this.#pub?.close();

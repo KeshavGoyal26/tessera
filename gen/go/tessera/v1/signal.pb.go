@@ -2312,8 +2312,11 @@ type SyncState struct {
 	Offer *SessionDescription `protobuf:"bytes,5,opt,name=offer,proto3" json:"offer,omitempty"`
 	// Track sids the client currently has subscribed and receiving.
 	TrackSidsSubscribed []string `protobuf:"bytes,6,rep,name=track_sids_subscribed,json=trackSidsSubscribed,proto3" json:"track_sids_subscribed,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The client's network path changed: the server restarts ICE on the
+	// subscriber connection (the client restarts the publisher with its own offer).
+	IceRestart    bool `protobuf:"varint,7,opt,name=ice_restart,json=iceRestart,proto3" json:"ice_restart,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SyncState) Reset() {
@@ -2386,6 +2389,13 @@ func (x *SyncState) GetTrackSidsSubscribed() []string {
 		return x.TrackSidsSubscribed
 	}
 	return nil
+}
+
+func (x *SyncState) GetIceRestart() bool {
+	if x != nil {
+		return x.IceRestart
+	}
+	return false
 }
 
 // DataChannelInfo describes a data channel during resume.
@@ -3481,14 +3491,16 @@ const file_tessera_v1_signal_proto_rawDesc = "" +
 	"\vice_servers\x18\x01 \x03(\v2\x15.tessera.v1.ICEServerR\n" +
 	"iceServers\x12R\n" +
 	"\x14client_configuration\x18\x02 \x01(\v2\x1f.tessera.v1.ClientConfigurationR\x13clientConfiguration\x12=\n" +
-	"\vparticipant\x18\x03 \x01(\v2\x1b.tessera.v1.ParticipantInfoR\vparticipant\"\xfe\x02\n" +
+	"\vparticipant\x18\x03 \x01(\v2\x1b.tessera.v1.ParticipantInfoR\vparticipant\"\x9f\x03\n" +
 	"\tSyncState\x126\n" +
 	"\x06answer\x18\x01 \x01(\v2\x1e.tessera.v1.SessionDescriptionR\x06answer\x12B\n" +
 	"\fsubscription\x18\x02 \x01(\v2\x1e.tessera.v1.UpdateSubscriptionR\fsubscription\x12I\n" +
 	"\x0epublish_tracks\x18\x03 \x03(\v2\".tessera.v1.TrackPublishedResponseR\rpublishTracks\x12@\n" +
 	"\rdata_channels\x18\x04 \x03(\v2\x1b.tessera.v1.DataChannelInfoR\fdataChannels\x124\n" +
 	"\x05offer\x18\x05 \x01(\v2\x1e.tessera.v1.SessionDescriptionR\x05offer\x122\n" +
-	"\x15track_sids_subscribed\x18\x06 \x03(\tR\x13trackSidsSubscribed\"i\n" +
+	"\x15track_sids_subscribed\x18\x06 \x03(\tR\x13trackSidsSubscribed\x12\x1f\n" +
+	"\vice_restart\x18\a \x01(\bR\n" +
+	"iceRestart\"i\n" +
 	"\x0fDataChannelInfo\x12\x14\n" +
 	"\x05label\x18\x01 \x01(\tR\x05label\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\rR\x02id\x120\n" +

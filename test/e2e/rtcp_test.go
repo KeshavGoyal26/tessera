@@ -236,6 +236,51 @@ func TestResumeKeepsTracks(t *testing.T) {
 	}
 }
 
+// TestICERestartKeepsMedia: a SyncState with ice_restart makes the server restart ICE on the
+// subscriber connection (new credentials in the next offer) while the track, the participant
+// and the media flow stay intact.
+func TestICERestartKeepsMedia(t *testing.T) {
+	s := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	pubC := connect(t, s, "icer", "pub")
+	_, vi := publishAV(t, ctx, pubC)
+	sub := connect(t, s, "icer", "sub")
+	rt, err := client.WaitTrack(ctx, sub, vi.Sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := sub.LocalParticipant().Sid
+	receive(t, rt, true, 20)
+	if !client.RequestICERestart(sub) {
+		t.Fatal("could not send the restart request")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for client.SubscriberICERestarts(sub) == 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if client.SubscriberICERestarts(sub) == 0 {
+		t.Fatal("server did not send an ICE-restart offer")
+	}
+	// Media still arrives on the same track after the restart (a short loss window is allowed).
+	buf := make([]byte, 1500)
+	end := time.Now().Add(3 * time.Second)
+	n := 0
+	for time.Now().Before(end) && n < 30 {
+		if _, err := rt.Read(buf); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	if n < 30 {
+		t.Fatalf("only %d packets after ICE restart", n)
+	}
+	p, err := s.Manager.GetParticipant(ctx, "icer", "sub")
+	if err != nil || p.Sid != sid {
+		t.Fatalf("participant changed: %v %v", p, err)
+	}
+}
+
 func TestDuplicateIdentityKicksFirst(t *testing.T) {
 	s := startServer(t)
 	first := client.New(client.Options{AutoSubscribe: true, SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger(), DisableResume: true})

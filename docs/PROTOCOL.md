@@ -153,9 +153,9 @@ sequenceDiagram
   else ICE failed or disconnected
     C->>S: offer (PUBLISHER, ICE restart)
     S-->>C: answer
-    S-->>C: offer (SUBSCRIBER, ICE restart), on request via sync_state
+    C->>S: sync_state(..., ice_restart=true)
+    S-->>C: offer (SUBSCRIBER, ICE restart)
     C->>S: answer
-    C->>S: sync_state(...)
   end
   S-->>C: update / offers to reconcile differences
 ```
@@ -169,6 +169,17 @@ sequenceDiagram
   `leave{action=RECONNECT}` (rejoin, possibly another node) during drains.
 - A second join with the same identity disconnects the first session with
   `DISCONNECT_REASON_DUPLICATE_IDENTITY` (close code 4009).
+
+#### ICE restart without a rejoin
+
+When the device changes networks while the WebSocket is still up (the browser fires `online` or
+`navigator.connection` `change`, or a PeerConnection stays `disconnected` for 3 s), the SDK calls
+`Room.restartIce()`: it sends `sync_state{ice_restart=true}` and a PUBLISHER offer created with
+`iceRestart`. The server answers the offer and, on `ice_restart`, restarts ICE on the SUBSCRIBER
+connection (new offer with fresh credentials, no media renegotiation). The participant sid, the
+published tracks, subscriptions and down tracks are untouched, and no `reconnecting` state is
+entered. A `sync_state` without the flag never restarts ICE, so a plain signaling resume does not
+interrupt healthy media.
 
 ### 2.7 Permissions
 

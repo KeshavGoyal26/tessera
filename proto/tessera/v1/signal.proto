@@ -263,6 +263,9 @@ message SyncState {
   SessionDescription offer = 5;
   // Track sids the client currently has subscribed and receiving.
   repeated string track_sids_subscribed = 6;
+  // The client's network path changed: the server restarts ICE on the
+  // subscriber connection (the client restarts the publisher with its own offer).
+  bool ice_restart = 7;
 }
 
 // DataChannelInfo describes a data channel during resume.

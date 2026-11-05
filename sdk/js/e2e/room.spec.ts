@@ -159,6 +159,73 @@ test("the client reconnects after a network outage and media resumes", async ({ 
   }
 });
 
+// A network change must not drop the participant: ICE restarts in place on both connections,
+// the participant keeps its sid and published tracks, and no reconnect cycle happens. (The
+// outage itself cannot be simulated in every browser, so the restart is triggered through the
+// same entry point as the `online` / `navigator.connection` change handlers.)
+test("ICE restart on network change keeps the session and media", async ({ browser }) => {
+  const room = `e2e-ice-${Date.now()}`;
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  await ctxA.addInitScript(() => {
+    const w = window as unknown as { __iceRestarts: number; __pcs: number };
+    w.__iceRestarts = 0;
+    w.__pcs = 0;
+    const Orig = window.RTCPeerConnection;
+    const createOffer = Orig.prototype.createOffer as (this: RTCPeerConnection, o?: RTCOfferOptions) => Promise<RTCSessionDescriptionInit>;
+    Orig.prototype.createOffer = function (this: RTCPeerConnection, o?: RTCOfferOptions) {
+      if (o?.iceRestart) w.__iceRestarts++;
+      return createOffer.call(this, o);
+    } as typeof Orig.prototype.createOffer;
+    window.RTCPeerConnection = new Proxy(Orig, {
+      construct(target, args) {
+        w.__pcs++;
+        return Reflect.construct(target, args) as RTCPeerConnection;
+      },
+    });
+  });
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  type W = { room: { localParticipant: { sid: string }; restartIce(): Promise<void>; on(e: string, f: () => void): void }; __iceRestarts: number; __pcs: number; __reconnecting: number };
+  const frames = (p: typeof a, id: string) =>
+    p.evaluate((i) => document.querySelector<HTMLVideoElement>(`#tile-${i} video`)?.currentTime ?? 0, id);
+  try {
+    await join(a, room, "alice");
+    await join(b, room, "bob");
+    await a.click("#cam");
+    await expectVideoPlaying(b, "alice");
+    await b.click("#cam");
+    await expectVideoPlaying(a, "bob");
+    const before = await a.evaluate(() => {
+      const w = window as unknown as W;
+      w.__reconnecting = 0;
+      w.room.on("reconnecting", () => w.__reconnecting++);
+      return { sid: w.room.localParticipant.sid, pcs: w.__pcs };
+    });
+
+    // Alice restarts ICE (publisher by offer, subscriber by the server's restart offer).
+    await a.evaluate(() => (window as unknown as W).room.restartIce());
+    await expect.poll(() => a.evaluate(() => (window as unknown as W).__iceRestarts), { timeout: 10_000 }).toBeGreaterThan(0);
+
+    // Media keeps flowing in both directions after the restart.
+    const tB = await frames(b, "alice");
+    const tA = await frames(a, "bob");
+    await expect.poll(() => frames(b, "alice"), { timeout: 20_000 }).toBeGreaterThan(tB + 1);
+    await expect.poll(() => frames(a, "bob"), { timeout: 20_000 }).toBeGreaterThan(tA + 1);
+
+    // Same participant, same connections, no reconnect cycle, still connected.
+    const after = await a.evaluate(() => {
+      const w = window as unknown as W;
+      return { sid: w.room.localParticipant.sid, pcs: w.__pcs, reconnecting: w.__reconnecting };
+    });
+    expect(after).toEqual({ sid: before.sid, pcs: before.pcs, reconnecting: 0 });
+    await expect(a.locator("#status")).toHaveText("connected");
+  } finally {
+    await ctxA.close();
+    await ctxB.close();
+  }
+});
+
 test("screen share is published and shown to the other participant", async ({ browser, browserName }) => {
   test.skip(browserName !== "chromium", "automatic screen selection is only configured for Chromium");
   const room = `e2e-screen-${Date.now()}`;

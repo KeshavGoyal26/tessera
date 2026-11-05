@@ -130,6 +130,9 @@ type client struct {
 	url       string
 	token     string
 	dcs       map[string]*webrtc.DataChannel
+
+	subUfrag    string // ICE ufrag of the last subscriber offer
+	subRestarts atomic.Int32
 }
 
 // New creates a client.
@@ -494,6 +497,14 @@ func (c *client) handle(msg *tesserav1.SignalResponse) {
 }
 
 func (c *client) handleOffer(sd *tesserav1.SessionDescription) {
+	if u := iceUfrag(sd.GetSdp()); u != "" {
+		c.mu.Lock()
+		if c.subUfrag != "" && c.subUfrag != u {
+			c.subRestarts.Add(1)
+		}
+		c.subUfrag = u
+		c.mu.Unlock()
+	}
 	if err := c.sub.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sd.GetSdp()}); err != nil {
 		c.opts.Logger.Warn("client: subscriber offer", "err", err)
 		return
@@ -880,4 +891,32 @@ func DropConnection(cl Client) {
 		c.wsMu.Unlock()
 		_ = ws.CloseNow()
 	}
+}
+
+// iceUfrag returns the first a=ice-ufrag value of an SDP.
+func iceUfrag(sdp string) string {
+	for _, l := range strings.Split(sdp, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "a=ice-ufrag:"); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// RequestICERestart tells the server the network path changed (SyncState with ice_restart); it
+// restarts ICE on the subscriber connection. It reports false for a client that is not connected.
+func RequestICERestart(cl Client) bool {
+	c, ok := cl.(*client)
+	if !ok {
+		return false
+	}
+	return c.send(&tesserav1.SignalRequest{Message: &tesserav1.SignalRequest_SyncState{SyncState: &tesserav1.SyncState{IceRestart: true}}}) == nil
+}
+
+// SubscriberICERestarts counts subscriber offers whose ICE credentials changed (tests).
+func SubscriberICERestarts(cl Client) int {
+	if c, ok := cl.(*client); ok {
+		return int(c.subRestarts.Load())
+	}
+	return 0
 }

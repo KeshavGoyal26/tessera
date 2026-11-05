@@ -574,8 +574,17 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 		p.mu.Unlock()
 		p.room.broadcastParticipant(p)
 	case *tesserav1.SignalRequest_SyncState:
-		// Resume with connected PCs: nothing to reconcile in this version
-		// beyond re-sending state.
+		// ice_restart: the client's network path changed, so restart ICE on the
+		// subscriber connection (the publisher restarts through a client offer).
+		// Without the flag media keeps flowing undisturbed.
+		if m.SyncState.GetIceRestart() {
+			p.mu.Lock()
+			sub := p.sub
+			p.mu.Unlock()
+			if sub != nil {
+				sub.Negotiate(true)
+			}
+		}
 		p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Update{Update: &tesserav1.ParticipantUpdate{Participants: p.visibleOthers()}}})
 	}
 	p.respond(id, tesserav1.RequestResponse_REASON_OK, "")
