@@ -1,25 +1,26 @@
 # Tessera web demo
 
 Browser client built with [vite](https://vite.dev) and the local [`@tessera/client`](../../sdk/js)
-SDK: join form, responsive video grid, microphone / camera / screen-share toggles, device
-pickers, per-view quality selector, speaker highlight, connection quality badge and a network
-stats overlay (bitrate, resolution, fps, loss, jitter, RTT).
+SDK: landing card (name and room), dark responsive video grid, name labels, mic and camera
+muted icons, active speaker ring, connection quality badge, control bar (mic, camera, screen
+share, receive-quality selector, stats overlay, leave) and a copy-invite-link button.
 
 ## Run
 
-```sh
-# 1. a server and a token
-go run ./cmd/tessera --dev
-go run ./cmd/tessera create-token --room demo --identity alice   # run again with --identity bob
+Easiest: `scripts/demo.sh` from the repository root (see [docs/DEMO.md](../../docs/DEMO.md)).
 
-# 2. the demo
+By hand:
+
+```sh
+go run ./cmd/tessera --dev          # serves GET /dev/token for the demo
 (cd sdk/js && npm ci && npm run build)
 cd examples/web-demo && npm ci
 npm run dev       # http://localhost:5173
 npm run build     # type-check and bundle to dist/
 ```
 
-Enter `ws://localhost:7880` and a token, or open
-`http://localhost:5173/?url=ws://localhost:7880&token=<jwt>&autojoin=1`. Tokens for real
-deployments come from your backend (see [examples/java-spring](../java-spring)).
-`window.room` exposes the `Room` for debugging.
+Enter a name and room and press Join: the page fetches a token from `/dev/token` on the same
+host (port 7880). To use another server, open *Advanced* and enter its URL and a token (tokens
+for real deployments come from your backend, see [examples/java-spring](../java-spring)).
+Query parameters: `?room=&name=` prefill the card, `&autojoin=1` joins immediately,
+`&url=&token=` fill the advanced fields. `window.room` exposes the `Room` for debugging.
