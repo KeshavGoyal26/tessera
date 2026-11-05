@@ -55,7 +55,7 @@ listener URLs; `/stats` is appended, see `docs/RECORDING.md`). Unset = no record
 ## Development
 
 ```bash
-cd web/admin && npm ci && npm run dev    # vite dev server proxies /admin/api to localhost:6789
+cd web/admin && npm ci && npm run dev    # vite dev server proxies /admin/api to localhost:7880 (tessera --dev)
 npm run build                            # writes ../../pkg/dashboard/dist (commit the result)
 ```
 

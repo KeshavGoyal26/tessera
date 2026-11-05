@@ -4,5 +4,5 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: './',
   build: { outDir: '../../pkg/dashboard/dist', emptyOutDir: true, chunkSizeWarningLimit: 700 },
-  server: { proxy: { '/admin/api': 'http://localhost:6789' } },
+  server: { proxy: { '/admin/api': 'http://localhost:7880' } },
 });
