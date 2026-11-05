@@ -1,0 +1,66 @@
+goos: linux
+goarch: amd64
+pkg: github.com/KeshavGoyal26/tessera/pkg/rtc
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkDownTrackWriteRTP-4      	  184834	      2135 ns/op	 476.32 MB/s	    468355 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTP-4      	  175758	      2081 ns/op	 488.81 MB/s	    480638 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTP-4      	  139244	      2174 ns/op	 467.81 MB/s	    459990 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTP-4      	  172754	      2009 ns/op	 506.33 MB/s	    497868 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTP-4      	  229276	      1599 ns/op	 636.04 MB/s	    625407 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTP-4      	  181998	      1700 ns/op	 598.21 MB/s	    588210 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	 1000000	       348.5 ns/op	2918.36 MB/s	   2869576 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	 1000000	       350.8 ns/op	2898.83 MB/s	   2850373 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	  990757	       346.4 ns/op	2936.33 MB/s	   2887249 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	 1000000	       355.3 ns/op	2862.53 MB/s	   2814682 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	  799702	       442.4 ns/op	2298.86 MB/s	   2260436 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkDownTrackWriteRTPGCM-4   	  801866	       425.0 ns/op	2393.01 MB/s	   2353004 pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  168744	      2118 ns/op	    472205 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  162786	      2162 ns/op	    462629 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  168799	      2124 ns/op	    470757 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  166465	      2112 ns/op	    473390 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  211903	      2063 ns/op	    484627 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1-4       	  213795	      2006 ns/op	    498392 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   21098	     19164 ns/op	    521798 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   22590	     16000 ns/op	    625006 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   20683	     19084 ns/op	    524011 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   22566	     18384 ns/op	    543941 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   18316	     18028 ns/op	    554679 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/10-4      	   15970	     21771 ns/op	    459318 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    1737	    207225 ns/op	    482568 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    1687	    212749 ns/op	    470037 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    2023	    174585 ns/op	    572787 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    2066	    172286 ns/op	    580431 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    1945	    178168 ns/op	    561268 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/100-4     	    1680	    247702 ns/op	    403712 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     139	   2756225 ns/op	    362815 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     153	   2252288 ns/op	    443993 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     128	   2709501 ns/op	    369072 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     144	   2497689 ns/op	    400370 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     140	   2500698 ns/op	    399888 egress-pkts/s	       0 B/op	       0 allocs/op
+BenchmarkReceiverFanout/1000-4    	     154	   2351449 ns/op	    425270 egress-pkts/s	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/KeshavGoyal26/tessera/pkg/rtc	13.288s
+goos: linux
+goarch: amd64
+pkg: github.com/KeshavGoyal26/tessera/pkg/rtc/buffer
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkBufferWrite-4   	 4568838	        90.88 ns/op	11179.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkBufferWrite-4   	 3706461	        96.60 ns/op	10517.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkBufferWrite-4   	 3570496	       101.3 ns/op	10031.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkBufferWrite-4   	 3560440	       106.1 ns/op	9575.75 MB/s	       0 B/op	       0 allocs/op
+BenchmarkBufferWrite-4   	 3881552	        95.36 ns/op	10654.26 MB/s	       0 B/op	       0 allocs/op
+BenchmarkBufferWrite-4   	 4214017	        84.85 ns/op	11973.55 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/KeshavGoyal26/tessera/pkg/rtc/buffer	2.248s
+goos: linux
+goarch: amd64
+pkg: github.com/KeshavGoyal26/tessera/pkg/rtc/simulcast
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkForwarderGetTranslation-4   	 8029576	        47.15 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForwarderGetTranslation-4   	 7629789	        46.75 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForwarderGetTranslation-4   	 6731127	        55.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForwarderGetTranslation-4   	 5928801	        58.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForwarderGetTranslation-4   	 6007687	        56.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForwarderGetTranslation-4   	 7033819	        48.23 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/KeshavGoyal26/tessera/pkg/rtc/simulcast	2.146s
