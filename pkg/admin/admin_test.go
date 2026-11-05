@@ -266,6 +266,13 @@ func TestGrantTable(t *testing.T) {
 	if w := post(s, rs+"ListParticipants", token(t, g), "application/json", `{"room":"r1"}`); w.Code != 403 {
 		t.Errorf("scoped admin on other room: %d", w.Code)
 	}
+	g = auth.RoomGrant{RoomCreate: true, Room: "other"}
+	if w := post(s, rs+"DeleteRoom", token(t, g), "application/json", `{"room":"tmp"}`); w.Code != 403 {
+		t.Errorf("scoped room_create deleting another room: %d", w.Code)
+	}
+	if w := post(s, rs+"CreateRoom", token(t, g), "application/json", `{"name":"tmp"}`); w.Code != 403 {
+		t.Errorf("scoped room_create creating another room: %d", w.Code)
+	}
 	g = auth.RoomGrant{RoomRecord: true, Room: "r1"}
 	if w := post(s, rc+"StopRecording", token(t, g), "application/json", `{"recordingId":"REC_2"}`); w.Code != 403 {
 		t.Errorf("scoped record stop on foreign recording: %d", w.Code)

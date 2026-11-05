@@ -45,9 +45,13 @@ func denied(grant string) error {
 	return errs.New(errs.CodePermissionDenied, "token lacks the %s grant", grant)
 }
 
-func needCreate(g *auth.RoomGrant) error {
+// needCreate requires room_create; a grant scoped to a room only covers it.
+func needCreate(g *auth.RoomGrant, room string) error {
 	if !g.RoomCreate {
 		return denied("room_create")
+	}
+	if g.Room != "" && g.Room != room {
+		return errs.New(errs.CodePermissionDenied, "token is scoped to room %q", g.Room)
 	}
 	return nil
 }
@@ -93,7 +97,7 @@ func buildRoutes(p Params) map[string]*route {
 	rc := RecordingServiceName + "/"
 	wk := RecorderWorkerServiceName + "/"
 
-	rpc(m, rs+"CreateRoom", func(g *auth.RoomGrant, _ *tesserav1.CreateRoomRequest) error { return needCreate(g) },
+	rpc(m, rs+"CreateRoom", func(g *auth.RoomGrant, r *tesserav1.CreateRoomRequest) error { return needCreate(g, r.Name) },
 		func(ctx context.Context, r *tesserav1.CreateRoomRequest) (*tesserav1.CreateRoomResponse, error) {
 			if r.Name == "" {
 				return nil, errs.New(errs.CodeInvalidArgument, "name is required")
@@ -118,7 +122,7 @@ func buildRoutes(p Params) map[string]*route {
 			}
 			return &tesserav1.ListRoomsResponse{Rooms: out}, nil
 		})
-	rpc(m, rs+"DeleteRoom", func(g *auth.RoomGrant, _ *tesserav1.DeleteRoomRequest) error { return needCreate(g) },
+	rpc(m, rs+"DeleteRoom", func(g *auth.RoomGrant, r *tesserav1.DeleteRoomRequest) error { return needCreate(g, r.Room) },
 		func(ctx context.Context, r *tesserav1.DeleteRoomRequest) (*tesserav1.DeleteRoomResponse, error) {
 			if r.Room == "" {
 				return nil, errs.New(errs.CodeInvalidArgument, "room is required")
