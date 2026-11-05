@@ -8,7 +8,7 @@ and by sharding rooms across independent nodes in your own routing layer. Measur
 
 | Port | Proto | Purpose | Expose |
 |------|-------|---------|--------|
-| 7880 | TCP | HTTP + WebSocket signalling, admin API (`/twirp`-style admin routes, JWT protected) | via TLS reverse proxy only |
+| 7880 | TCP | HTTP + WebSocket signalling, admin API (JWT protected, see PROTOCOL.md) | via TLS reverse proxy only |
 | 7882 | UDP | WebRTC media (single muxed port, `rtc.udp_port`) | public, open in firewall / security group |
 | 7881 | TCP | ICE-TCP fallback (`rtc.tcp_port`); the server starts UDP-only if it cannot bind it | public, optional |
 | 3478 UDP/TCP, 5349 TCP | | Embedded TURN, TURNS (only if `turn.enabled`) | public |
@@ -38,8 +38,8 @@ Check with the browser's `chrome://webrtc-internals` that the selected candidate
 ## 3. TLS
 
 The signalling listener speaks plain HTTP/WebSocket. Terminate TLS in front (nginx, Caddy, an ALB/ingress)
-and proxy `wss://` to `:7880` with WebSocket upgrade, `proxy_read_timeout` above `signal.ping_timeout`
-(default 3x ping interval) and `proxy_http_version 1.1`. Browsers require HTTPS/WSS for `getUserMedia`
+and proxy `wss://` to `:7880` with WebSocket upgrade, `proxy_read_timeout` above `signal.ping_timeout` (default 15 s)
+and `proxy_http_version 1.1`. Browsers require HTTPS/WSS for `getUserMedia`
 except on `localhost`. Media is always DTLS-SRTP and needs no certificate setup. TURNS (`turn.tls_port`)
 requires `turn.cert_file` and `turn.key_file` for the TURN domain.
 
