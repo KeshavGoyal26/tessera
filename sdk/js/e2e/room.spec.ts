@@ -57,7 +57,13 @@ test("a bad token is rejected with a visible error", async ({ page }) => {
   await expect(page.locator("#status")).toHaveText("disconnected");
 });
 
-test("subscriber layer selection changes the received resolution", async ({ browser }) => {
+test("subscriber layer selection changes the received resolution", async ({ browser, browserName }) => {
+  // Observed in CI (stats dump of run 73): Playwright's Linux WebKit build ignores
+  // scaleResolutionDownBy and maxBitrate in sendEncodings. It sends one 1280x720 stream on the
+  // first rid ("q", about 1 Mbit/s) and nothing on "h" and "f", so there is no lower layer to
+  // select. Media still flows (the server forwards that single layer); Safari on macOS and iOS
+  // has to be checked on real devices.
+  test.skip(browserName === "webkit", "Linux WebKit does not produce simulcast layers of different sizes");
   const room = `e2e-layers-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
