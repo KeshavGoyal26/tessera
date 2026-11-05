@@ -38,6 +38,9 @@ export async function diagnose(page: Page, label: string): Promise<string> {
       const lines: string[] = [];
       lines.push(`error: ${document.querySelector("#error")?.textContent ?? ""}`);
       lines.push(`status: ${document.querySelector("#status")?.textContent ?? ""}`);
+      lines.push(`toast: ${document.querySelector("#toast")?.textContent ?? ""}`);
+      lines.push(`gum: ${typeof navigator.mediaDevices?.getUserMedia} ua=${navigator.userAgent.slice(-40)}`);
+      lines.push(`tiles: ${[...document.querySelectorAll("[id^=tile-]")].map((t) => t.id + ":" + t.className).join(" | ")}`);
       for (const v of document.querySelectorAll<HTMLVideoElement>("video"))
         lines.push(`video ${v.closest("[id]")?.id}: ${v.videoWidth}x${v.videoHeight} ready=${v.readyState} paused=${v.paused} err=${v.error?.message ?? ""}`);
       const pcs = (window as unknown as { __allPcs?: RTCPeerConnection[] }).__allPcs ?? [];
@@ -61,7 +64,17 @@ export async function diagnose(page: Page, label: string): Promise<string> {
   return `--- ${label} ---\n${out}`;
 }
 
+const joined = new Set<Page>();
+const pageLogs = new WeakMap<Page, string[]>();
+
 export async function join(page: Page, room: string, identity: string): Promise<void> {
+  joined.add(page);
+  const logs: string[] = [];
+  pageLogs.set(page, logs);
+  page.on("console", (m) => {
+    if (m.type() === "error" || m.type() === "warning") logs.push(`console.${m.type()}: ${m.text()}`);
+  });
+  page.on("pageerror", (e) => logs.push(`pageerror: ${e.message}`));
   await page.addInitScript(TRACK_PCS);
   const token = mintToken(room, identity);
   const q = new URLSearchParams({ url: SERVER, token, autojoin: "1" });
@@ -74,7 +87,11 @@ export async function expectVideoPlaying(page: Page, identity: string): Promise<
   try {
     await waitVideo(page, identity);
   } catch (err) {
-    console.log(await diagnose(page, `waiting for video of ${identity}`));
+    for (const p of joined) {
+      if (p.isClosed()) continue;
+      console.log(await diagnose(p, `${p === page ? "waiting page" : "other page"} (video of ${identity})`));
+      console.log((pageLogs.get(p) ?? []).slice(-15).join("\n"));
+    }
     throw err;
   }
 }

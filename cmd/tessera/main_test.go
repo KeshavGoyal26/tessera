@@ -129,6 +129,6 @@ func TestDevTokenEndpoint(t *testing.T) {
 			}
 		}
 		cancel()
-		<-done
+		_ = <-done
 	}
 }

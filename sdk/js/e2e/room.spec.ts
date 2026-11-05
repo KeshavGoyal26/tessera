@@ -243,7 +243,7 @@ test("ICE restart on network change keeps the session and media", async ({ brows
 });
 
 test("screen share is published and shown to the other participant", async ({ browser, browserName }) => {
-  test.skip(browserName === "webkit", "WebKit has no way to auto-select a screen in headless Playwright");
+  test.skip(browserName !== "chromium", "only Chromium can auto-select a screen to share under Playwright (Firefox and WebKit show a picker)");
   const room = `e2e-screen-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
@@ -252,6 +252,18 @@ test("screen share is published and shown to the other participant", async ({ br
   try {
     await join(a, room, "alice");
     await join(b, room, "bob");
+    // Screen capture only emits frames when the screen changes; keep something moving.
+    await a.evaluate(() => {
+      const d = document.createElement("div");
+      d.style.cssText = "position:fixed;right:0;bottom:0;width:40px;height:40px;z-index:9999";
+      document.body.append(d);
+      let n = 0;
+      const tick = () => {
+        d.style.background = `hsl(${(n += 7) % 360} 90% 50%)`;
+        requestAnimationFrame(tick);
+      };
+      tick();
+    });
     await a.click("#screen");
     await expectVideoPlaying(b, "alice-screen");
     await a.click("#screen");
