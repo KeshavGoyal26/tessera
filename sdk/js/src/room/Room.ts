@@ -26,6 +26,7 @@ import type {
 import { PCTransport } from "../rtc/PCTransport.js";
 import { VideoPresets, computeSimulcastEncodings } from "../rtc/simulcast.js";
 import type { VideoPreset } from "../rtc/simulcast.js";
+import { msidForMid } from "../rtc/sdp.js";
 import { StatsSampler } from "../rtc/stats.js";
 import type { StatsSummary } from "../rtc/stats.js";
 import { SignalClient } from "../signal/SignalClient.js";
@@ -660,13 +661,18 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
 
   #onTrack(ev: RTCTrackEvent): void {
     const stream = ev.streams[0];
-    const pending: PendingTrack = { track: ev.track, receiver: ev.receiver, streamId: stream?.id ?? "" };
-    this.#pendingTracks.set(ev.track.id, pending);
+    // The server's track SID is the msid track id. Chromium copies it into
+    // MediaStreamTrack.id, Firefox does not, so read it from the remote SDP.
+    const msid = msidForMid(this.#sub?.pc.remoteDescription?.sdp, ev.transceiver?.mid ?? null);
+    const sid = msid?.trackId ?? ev.track.id;
+    const pending: PendingTrack = { track: ev.track, receiver: ev.receiver, streamId: msid?.streamId ?? stream?.id ?? "" };
+    this.#pendingTracks.set(sid, pending);
     stream?.addEventListener("removetrack", (e) => {
+      if (e.track !== ev.track) return;
       const p = this.#bySid.get(pending.streamId);
-      const pub = p?.trackPublications.get(e.track.id);
+      const pub = p?.trackPublications.get(sid);
       if (p && pub) this.#unsubscribe(pub, p);
-      this.#pendingTracks.delete(e.track.id);
+      this.#pendingTracks.delete(sid);
     });
     this.#drainPending();
   }
