@@ -276,9 +276,13 @@ func (e *estimator) update(now time.Time) {
 			dt := now.Sub(e.lastIncr).Seconds()
 			est *= math.Pow(1.08, math.Min(dt, 1))
 		}
-		// Never run far ahead of what the receiver actually acknowledges.
-		if e.ackRate > 0 && est > 1.5*e.ackRate+100_000 {
-			est = 1.5*e.ackRate + 100_000
+		// Do not grow far beyond what the receiver actually acknowledges. The
+		// bound only stops increases: an application-limited subscriber (audio
+		// only, or all video paused) acknowledges little, and pulling the
+		// estimate down to that would pause its video for good, because the
+		// acknowledged rate can then never rise again (no probing yet).
+		if limit := 1.5*e.ackRate + 100_000; e.ackRate > 0 && est > limit {
+			est = math.Max(e.estimate, limit)
 		}
 	}
 	e.lastIncr = now

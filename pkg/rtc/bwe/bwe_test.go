@@ -117,3 +117,28 @@ func TestEstimatorReactsToLoss(t *testing.T) {
 		t.Fatalf("estimate %d did not drop from %d under 40%% loss", e.Estimate(), start)
 	}
 }
+
+// An application-limited subscriber (here: audio only, ~50 kbit/s acknowledged) must
+// not drag the estimate below its starting value: the allocator would otherwise pause
+// all video, and with video paused the acknowledged rate could never rise again.
+func TestEstimatorHoldsWhenApplicationLimited(t *testing.T) {
+	e := NewEstimator(Config{}).(*estimator)
+	start := e.Estimate()
+	now := time.Now()
+	seq := uint16(0)
+	for i := range 60 {
+		base := seq
+		fb := &rtcp.TransportLayerCC{BaseSequenceNumber: base, PacketStatusCount: 5, ReferenceTime: uint32(i * 5)}
+		for s := range 5 {
+			e.OnPacketSent(seq, 120, int64(i*300+s*20)*1e6, false)
+			seq++
+			fb.RecvDeltas = append(fb.RecvDeltas, &rtcp.RecvDelta{Type: rtcp.TypeTCCPacketReceivedSmallDelta, Delta: 20_000})
+		}
+		fb.PacketChunks = []rtcp.PacketStatusChunk{&rtcp.RunLengthChunk{PacketStatusSymbol: rtcp.TypeTCCPacketReceivedSmallDelta, RunLength: 5}}
+		now = now.Add(300 * time.Millisecond)
+		e.OnTransportFeedback(fb, now)
+	}
+	if got := e.Estimate(); got < start {
+		t.Fatalf("estimate fell from %d to %d with no congestion signal", start, got)
+	}
+}
