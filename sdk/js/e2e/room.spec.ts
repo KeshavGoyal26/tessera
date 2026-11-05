@@ -68,8 +68,13 @@ test("subscriber layer selection changes the received resolution", async ({ brow
     await a.click("#cam");
     await expectVideoPlaying(b, "alice");
     const width = () => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
+    // The top layer is the publisher's capture size, which depends on the browser's fake camera
+    // (640 px in Chromium, smaller in Firefox), so compare against what Alice captures.
+    const captured = () => a.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
+    await expect.poll(captured, { timeout: 10_000 }).toBeGreaterThan(0);
+    const full = Math.min(640, await captured());
     await b.selectOption("#quality", "high");
-    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThanOrEqual(640);
+    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThanOrEqual(full);
     const high = await width();
     await b.selectOption("#quality", "low");
     await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
@@ -79,10 +84,9 @@ test("subscriber layer selection changes the received resolution", async ({ brow
   }
 });
 
-// The server does not forward data packets yet (WP1 M2: transport.SendDataPacket is a stub).
-// Enable with TESSERA_E2E_DATA=1 once it does.
+// The server drops data packets for a subscriber whose data channel is not open yet (no
+// buffering), so the sender repeats until the first packet arrives and the test then checks it.
 test("data packets are delivered between participants", async ({ browser }) => {
-  test.skip(process.env.TESSERA_E2E_DATA !== "1", "server data-packet forwarding is not implemented yet (WP1 M2); set TESSERA_E2E_DATA=1 to run");
   const room = `e2e-data-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
@@ -99,18 +103,30 @@ test("data packets are delivered between participants", async ({ browser }) => {
         (window as unknown as { got: string[] }).got.push(`${who?.identity}:${topic}:${new TextDecoder().decode(payload)}`),
       );
     });
-    await a.evaluate(async () => {
-      const r = (window as unknown as { room: { localParticipant: { publishData(p: Uint8Array, o: object): Promise<void> } } }).room;
-      await r.localParticipant.publishData(new TextEncoder().encode("hello"), { topic: "chat" });
-    });
-    await expect.poll(() => b.evaluate(() => (window as unknown as { got: string[] }).got), { timeout: 15_000 }).toEqual(["alice:chat:hello"]);
+    const got = () => b.evaluate(() => (window as unknown as { got: string[] }).got);
+    await expect
+      .poll(
+        async () => {
+          await a.evaluate(async () => {
+            const r = (window as unknown as { room: { localParticipant: { publishData(p: Uint8Array, o: object): Promise<void> } } }).room;
+            await r.localParticipant.publishData(new TextEncoder().encode("hello"), { topic: "chat" });
+          });
+          return (await got()).length;
+        },
+        { timeout: 15_000, intervals: [500] },
+      )
+      .toBeGreaterThan(0);
+    expect((await got())[0]).toBe("alice:chat:hello");
   } finally {
     await ctxA.close();
     await ctxB.close();
   }
 });
 
-test("the client reconnects after a network outage and media resumes", async ({ browser }) => {
+test("the client reconnects after a network outage and media resumes", async ({ browser, browserName }) => {
+  // Observed in CI: context.setOffline(true) leaves Firefox's WebSocket and WebRTC traffic
+  // untouched (status stays "connected" for 30 s), so the outage cannot be simulated there.
+  test.skip(browserName === "firefox", "Playwright setOffline does not interrupt WebSocket/WebRTC in Firefox");
   const room = `e2e-reconnect-${Date.now()}`;
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
