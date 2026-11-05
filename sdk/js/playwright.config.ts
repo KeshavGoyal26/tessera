@@ -64,5 +64,10 @@ export default defineConfig({
         },
       },
     },
+    {
+      // WebKit stands in for Safari. Playwright's WebKit build serves mock capture devices.
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
   ],
 });

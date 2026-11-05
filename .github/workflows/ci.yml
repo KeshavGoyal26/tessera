@@ -112,9 +112,13 @@ jobs:
         run: mvn -B -ntp verify
 
   e2e:
-    name: e2e (browsers against tessera --dev)
+    name: e2e (${{ matrix.browser }} against tessera --dev)
     runs-on: ubuntu-latest
     needs: [js]
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -132,14 +136,14 @@ jobs:
         run: |
           (cd sdk/js && npm ci && npm run build)
           (cd examples/web-demo && npm ci)
-          cd sdk/js && npx playwright install --with-deps chromium firefox
+          cd sdk/js && npx playwright install --with-deps ${{ matrix.browser }}
       - name: Playwright
         working-directory: sdk/js
-        run: npx playwright test
+        run: npx playwright test --project=${{ matrix.browser }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: sdk/js/test-results
 
   recorder:
