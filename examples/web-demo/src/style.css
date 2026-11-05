@@ -461,3 +461,12 @@ label.check small {
     animation: none;
   }
 }
+
+.switch {
+  font-size: 0.8rem;
+  margin: 0;
+  text-align: center;
+}
+.switch a {
+  color: var(--accent);
+}

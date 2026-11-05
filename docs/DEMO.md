@@ -69,6 +69,29 @@ config. To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.
 `.demo/bin/tessera-loadtest --secret devsecret-devsecret-devsecret-0000 --rooms 5 --publishers 6`).
 Show the Overview charts and `/stats` filling up while the two live calls stay smooth.
 
+## Presenter / viewer mode (`/live.html`)
+
+For broadcasts, classrooms, monitoring walls: not a call. Open `http://localhost:5173/live.html`
+(also linked from the call demo's join card).
+
+- **Present:** streams camera and mic (and optionally the screen) to the server. Presenters receive no
+  media and do not see viewers. Optional *Record my stream*.
+- **Watch:** lists every presenter in the channel, live, with their camera, mic and screen state.
+  Click a presenter to watch, click again to stop; watch several at once, *Watch all* or *Clear*.
+  Each tile has its own mute and close buttons. Nothing is downloaded for presenters you are not
+  watching, and each tile gets the simulcast layer that fits its size.
+
+Tokens: the dev endpoint takes `role=presenter|viewer`. In production, issue the same grants from your
+backend, for example with the Java SDK:
+
+```java
+// presenter: publish only
+RoomGrant.builder().room("live").roomJoin(true).canSubscribe(false).build();
+// viewer: subscribe only, invisible to others; connect with autoSubscribe: false and
+// subscribe per presenter (RemoteTrackPublication.setSubscribed(true))
+RoomGrant.builder().room("live").roomJoin(true).canPublish(false).canPublishData(false).hidden(true).build();
+```
+
 ## Troubleshooting
 
 - **Camera or microphone is blocked / `getUserMedia` undefined.** Browsers allow capture only on

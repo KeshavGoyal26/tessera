@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Tessera Live</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/live.css" />
+  </head>
+  <body>
+    <section id="landing" class="landing">
+      <form id="join" class="card">
+        <div class="brand"><span class="logo">▦</span> Tessera <span class="pill">Live</span></div>
+        <p class="tag">Presenters stream to the server. Viewers see every presenter and watch one or more at a time.</p>
+        <fieldset class="roles">
+          <legend>I want to</legend>
+          <label class="role"><input type="radio" name="role" value="presenter" checked /><b>Present</b><small>Stream my camera, mic or screen</small></label>
+          <label class="role"><input type="radio" name="role" value="viewer" /><b>Watch</b><small>Pick presenters to watch</small></label>
+        </fieldset>
+        <label>
+          Your name
+          <input name="name" type="text" required maxlength="40" autocomplete="nickname" placeholder="Alex" />
+        </label>
+        <label>
+          Channel
+          <input name="room" type="text" required maxlength="64" value="live" placeholder="live" />
+        </label>
+        <label class="check" id="record-row">
+          <input name="record" type="checkbox" />
+          <span>Record my stream <small>(watch it later in the admin dashboard)</small></span>
+        </label>
+        <button id="join-button" class="primary" type="submit">Go live</button>
+        <details id="advanced">
+          <summary>Advanced: server URL</summary>
+          <label>
+            Server URL
+            <input name="url" type="text" placeholder="ws://localhost:7880 (default: same host)" />
+          </label>
+        </details>
+        <p class="switch"><a href="/">Video call demo</a></p>
+        <p id="error" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <!-- Presenter -->
+    <section id="present" class="call" hidden>
+      <header class="topbar">
+        <span class="brand"><span class="logo">▦</span> Tessera</span>
+        <span class="room-name" data-room></span>
+        <span class="onair" id="onair">LIVE</span>
+        <span class="status" data-status role="status">disconnected</span>
+      </header>
+      <main class="stage" id="present-stage" data-count="1">
+        <div class="tile self" id="preview">
+          <div class="avatar" id="preview-avatar"></div>
+          <div class="label"><span class="nm" id="preview-name"></span></div>
+          <div class="rec" title="Your stream is being recorded">REC</div>
+          <p class="hint" id="preview-hint">Camera is off. Viewers see your name until you turn it on.</p>
+        </div>
+      </main>
+      <nav class="bar" aria-label="Presenter controls">
+        <button id="p-mic" class="ctl" type="button" aria-pressed="false" title="Microphone">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/><path class="slash" d="M4 4l16 16"/></svg>Mic
+        </button>
+        <button id="p-cam" class="ctl" type="button" aria-pressed="false" title="Camera">
+          <svg viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2Z"/><path class="slash" d="M4 4l16 16"/></svg>Camera
+        </button>
+        <button id="p-screen" class="ctl" type="button" aria-pressed="false" title="Share your screen">
+          <svg viewBox="0 0 24 24"><path d="M3 5h18v11H3V5Zm2 2v7h14V7H5Zm3 11h8v2H8v-2Z"/></svg>Screen
+        </button>
+        <button id="p-leave" class="ctl danger" type="button" title="Stop presenting">
+          <svg viewBox="0 0 24 24"><path d="M10 4h9v16h-9v-2h7V6h-7V4Zm-1 4 1.4 1.4L8.8 11H15v2H8.8l1.6 1.6L9 16l-4-4 4-4Z"/></svg>End
+        </button>
+      </nav>
+    </section>
+
+    <!-- Viewer -->
+    <section id="watch" class="call" hidden>
+      <header class="topbar">
+        <span class="brand"><span class="logo">▦</span> Tessera</span>
+        <span class="room-name" data-room></span>
+        <span class="live-count" id="live-count">0 live</span>
+        <span class="status" data-status role="status">disconnected</span>
+        <button id="w-leave" class="ghost" type="button">Leave</button>
+      </header>
+      <div class="watch-body">
+        <aside class="presenters" aria-label="Presenters">
+          <div class="presenters-head">
+            <b>Presenters</b>
+            <span>
+              <button id="watch-all" class="ghost small" type="button">Watch all</button>
+              <button id="watch-none" class="ghost small" type="button">Clear</button>
+            </span>
+          </div>
+          <ul id="presenter-list"></ul>
+          <p class="muted empty" id="no-presenters">No one is presenting yet. This list updates live.</p>
+        </aside>
+        <main class="stage" id="watch-stage" data-count="0">
+          <p class="muted empty stage-empty" id="stage-empty">Choose a presenter to start watching.</p>
+        </main>
+      </div>
+    </section>
+
+    <p id="toast" class="toast" role="status" hidden></p>
+    <script type="module" src="/src/live.ts"></script>
+  </body>
+</html>

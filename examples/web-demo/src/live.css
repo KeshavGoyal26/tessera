@@ -1,0 +1,277 @@
+/* Presenter / viewer mode. Builds on style.css tokens and tile styles. */
+.pill {
+  background: rgba(255, 93, 93, 0.15);
+  border-radius: 999px;
+  color: var(--bad);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  text-transform: uppercase;
+}
+.roles {
+  border: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  padding: 0;
+}
+.roles legend {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+  padding: 0;
+}
+label.role {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
+  gap: 2px;
+  padding: 10px 12px;
+}
+label.role input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+label.role small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+label.role:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+label.role:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch {
+  font-size: 0.8rem;
+  margin: 0;
+  text-align: center;
+}
+.switch a {
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+
+/* topbar extras */
+.onair {
+  background: var(--bad);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+}
+.live-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.ghost.small {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}
+
+/* stage: tiles sized by how many are shown */
+.stage {
+  display: grid;
+  flex: 1;
+  gap: 10px;
+  grid-auto-rows: 1fr;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 16px 12px;
+  position: relative;
+}
+.stage[data-count="0"],
+.stage[data-count="1"] {
+  grid-template-columns: 1fr;
+}
+.stage[data-count="2"] {
+  grid-template-columns: repeat(2, 1fr);
+}
+.stage[data-count="3"],
+.stage[data-count="4"] {
+  grid-template-columns: repeat(2, 1fr);
+}
+.stage[data-count="5"] {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+.stage .tile video {
+  object-fit: contain;
+  background: #000;
+}
+.stage .tile.self:not(.screen) video {
+  object-fit: cover;
+}
+.stage-empty {
+  align-self: center;
+  justify-self: center;
+}
+.hint {
+  bottom: 48px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  left: 0;
+  margin: 0;
+  position: absolute;
+  right: 0;
+  text-align: center;
+}
+.tile-actions {
+  display: flex;
+  gap: 6px;
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
+.icon-btn {
+  background: rgba(8, 10, 16, 0.7);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  height: 30px;
+  min-width: 30px;
+}
+.icon-btn:hover {
+  background: var(--panel-2);
+}
+
+/* viewer: presenter list beside the stage */
+.watch-body {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-height: 0;
+}
+.presenters {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  margin: 6px 0 12px 16px;
+  min-height: 0;
+  width: 280px;
+}
+.presenters-head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+.presenters ul {
+  list-style: none;
+  margin: 0;
+  overflow: auto;
+  padding: 6px;
+}
+.presenters .empty {
+  font-size: 0.85rem;
+  padding: 0 14px;
+}
+button.presenter {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  text-align: left;
+  width: 100%;
+}
+button.presenter:hover {
+  background: var(--panel-2);
+}
+li.watching button.presenter {
+  background: rgba(91, 140, 255, 0.12);
+  border-color: rgba(91, 140, 255, 0.5);
+}
+.presenter .av {
+  align-items: center;
+  background: var(--panel-2);
+  border-radius: 50%;
+  color: var(--accent);
+  display: flex;
+  flex: none;
+  font-weight: 700;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+.presenter .who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.presenter .pn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.presenter .media {
+  color: var(--good);
+  display: flex;
+  font-size: 0.72rem;
+  gap: 6px;
+}
+.presenter .go {
+  color: var(--muted);
+  flex: none;
+  font-size: 0.75rem;
+}
+li.watching .presenter .go {
+  color: var(--accent);
+  font-weight: 600;
+}
+.rec-dot {
+  color: var(--bad);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .watch-body {
+    flex-direction: column;
+  }
+  .presenters {
+    margin: 0 16px;
+    max-height: 34vh;
+    width: auto;
+  }
+  .stage[data-count="2"],
+  .stage[data-count="3"],
+  .stage[data-count="4"] {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Several tiles keep a 16:9 shape and centre vertically; a single tile fills the stage. */
+.stage:not([data-count="0"]):not([data-count="1"]) {
+  align-content: center;
+  grid-auto-rows: auto;
+}
+.stage:not([data-count="0"]):not([data-count="1"]) .tile {
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+}
