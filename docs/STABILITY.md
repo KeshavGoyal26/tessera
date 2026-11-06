@@ -32,6 +32,15 @@ Chrome presenter -> Tessera -> Chrome viewer, 30 s runs, both links impaired unl
 | 5% loss, audio concealed | ~5.5% | 1.7% (RED) |
 | 300 ms RTT + 30 ms jitter + 2% loss | 110-540 kbit/s | 420-740 kbit/s |
 
+Soak (15 min, one node): 2 Chrome presenters (one recorded) and 2 Chrome viewers watching both,
+plus `tessera-loadtest` with 3 rooms x (3 publishers + 3 subscribers), 23 participants, 26 Mbit/s
+through the server. Server goroutines (956-958) and open files (43) stayed flat, heap cycled between
+48 and 91 MB with no upward trend, CPU ~25% of a core; after everyone left, goroutines and files went
+back to their starting values and the heap to 6 MB. Viewers decoded 20 fps for the whole run with one
+0.3 s freeze each; the load test saw 0% loss and p99 latency 1.4 ms throughout. The 15-min
+recording is 720p for all 18,264 frames, audio and video both 913 s, with steady 50 ms frame
+spacing. The recorder stayed at 74 goroutines and under 10 MB of heap.
+
 Also checked: 30 rounds of 12 participants joining and leaving leave no goroutine, file or heap
 growth; after a server restart, clients rejoin and video plays again ~7 s after the kill; fuzzing of
 VP8 rewriting, the forwarder, RED parsing and TWCC feedback finds nothing.
@@ -44,6 +53,10 @@ VP8 rewriting, the forwarder, RED parsing and TWCC feedback finds nothing.
   GCC-style overuse persistence; probes count only when they prove the upgrade.
 - RTT: measured from ICE and used for NACK pacing (retry once per RTT, give up after 4 RTT);
   sender reports carry the server clock, so receiver-report RTT is right.
+- Recording: VP8 is encoded to H.264 at the published size; before, a recording that started on the
+  low simulcast layer stayed at 320x180 after switching up.
+- Shutdown: dashboard event streams are closed first (an open dashboard tab held shutdown for 30 s),
+  a second Ctrl-C exits at once, and shutdown is capped at 60 s.
 - Audio: Opus RED. Browsers that support it publish RED; RED subscribers get it unchanged, others
   (Firefox, the recorder, Go/Java clients) get the primary Opus frame. Receiver reports to the
   publisher carry the worst subscriber loss, so Opus FEC follows the listeners.
