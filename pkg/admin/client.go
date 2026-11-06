@@ -39,9 +39,6 @@ func FullGrant() auth.RoomGrant {
 	return auth.RoomGrant{RoomCreate: true, RoomList: true, RoomAdmin: true, RoomRecord: true}
 }
 
-// WorkerGrant returns the grant used by recorder workers.
-func WorkerGrant() auth.RoomGrant { return auth.RoomGrant{RecorderWorker: true} }
-
 // Call invokes service/method with req and decodes into resp.
 func (c *Client) Call(ctx context.Context, service, method string, req, resp proto.Message) error {
 	g := c.grant
@@ -174,23 +171,4 @@ func (c *Client) GetRecording(ctx context.Context, id string) (*tesserav1.Record
 	var r tesserav1.GetRecordingResponse
 	err := c.Call(ctx, RecordingServiceName, "GetRecording", &tesserav1.GetRecordingRequest{RecordingId: id}, &r)
 	return r.Recording, err
-}
-
-// ClaimJob is the worker long-poll.
-func (c *Client) ClaimJob(ctx context.Context, req *tesserav1.ClaimJobRequest) (*tesserav1.ClaimJobResponse, error) {
-	var r tesserav1.ClaimJobResponse
-	err := c.Call(ctx, RecorderWorkerServiceName, "ClaimJob", req, &r)
-	return &r, err
-}
-
-// UpdateJob reports job status.
-func (c *Client) UpdateJob(ctx context.Context, req *tesserav1.UpdateJobRequest) error {
-	return c.Call(ctx, RecorderWorkerServiceName, "UpdateJob", req, &tesserav1.UpdateJobResponse{})
-}
-
-// Heartbeat sends a worker heartbeat.
-func (c *Client) Heartbeat(ctx context.Context, req *tesserav1.HeartbeatRequest) (*tesserav1.HeartbeatResponse, error) {
-	var r tesserav1.HeartbeatResponse
-	err := c.Call(ctx, RecorderWorkerServiceName, "Heartbeat", req, &r)
-	return &r, err
 }

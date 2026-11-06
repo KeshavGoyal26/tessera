@@ -116,7 +116,7 @@ export class Recordings implements View {
       <td class="actions">${act}</td><td title="${esc(c.recording_id)}">${esc(c.error ?? '')}</td></tr>`;
     });
     body.innerHTML = `<h3>All recordings</h3>${this.coordErr ? `<p class="muted">${esc(this.coordErr)}</p>` : table(['Participant', 'Room', 'Started', 'Duration', 'Status', '', 'Error'], coordRows)}
-      <h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats configured (set TESSERA_DASHBOARD_RECORDERS).</p>'}</div>
+      <h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats: recording is disabled or the metrics listener is off.</p>'}</div>
       <h3>Active tracks</h3>${table(['Recording', 'Room', 'Track', 'Codec', 'Duration', 'Segments', 'Backlog', 'Lost', 'Last RTP', 'State'], activeRows)}
       <h3>Finished on this worker</h3>${table(['Participant', 'Room', 'Ended', 'Duration', 'Status', 'Watch', 'Error'], finRows)}`;
   }

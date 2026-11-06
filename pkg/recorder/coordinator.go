@@ -321,7 +321,7 @@ func (c *Coordinator) ClaimJob(ctx context.Context, req *tesserav1.ClaimJobReque
 			}
 			out := &tesserav1.RecordingJob{
 				Recording: proto.Clone(j.info).(*tesserav1.RecordingInfo),
-				WsUrl:     c.p.Config.WSURL, Token: token,
+				Token:     token,
 			}
 			c.mu.Unlock()
 			return &tesserav1.ClaimJobResponse{Job: out}, nil

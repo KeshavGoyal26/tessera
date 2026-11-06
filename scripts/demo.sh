@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the whole Tessera demo natively (no Docker):
-#   tessera --dev, tessera-recorder (local-disk storage) and the web demo dev server.
+#   tessera --dev (recording to local disk, in the server) and the web demo dev server.
 #
 #   scripts/demo.sh [--loadtest] [--host IP]
 #
@@ -64,7 +64,7 @@ done
 mkdir -p "$DEMO/bin" "$DEMO/recordings" "$DEMO/tmp" "$DEMO/logs"
 
 echo "==> building Go binaries"
-go build -o "$DEMO/bin/" ./cmd/tessera ./cmd/tessera-recorder ./cmd/tessera-loadtest
+go build -o "$DEMO/bin/" ./cmd/tessera ./cmd/tessera-loadtest
 
 echo "==> preparing web demo"
 if [ ! -d sdk/js/dist ]; then
@@ -86,25 +86,15 @@ port: $PORT
 keys:
   $KEY: $SECRET
 $RTC_IPS
-EOF
-
-cat > "$DEMO/recorder.yaml" <<EOF
-development: true
-server_url: http://127.0.0.1:$PORT
-api_key: $KEY
-secret: $SECRET
-worker_id: demo-recorder
-capacity: 20
-temp_dir: $DEMO/tmp
-storage:
-  kind: local
-  local_root: $DEMO/recordings
-  local_base_url: http://127.0.0.1:6790/recordings
-hls:
-  segment_duration: 4s
-  audio_codec: opus
+recording:
+  capacity: 200
+  temp_dir: $DEMO/tmp
+  storage:
+    kind: local
+    local_root: $DEMO/recordings
+    local_base_url: http://127.0.0.1:6789/recordings
 metrics:
-  addr: "127.0.0.1:6790"
+  addr: "127.0.0.1:6789"
 EOF
 
 PIDS=()
@@ -127,8 +117,7 @@ start() { # name cmd...
   PIDS+=("$!")
 }
 
-# The dashboard shows the recorder's live stats and finished recordings.
-TESSERA_DASHBOARD_RECORDERS="http://127.0.0.1:6790" start tessera "$DEMO/bin/tessera" --config "$DEMO/tessera.yaml" --dev
+start tessera "$DEMO/bin/tessera" --config "$DEMO/tessera.yaml" --dev
 
 for _ in $(seq 1 50); do
   curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break
@@ -136,7 +125,6 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
-start recorder "$DEMO/bin/tessera-recorder" --config "$DEMO/recorder.yaml"
 (cd examples/web-demo && exec npx vite --host 0.0.0.0 --port "$WEB_PORT" --strictPort) >"$DEMO/logs/web.log" 2>&1 &
 PIDS+=("$!")
 

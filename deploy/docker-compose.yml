@@ -1,4 +1,4 @@
-# Local stack: tessera server, recorder, MinIO, web demo, Prometheus and Grafana.
+# Local stack: tessera server (with built-in recording), MinIO, web demo, Prometheus and Grafana.
 #   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
 # Media needs reachable UDP; on Linux servers host networking is simplest (see deploy/README.md).
@@ -13,32 +13,18 @@ services:
     environment:
       TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
       TESSERA_NODE_IP: ${TESSERA_NODE_IP}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - ./config/tessera.yaml:/etc/tessera/tessera.yaml:ro
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "7880:7880/tcp"
       - "7881:7881/tcp"
       - "7882:7882/udp"
       - "127.0.0.1:6789:6789/tcp"
-    restart: unless-stopped
-
-  recorder:
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile
-      target: recorder
-    command: ["--config", "/etc/tessera/recorder.yaml"]
-    environment:
-      TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    volumes:
-      - ./config/recorder.yaml:/etc/tessera/recorder.yaml:ro
-    depends_on:
-      tessera:
-        condition: service_started
-      minio-init:
-        condition: service_completed_successfully
     restart: unless-stopped
 
   minio:

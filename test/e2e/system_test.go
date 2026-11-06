@@ -17,6 +17,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
+	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
 	"github.com/KeshavGoyal26/tessera/pkg/hls/hlstest"
@@ -244,7 +245,7 @@ func TestFullSystem(t *testing.T) {
 		return
 	}
 	// Record pub-h264 to HLS through the real Coordinator + Worker.
-	coord := recorder.NewCoordinator(recorder.CoordinatorParams{Config: config.RecordingConfig{WSURL: s.URL, HeartbeatTimeout: time.Minute},
+	coord := recorder.NewCoordinator(recorder.CoordinatorParams{Config: config.RecordingConfig{HeartbeatTimeout: time.Minute},
 		Rooms: s.Manager, APIKey: apiKey, Secret: apiSecret, Logger: testLogger()})
 	defer coord.Close()
 	root := t.TempDir()
@@ -252,7 +253,7 @@ func TestFullSystem(t *testing.T) {
 	wcfg.WorkerID, wcfg.Capacity, wcfg.Heartbeat = "e2e-worker", 4, 100*time.Millisecond
 	wcfg.Storage.LocalRoot = root
 	w, err := recorder.NewWorker(wcfg, nil, testLogger(), recorder.WithJobAPI(coord),
-		recorder.WithConnector(recorder.ClientConnector{Logger: testLogger(), SettingEngine: client.LoopbackSettingEngine()}))
+		recorder.WithConnector(recorder.LocalConnector{Rooms: s.Manager, Verifier: auth.NewVerifier(auth.StaticKeys(s.cfg.Keys))}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,9 +2,9 @@
 
 | Path | Purpose |
 |------|---------|
-| `docker/Dockerfile` | Multi-stage build; targets `tessera` (distroless), `recorder` (Debian slim + FFmpeg), `loadtest` |
-| `docker-compose.yml` | Local stack: server, recorder, MinIO (+ bucket bootstrap), web demo, Prometheus, Grafana |
-| `config/tessera.yaml`, `config/recorder.yaml` | Example configs with `${ENV}` expansion |
+| `docker/Dockerfile` | Multi-stage build; targets `tessera` (distroless, recording built in), `loadtest`, `web-demo` |
+| `docker-compose.yml` | Local stack: server (records to MinIO), MinIO (+ bucket bootstrap), web demo, Prometheus, Grafana |
+| `config/tessera.yaml` | Example config with `${ENV}` expansion (loaded by a test, so it cannot drift) |
 | `.env.example` | Development environment values |
 
 ```bash

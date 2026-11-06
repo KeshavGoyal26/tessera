@@ -94,18 +94,10 @@ func needRecord(g *auth.RoomGrant, room string) error {
 	return nil
 }
 
-func needWorker(g *auth.RoomGrant) error {
-	if !g.RecorderWorker {
-		return denied("recorder_worker")
-	}
-	return nil
-}
-
 func buildRoutes(p Params) map[string]*route {
 	m := map[string]*route{}
 	rs := RoomServiceName + "/"
 	rc := RecordingServiceName + "/"
-	wk := RecorderWorkerServiceName + "/"
 
 	rpc(m, rs+"CreateRoom", func(g *auth.RoomGrant, r *tesserav1.CreateRoomRequest) error { return needCreate(g, r.Name) },
 		func(ctx context.Context, r *tesserav1.CreateRoomRequest) (*tesserav1.CreateRoomResponse, error) {
@@ -307,27 +299,5 @@ func buildRoutes(p Params) map[string]*route {
 			return &tesserav1.GetRecordingResponse{Recording: out}, nil
 		})
 
-	// RecorderWorkerService.
-	rpc(m, wk+"ClaimJob", func(g *auth.RoomGrant, _ *tesserav1.ClaimJobRequest) error { return needWorker(g) },
-		func(ctx context.Context, r *tesserav1.ClaimJobRequest) (*tesserav1.ClaimJobResponse, error) {
-			if p.Workers == nil {
-				return nil, errs.NotImplemented("workers")
-			}
-			return p.Workers.ClaimJob(ctx, r)
-		})
-	rpc(m, wk+"UpdateJob", func(g *auth.RoomGrant, _ *tesserav1.UpdateJobRequest) error { return needWorker(g) },
-		func(ctx context.Context, r *tesserav1.UpdateJobRequest) (*tesserav1.UpdateJobResponse, error) {
-			if p.Workers == nil {
-				return nil, errs.NotImplemented("workers")
-			}
-			return &tesserav1.UpdateJobResponse{}, p.Workers.UpdateJob(ctx, r)
-		})
-	rpc(m, wk+"Heartbeat", func(g *auth.RoomGrant, _ *tesserav1.HeartbeatRequest) error { return needWorker(g) },
-		func(ctx context.Context, r *tesserav1.HeartbeatRequest) (*tesserav1.HeartbeatResponse, error) {
-			if p.Workers == nil {
-				return nil, errs.NotImplemented("workers")
-			}
-			return p.Workers.Heartbeat(ctx, r)
-		})
 	return m
 }

@@ -15,7 +15,6 @@ and by sharding rooms across independent nodes in your own routing layer. Measur
 | 443 (or 5349) TCP | | TURN over TLS, `turn.tls_port` (needs `turn.cert_file`/`turn.key_file`; off by default) | public |
 | `turn.relay_range_start..end` | UDP | TURN relay allocations | public when TURN is enabled |
 | 6789 | TCP | `/metrics`, `/healthz`, `/readyz`, `/stats`, `/debug/pprof` | **private network only** |
-| 6790 | TCP | Recorder metrics | private |
 
 One UDP port serves all participants, so the firewall needs a single rule. Use `/readyz` for load balancer and orchestrator probes.
 
@@ -103,8 +102,9 @@ automatically after UDP, ICE-TCP and `turn:` fail (the SDK passes the list to `R
   clamps lower values and bursts are then dropped as UDP receive errors).
 - Webhooks: set `webhook.endpoints` and a `webhook.api_key`; delivery is queued and retried, not durable
   across restarts.
-- Recording: run `tessera-recorder` separately (needs FFmpeg) pointing at `server_url`, plus S3-compatible
-  storage; recorders scale out horizontally and are pull-based.
+- Recording: built into the server (`recording:` config, S3-compatible or local storage). Recording
+  shares the media node's CPU: size nodes for live plus recorded presenters, cap `recording.capacity`,
+  and set `recording.enabled: false` on media-only nodes. FFmpeg is needed only for the AAC audio mode.
 
 ## 6. Scaling limits (measured and estimated)
 
@@ -134,7 +134,7 @@ cannot span nodes yet.
 
 ## 7. Monitoring and alerting
 
-- Scrape `:6789/metrics` (Prometheus) and `recorder:6790/metrics`. `deploy/grafana/` has a provisioned
+- Scrape `:6789/metrics` (Prometheus). `deploy/grafana/` has a provisioned
   Grafana dashboard (`tessera-dashboard.json`) and the Prometheus example config.
 - `GET :6789/stats` returns node CPU, RSS, GC pause, UDP pps and per-room/per-participant quality (also used by
   the admin dashboard).

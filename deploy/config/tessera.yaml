@@ -20,8 +20,20 @@ webhook:
   #  - url: http://host.docker.internal:8080/webhooks/tessera
   #    encoding: json
 recording:
-  enabled: true
-  ws_url: ws://tessera:7880
+  enabled: true # recorded inside the server; no separate recorder
+  capacity: 100
+  storage:
+    kind: s3
+    s3:
+      bucket: recordings
+      region: us-east-1
+      endpoint: http://minio:9000
+      access_key: ${MINIO_ROOT_USER}
+      secret: ${MINIO_ROOT_PASSWORD}
+      force_path_style: true
+  hls:
+    segment_duration: 4s
+    audio_codec: opus
 metrics:
   addr: ":6789"
   pprof: false # enable only on a trusted network

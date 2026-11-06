@@ -148,11 +148,6 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	metrics.HandleExtra(stats.Path, stats.Handler(rooms))
 
 	recKey, recSecret := firstKey(cfg)
-	if cfg.Recording.WSURL == "" {
-		// Recorders on the same host (the common single-node case) reach signaling over loopback.
-		cfg.Recording.WSURL = fmt.Sprintf("ws://127.0.0.1:%d", cfg.Port)
-		logger.Info("recording.ws_url not set, recorders will join via loopback", "ws_url", cfg.Recording.WSURL)
-	}
 	coordinator := recorder.NewCoordinator(recorder.CoordinatorParams{
 		Config: cfg.Recording, Rooms: rooms, Notifier: notifier,
 		APIKey: recKey, Secret: recSecret, Registry: reg, Logger: logger,
@@ -160,9 +155,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	autoRec.set(coordinator)
 	recorderURLs := splitList(os.Getenv("TESSERA_DASHBOARD_RECORDERS"))
 	var recWorker *recorder.Worker
-	if cfg.Recording.InProcess {
+	if cfg.Recording.Enabled {
 		// Record inside this server: jobs come straight from the coordinator and tracks
-		// straight from the receive buffers (no recorder WebRTC session).
+		// straight from the receive buffers (no separate recorder or WebRTC session).
 		w, err := recorder.NewWorker(recorder.InProcessConfig(cfg.Recording, cfg.Development), reg, logger,
 			recorder.WithJobAPI(coordinator), recorder.WithConnector(recorder.LocalConnector{Rooms: rooms, Verifier: verifier}))
 		if err != nil {
@@ -179,10 +174,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			}
 			recorderURLs = append(recorderURLs, "http://"+addr+"/recorder")
 		}
-		logger.Info("recording in process", "storage", cfg.Recording.Storage.Kind, "capacity", cfg.Recording.Capacity)
+		logger.Info("recording enabled", "storage", cfg.Recording.Storage.Kind, "capacity", cfg.Recording.Capacity)
 	}
 	adminSrv := admin.NewServer(admin.Params{
-		Rooms: rooms, Recordings: coordinator, Workers: coordinator,
+		Rooms: rooms, Recordings: coordinator,
 		Verifier: verifier, Registry: reg, Logger: logger,
 	})
 	signalSrv := sig.NewServer(cfg.Signal, verifier, rooms, logger)

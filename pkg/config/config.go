@@ -134,16 +134,12 @@ type WebhookEndpoint struct {
 
 // RecordingConfig configures the in-server recording Coordinator.
 type RecordingConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// InProcess records inside this server: the recorder reads each track from the
-	// server's receive buffer, with no WebRTC session, encryption or loopback hop.
-	// Otherwise separate tessera-recorder workers join rooms over WebRTC.
-	InProcess bool `yaml:"in_process"`
-	// WSURL is the signaling URL external recorders use to join rooms on this node.
-	WSURL            string        `yaml:"ws_url"`
+	// Enabled runs the recorder inside this server (default true). It reads each
+	// recorded track straight from the server's receive buffer: no separate process,
+	// WebRTC session or loopback hop. Disable on media-only nodes.
+	Enabled          bool          `yaml:"enabled"`
 	HeartbeatTimeout time.Duration `yaml:"heartbeat_timeout"`
 
-	// In-process recorder settings (same meaning as in recorder.yaml).
 	Capacity   int              `yaml:"capacity"` // units; one remuxed track is one unit
 	TempDir    string           `yaml:"temp_dir"`
 	FFmpegPath string           `yaml:"ffmpeg_path"` // only for the optional AAC audio mode

@@ -50,7 +50,7 @@ func newTestCoordinator(t *testing.T) (*Coordinator, *fakeNotifier, *clock) {
 	n := &fakeNotifier{}
 	clk := &clock{t: time.Unix(1000, 0)}
 	c := NewCoordinator(CoordinatorParams{
-		Config: config.RecordingConfig{WSURL: "ws://x", HeartbeatTimeout: time.Hour}, Notifier: n,
+		Config: config.RecordingConfig{HeartbeatTimeout: time.Hour}, Notifier: n,
 		APIKey: "key", Secret: "secret-secret-secret-secret-1234", Now: clk.now,
 	})
 	t.Cleanup(c.Close)
@@ -71,9 +71,6 @@ func TestCoordinatorLifecycle(t *testing.T) {
 	resp, err := c.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "w1", AvailableCapacity: 4})
 	if err != nil || resp.Job == nil {
 		t.Fatalf("%v %v", resp, err)
-	}
-	if resp.Job.WsUrl != "ws://x" {
-		t.Fatal(resp.Job.WsUrl)
 	}
 	claims, err := auth.NewVerifier(auth.StaticKeys{"key": "secret-secret-secret-secret-1234"}).Verify(resp.Job.Token)
 	if err != nil || !claims.Grants.Hidden || !claims.Grants.Recorder || claims.Grants.Room != "r" {

@@ -12,6 +12,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
+	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
@@ -229,3 +230,23 @@ func (tapContext) SSRCForwardErrorCorrection() webrtc.SSRC                { retu
 func (c tapContext) WriteStream() webrtc.TrackLocalWriter                 { return c.t }
 func (tapContext) ID() string                                             { return "recorder" }
 func (tapContext) RTCPReader() interceptor.RTCPReader                     { return nil }
+
+func sourceName(s tesserav1.TrackSource) string {
+	switch s {
+	case tesserav1.TrackSource_TRACK_SOURCE_CAMERA:
+		return "camera"
+	case tesserav1.TrackSource_TRACK_SOURCE_MICROPHONE:
+		return "microphone"
+	case tesserav1.TrackSource_TRACK_SOURCE_SCREEN_SHARE:
+		return "screen_share"
+	case tesserav1.TrackSource_TRACK_SOURCE_SCREEN_SHARE_AUDIO:
+		return "screen_share_audio"
+	}
+	return ""
+}
+func kindName(t tesserav1.TrackType) string {
+	if t == tesserav1.TrackType_TRACK_TYPE_VIDEO {
+		return "video"
+	}
+	return "audio"
+}

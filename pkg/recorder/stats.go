@@ -13,7 +13,7 @@ import (
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 )
 
-// Stats is the JSON served at /stats by tessera-recorder (docs/STATS.md,
+// Stats is the JSON served at /recorder/stats on the metrics listener (docs/STATS.md,
 // docs/RECORDING.md). Fields are only added, never renamed.
 type Stats struct {
 	Time             time.Time        `json:"time"`

@@ -60,7 +60,7 @@ flowchart LR
 | Go client | `pkg/client` | WP1 | Pion-based client for tests, recorder and load tester |
 | Admin API | `pkg/admin` | WP3 | Twirp server and client helpers, auth checks, error mapping |
 | Webhooks | `pkg/webhook` | WP3 | Event queueing, signing, retries; signature verification helpers |
-| Recording control | `pkg/recorder` | WP4 | Coordinator (in `tessera`) and Worker (in `tessera-recorder`) |
+| Recording | `pkg/recorder` | WP4 | Coordinator and Worker, both inside `tessera`; the Worker reads tracks from the receive buffers (`LocalConnector`) |
 | HLS muxer | `pkg/hls` | WP4 | RTP depacketizers, fMP4/CMAF writer, playlists |
 | Storage | `pkg/storage` | WP4 | Local and S3-compatible upload |
 | Metrics | `pkg/metrics` | WP5 (Phase 0 impl.) | Registry, metrics/pprof/health HTTP server |
@@ -72,9 +72,9 @@ flowchart LR
 - **`tessera`**: one process per node, using all cores (`GOMAXPROCS` = container CPU quota,
   honoured automatically by Go 1.25+). It hosts signaling, admin API, the SFU engine,
   embedded TURN and the recording Coordinator. Media is never transcoded.
-- **`tessera-recorder`**: N replicas, each handling many jobs, pulling work from the
-  Coordinator. Spawns FFmpeg subprocesses only for AAC mode, VP8 sources and (later)
-  composite layouts.
+- **Recording** runs inside `tessera` (since 2026-11-07; the separate `tessera-recorder` and its
+  WebRTC join were removed, see ADR-0007). FFmpeg is spawned only for the optional AAC audio mode.
+  Diagrams below that show a recorder process predate this change.
 - **`tessera-loadtest`**: simulated publishers/subscribers built on `pkg/client`, publishing
   synthetic or file-based RTP (no encoder), reporting latency, loss and join times.
 

@@ -6,7 +6,7 @@ A five-minute presenter script for Tessera, plus troubleshooting. Everything run
 ## Start
 
 ```bash
-scripts/demo.sh              # server, recorder, web demo
+scripts/demo.sh              # server (with recording), web demo
 scripts/demo.sh --loadtest   # same, plus background traffic from tessera-loadtest
 ```
 
@@ -67,8 +67,8 @@ bandwidth before stepping a viewer up a simulcast layer, so there is no blurry w
 **3:45 Recording (45 s).** Press **End** in A. In the dashboard open *Recordings*: A's recording is
 listed with room, start time, duration and status. Click **▶ Play** to watch it with video and audio.
 You can also record anyone from *Rooms* with **Record** (and **■ Stop** in *Recordings*). The files
-are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the recorder at
-`http://127.0.0.1:6790/recordings/` because `storage.local_base_url` is set in the demo's recorder
+are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the server at
+`http://127.0.0.1:6789/recordings/` because `recording.storage.local_base_url` is set in the demo's
 config. To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.m3u8 -c copy out.mp4`.
 
 **4:30 Load (30 s).** Start with `--loadtest` (or in another terminal
@@ -97,7 +97,7 @@ RoomGrant.builder().room("live").roomJoin(true).canPublish(false).canPublishData
   `localhost` or HTTPS. Use `http://localhost:5173` on the demo machine. Check the lock icon in the
   address bar and the OS privacy settings (macOS: System Settings → Privacy → Camera).
 - **Port already in use.** The script checks 7880 and 5173 first. Find the owner with
-  `lsof -i :7880`. The recorder uses 6790 and the server metrics and `/stats` use 6789.
+  `lsof -i :7880`. The server metrics, `/stats`, recorder stats and local recordings use 6789.
 - **LAN demo (second device).** Run `scripts/demo.sh --host 192.168.1.20` (your machine's IP) and
   open `http://192.168.1.20:5173/` on the phone. The web page itself is plain HTTP, so the phone
   browser will refuse camera access. Options: in Chrome open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,

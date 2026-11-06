@@ -20,8 +20,8 @@ records to HLS and comes with a Java server SDK and a TypeScript browser SDK.
   active speaker detection.
 - **Networking**: one UDP port for all media, ICE-TCP fallback, NAT 1:1, embedded TURN
   (UDP/TCP/TLS).
-- **Recording**: a separate `tessera-recorder` service that joins rooms as a hidden subscriber
-  and writes fMP4/CMAF HLS. H.264 and Opus are remuxed; video is never transcoded, so
+- **Recording**: built into the server. Recorded tracks are read straight from the receive
+  buffer (no second WebRTC session) and written as fMP4/CMAF HLS. H.264 and Opus are remuxed; video is never transcoded, so
   recorded publishers must send H.264 (the server asks recorded participants for it first). An
   optional AAC audio mode uses FFmpeg. Output goes to local disk or S3-compatible storage.
 - **Integration**: HS256 JWT access tokens; a Twirp-style admin API (JSON or protobuf);
@@ -57,7 +57,7 @@ With the compose stack running:
 |-----|------|
 | http://localhost:8080 | Web demo: enter `ws://localhost:7880` and a token from the command below |
 | http://localhost:6789/stats | Live node/room/track statistics (JSON, [docs/STATS.md](docs/STATS.md)) |
-| http://localhost:9090 | Prometheus (scrapes `tessera:6789` and `recorder:6790`) |
+| http://localhost:9090 | Prometheus (scrapes `tessera:6789`) |
 | http://localhost:3000 | Grafana with the Tessera dashboard (anonymous viewer) |
 | http://localhost:9001 | MinIO console (recordings bucket `recordings`) |
 
@@ -90,7 +90,6 @@ See [sdk/java/README.md](sdk/java/README.md) for the exact API.
 | Path | Contents | Owner |
 |------|----------|-------|
 | `cmd/tessera` | SFU server binary | WP1 |
-| `cmd/tessera-recorder` | HLS recorder binary | WP4 |
 | `cmd/tessera-loadtest` | Load generator | WP5 |
 | `pkg/rtc/...` | SFU engine: transports, receivers, downtracks, buffer, simulcast, bwe, speaker, turn | WP1 |
 | `pkg/room`, `pkg/signal`, `pkg/auth`, `pkg/config`, `pkg/client` | Rooms, WebSocket signaling, tokens, config, Go client | WP1 |

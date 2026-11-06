@@ -1,14 +1,19 @@
 # Recording (HLS)
 
-Implements ADR-0007. `tessera-recorder` joins a room as a hidden subscriber, remuxes the
-RTP it receives into fMP4/CMAF HLS and writes it to local disk or an S3-compatible bucket.
+Implements ADR-0007 (amended 2026-11-07: recording runs inside the server). The recorder reads
+each recorded track straight from the server's receive buffer, remuxes it into fMP4/CMAF HLS
+and writes it to local disk or an S3-compatible bucket. There is no separate recorder process
+and no second WebRTC session: about half the per-presenter CPU of the old design.
 
 ## Flow
 
 1. `RecordingService.StartRecording` (admin API) creates a job in the in-server **Coordinator**
    (`pkg/recorder`, status `STARTING`).
-2. A worker long-polls `RecorderWorkerService.ClaimJob`, gets the job plus a hidden recorder
-   access token (`pkg/recorder.JoinGrant`) and joins with `pkg/client`.
+2. The in-server worker claims the job from the Coordinator. `LocalConnector` attaches a
+   DownTrack to each wanted track's receiver, bound to an in-memory queue instead of a
+   PeerConnection (layer selection, keyframe requests and RED stripping as for any
+   subscriber). The forwarding path never blocks on it: a full queue drops packets and the
+   recorder waits for the next keyframe.
 3. For every subscribed track that matches the target (`TrackRecordingTarget` or
    `ParticipantRecordingTarget`) a per-track pipeline runs:
    `RTP → reorder buffer (200 ms) → depacketizer → muxer (fMP4 + playlist) → ordered uploader`.
@@ -88,9 +93,10 @@ the recording fails with the reason).
 
 ## Statistics
 
-`GET :6790/stats` on the recorder returns `recorder.Stats` JSON (active recordings with
+`GET /recorder/stats` on the metrics listener (`metrics.addr`, default `127.0.0.1:6789`) returns
+`recorder.Stats` JSON (active recordings with
 per-track packets/bytes/loss/segments/backlog, segment delay, upload backlog, errors, the last
-50 finished recordings with playlist URLs). `GET :6790/metrics` adds Prometheus series:
+50 finished recordings with playlist URLs). `/metrics` includes Prometheus series:
 
 | Metric | Type |
 |--------|------|
@@ -112,13 +118,13 @@ recorded once they publish; until then the job waits instead of failing after 30
 starts a new recording. In `--dev`, `/dev/token?...&record=1` issues such a token and also sets
 the participant attribute `recorded=true` so clients can show a REC marker.
 
-## Configuration (`recorder.yaml`)
+## Configuration (`recording:` in the server config)
 
-`server_url`, `api_key`, `secret`, `worker_id`, `capacity`, `heartbeat`, `ffmpeg_path`,
-`storage.kind: local|s3` (+ `local_root` or `s3.*`), `hls.segment_duration`, `hls.audio_codec`,
-`metrics.addr`, `storage.local_base_url` (serve `local_root` read-only under `/recordings/` on the
-metrics listener and report playlist URLs below this prefix, so the dashboard can play local
-recordings). Per-request `StorageOptions` override the default; local directories are
+`enabled` (default true; disable on media-only nodes), `capacity`, `temp_dir`, `ffmpeg_path`
+(only for the AAC audio mode), `storage.kind: local|s3` (+ `local_root` or `s3.*`),
+`hls.segment_duration`, `hls.audio_codec`, `storage.local_base_url` (serve `local_root` read-only
+under `/recordings/` on the metrics listener and report playlist URLs below this prefix, so the
+dashboard can play local recordings). Per-request `StorageOptions` override the default; local directories are
 resolved below `local_root`.
 
 ## Known gaps
@@ -127,8 +133,7 @@ resolved below `local_root`.
 - Composite (grid) recording is not implemented; `StartRecording` returns `unimplemented`.
 - No automated hls.js/Playwright test and no Apple device verification. The pipeline is tested
   with in-memory RTP and, in `TestLiveRecordingThroughRealServer`, end to end: a real SFU on
-  loopback, a publisher with H.264 + Opus, Coordinator + Worker with the production
-  `ClientConnector` (hidden recorder join through `pkg/client`).
+  loopback, a publisher with H.264 + Opus, Coordinator + Worker with `LocalConnector`.
 - Benchmark: `go test -bench RemuxH264 ./pkg/hls` (RTP unmarshal + depacketize + mux + playlist,
   storage excluded) measured about 0.04 ms CPU per media-second for a 320x240 100 kbps track on a
   2.1 GHz Xeon, i.e. orders of magnitude under the 10 ms/media-second budget of the 100

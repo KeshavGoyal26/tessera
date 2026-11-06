@@ -42,11 +42,7 @@ func (l *lateTrigger) ParticipantLeft(r, id string) {
 
 // TestLiveAutoRecordOnJoin: a participant whose token has auto_record is recorded from
 // join to leave without any API call, and the result plays as one master playlist.
-func TestLiveAutoRecordOnJoin(t *testing.T) { runAutoRecordOnJoin(t, false) }
-
-func TestLiveAutoRecordOnJoinInProcess(t *testing.T) { runAutoRecordOnJoin(t, true) }
-
-func runAutoRecordOnJoin(t *testing.T, inProcess bool) {
+func TestLiveAutoRecordOnJoin(t *testing.T) {
 	hlstest.NeedFFmpeg(t)
 	const key, secret = "livekey", "livesecret-livesecret-livesecret-00"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -73,7 +69,7 @@ func runAutoRecordOnJoin(t *testing.T, inProcess bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	coord := NewCoordinator(CoordinatorParams{Config: config.RecordingConfig{WSURL: wsURL, HeartbeatTimeout: time.Minute},
+	coord := NewCoordinator(CoordinatorParams{Config: config.RecordingConfig{HeartbeatTimeout: time.Minute},
 		Rooms: mgr, APIKey: key, Secret: secret, Logger: logger})
 	defer coord.Close()
 	trig.c.Store(coord)
@@ -81,10 +77,7 @@ func runAutoRecordOnJoin(t *testing.T, inProcess bool) {
 	wcfg := DefaultConfig()
 	wcfg.WorkerID, wcfg.Capacity, wcfg.Heartbeat = "auto-worker", 10, 100*time.Millisecond
 	wcfg.Storage.LocalRoot = root
-	var conn Connector = ClientConnector{Logger: logger, SettingEngine: client.LoopbackSettingEngine()}
-	if inProcess {
-		conn = LocalConnector{Rooms: mgr, Verifier: auth.NewVerifier(auth.StaticKeys(cfg.Keys))}
-	}
+	conn := LocalConnector{Rooms: mgr, Verifier: auth.NewVerifier(auth.StaticKeys(cfg.Keys))}
 	w, err := NewWorker(wcfg, nil, logger, WithJobAPI(coord), WithConnector(conn))
 	if err != nil {
 		t.Fatal(err)

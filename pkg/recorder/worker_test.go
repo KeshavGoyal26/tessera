@@ -73,7 +73,7 @@ func TestWorkerParticipantRecordingEndToEnd(t *testing.T) {
 
 	notifier := &fakeNotifier{}
 	coord := NewCoordinator(CoordinatorParams{
-		Config: config.RecordingConfig{WSURL: "ws://x", HeartbeatTimeout: time.Minute}, Notifier: notifier,
+		Config: config.RecordingConfig{HeartbeatTimeout: time.Minute}, Notifier: notifier,
 		APIKey: "k", Secret: "secret-secret-secret-secret-1234",
 	})
 	defer coord.Close()

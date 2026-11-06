@@ -1,5 +1,12 @@
 # ADR-0007: Recording as a separate binary producing CMAF HLS
 
+> **Amended 2026-11-07:** the separate `tessera-recorder` process is removed. Recording runs
+> inside the media server: the worker reads tracks straight from the receive buffers (a
+> DownTrack bound to an in-memory queue), so there is no second WebRTC session, encryption or
+> loopback hop. Measured: about 2.25x less CPU per recorded presenter. Isolation is kept with a
+> per-track panic guard, a non-blocking bounded queue between forwarding and recording, and a
+> recording capacity cap. The HLS and job model below are unchanged.
+
 - Status: accepted
 - Date: 2026-11-04
 - Deciders: Tessera maintainers

@@ -1,11 +1,11 @@
-// Package recorder contains both halves of recording (ADR-0007):
+// Package recorder records participants and tracks to HLS inside the media server
+// (ADR-0007, amended 2026-11-07):
 //
-//   - Coordinator, running inside tessera: job queue, worker registry,
-//     recorder tokens, RecordingInfo state and recording webhooks. It
-//     implements Service (consumed by the admin API) and WorkerAPI (served
-//     by the admin API's Twirp router for RecorderWorkerService).
-//   - Worker, running inside tessera-recorder: claims jobs, joins rooms with
-//     pkg/client, feeds RTP to pkg/hls muxers and uploads with pkg/storage.
+//   - Coordinator: job queue, recording tokens, RecordingInfo state and recording
+//     webhooks. It implements Service (consumed by the admin API) and WorkerAPI.
+//   - Worker: claims jobs from the Coordinator, reads tracks straight from the
+//     server's receive buffers (LocalConnector), feeds RTP to pkg/hls muxers and
+//     uploads with pkg/storage.
 //
 // Ownership: WP4.
 package recorder
@@ -60,7 +60,7 @@ func JoinGrant(roomName string) *auth.RoomGrant {
 	}
 }
 
-// Config is the tessera-recorder configuration (deploy/config/recorder.yaml).
+// Config is the Worker configuration (built from the server's recording settings).
 type Config struct {
 	Development bool `yaml:"development"`
 	// ServerURL is the tessera HTTP base URL, e.g. "http://tessera:7880".

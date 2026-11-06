@@ -18,9 +18,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/storage"
 )
 
-// JobAPI is the worker's view of RecorderWorkerService. *admin.Client
-// satisfies it (pkg/admin imports this package, so the worker cannot import
-// it; cmd/tessera-recorder wires them together).
+// JobAPI is the worker's view of the Coordinator (which implements it).
 type JobAPI interface {
 	ClaimJob(ctx context.Context, req *tesserav1.ClaimJobRequest) (*tesserav1.ClaimJobResponse, error)
 	UpdateJob(ctx context.Context, req *tesserav1.UpdateJobRequest) error
@@ -52,7 +50,7 @@ func WithConnector(c Connector) WorkerOption { return func(w *Worker) { w.conn =
 // WithStorage overrides the default storage.
 func WithStorage(s storage.Storage) WorkerOption { return func(w *Worker) { w.defStorage = s } }
 
-// Worker runs recording jobs inside tessera-recorder.
+// Worker runs recording jobs inside the media server.
 type Worker struct {
 	cfg        *Config
 	logger     *slog.Logger
@@ -89,7 +87,7 @@ func NewWorker(cfg *Config, reg prometheus.Registerer, logger *slog.Logger, opts
 		w.defStorage = st
 	}
 	if w.conn == nil {
-		w.conn = ClientConnector{Logger: logger}
+		return nil, errors.New("recorder: no connector (use WithConnector)")
 	}
 	if reg != nil {
 		w.stats.register(reg)

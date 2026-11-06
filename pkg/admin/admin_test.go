@@ -128,19 +128,12 @@ func (f *fakeRecordings) GetRecording(_ context.Context, id string) (*tesserav1.
 	}
 	return i, nil
 }
-func (f *fakeRecordings) ClaimJob(context.Context, *tesserav1.ClaimJobRequest) (*tesserav1.ClaimJobResponse, error) {
-	return &tesserav1.ClaimJobResponse{Job: &tesserav1.RecordingJob{WsUrl: "ws://x", Token: "t"}}, nil
-}
-func (f *fakeRecordings) UpdateJob(context.Context, *tesserav1.UpdateJobRequest) error { return nil }
-func (f *fakeRecordings) Heartbeat(context.Context, *tesserav1.HeartbeatRequest) (*tesserav1.HeartbeatResponse, error) {
-	return &tesserav1.HeartbeatResponse{StopRecordingIds: []string{"x"}}, nil
-}
 
 func newTestServer(t *testing.T) (*Server, *fakeRooms, *fakeRecordings) {
 	t.Helper()
 	rooms, recs := newFakeRooms(), &fakeRecordings{}
 	s := NewServer(Params{
-		Rooms: rooms, Recordings: recs, Workers: recs,
+		Rooms: rooms, Recordings: recs,
 		Verifier: auth.NewVerifier(auth.StaticKeys{testKey: testSecret}),
 	})
 	return s, rooms, recs
@@ -225,7 +218,7 @@ func TestGrantTable(t *testing.T) {
 		"room_record":     func(g *auth.RoomGrant) { g.RoomRecord = true },
 		"recorder_worker": func(g *auth.RoomGrant) { g.RecorderWorker = true },
 	}
-	rs, rc, wk := "/twirp/"+RoomServiceName+"/", "/twirp/"+RecordingServiceName+"/", "/twirp/"+RecorderWorkerServiceName+"/"
+	rs, rc := "/twirp/"+RoomServiceName+"/", "/twirp/"+RecordingServiceName+"/"
 	cases := []rpcCase{
 		{rs + "CreateRoom", `{"name":"r1"}`, "room_create", nil},
 		{rs + "ListRooms", `{}`, "room_list", nil},
@@ -239,9 +232,6 @@ func TestGrantTable(t *testing.T) {
 		{rc + "StopRecording", `{"recordingId":"REC_1"}`, "room_record", nil},
 		{rc + "ListRecordings", `{"room":"r1"}`, "room_record", nil},
 		{rc + "GetRecording", `{"recordingId":"REC_1"}`, "room_record", nil},
-		{wk + "ClaimJob", `{"workerId":"w"}`, "recorder_worker", nil},
-		{wk + "UpdateJob", `{"workerId":"w","recordingId":"REC_1"}`, "recorder_worker", nil},
-		{wk + "Heartbeat", `{"workerId":"w"}`, "recorder_worker", nil},
 		{rs + "DeleteRoom", `{"room":"tmp"}`, "room_create", nil},
 	}
 	for _, c := range cases {
@@ -342,7 +332,6 @@ func TestClientRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(s)
 	defer srv.Close()
 	c := NewClient(srv.URL, testKey, testSecret, FullGrant())
-	w := NewClient(srv.URL, testKey, testSecret, WorkerGrant())
 	ctx := context.Background()
 
 	room, err := c.CreateRoom(ctx, &tesserav1.CreateRoomRequest{Name: "demo", Metadata: "m"})
@@ -392,19 +381,6 @@ func TestClientRoundTrip(t *testing.T) {
 	}
 	if err := c.DeleteRoom(ctx, "demo"); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("delete twice: %v", err)
-	}
-	if j, err := w.ClaimJob(ctx, &tesserav1.ClaimJobRequest{WorkerId: "w"}); err != nil || j.Job.Token != "t" {
-		t.Fatalf("claim: %v %v", j, err)
-	}
-	if err := w.UpdateJob(ctx, &tesserav1.UpdateJobRequest{WorkerId: "w"}); err != nil {
-		t.Fatal(err)
-	}
-	if h, err := w.Heartbeat(ctx, &tesserav1.HeartbeatRequest{WorkerId: "w"}); err != nil || len(h.StopRecordingIds) != 1 {
-		t.Fatalf("heartbeat: %v %v", h, err)
-	}
-	// Worker token cannot list rooms.
-	if _, err := w.ListRooms(ctx); !errors.Is(err, errs.ErrPermissionDenied) {
-		t.Fatalf("worker list rooms: %v", err)
 	}
 }
 

@@ -48,9 +48,9 @@ viewers (see `docs/STATS.md`), so dashboard load does not grow with viewers.
 
 ## Configuration
 
-Recorders are discovered through the environment variable
-`TESSERA_DASHBOARD_RECORDERS=http://recorder:6790,http://recorder2:6790` (comma-separated ops
-listener URLs; `/stats` is appended, see `docs/RECORDING.md`). Unset = no recorder section.
+The recorder section shows the server's built-in recorder (its `/recorder/stats` on the metrics
+listener). `TESSERA_DASHBOARD_RECORDERS` (comma-separated base URLs, `/stats` appended) can add
+other nodes' recorders.
 
 ## Development
 

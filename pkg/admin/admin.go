@@ -1,10 +1,9 @@
 // Package admin serves the Twirp-style admin API (ADR-0008, PROTOCOL.md 3):
-// tessera.v1.RoomService, tessera.v1.RecordingService and the internal
-// tessera.v1.RecorderWorkerService, with JWT grant checks and Twirp error
-// mapping. It also provides a small Twirp client used by Go tools.
+// tessera.v1.RoomService and tessera.v1.RecordingService, with JWT grant checks
+// and Twirp error mapping. It also provides a small Twirp client used by Go tools.
 //
-// Ownership: WP3. Consumes room.Admin (WP1), recorder.Service and
-// recorder.WorkerAPI (WP4), auth.Verifier (WP1).
+// Ownership: WP3. Consumes room.Admin (WP1), recorder.Service (WP4) and
+// auth.Verifier (WP1).
 package admin
 
 import (
@@ -32,9 +31,8 @@ const PathPrefix = "/twirp/"
 
 // Service names served.
 const (
-	RoomServiceName           = "tessera.v1.RoomService"
-	RecordingServiceName      = "tessera.v1.RecordingService"
-	RecorderWorkerServiceName = "tessera.v1.RecorderWorkerService"
+	RoomServiceName      = "tessera.v1.RoomService"
+	RecordingServiceName = "tessera.v1.RecordingService"
 )
 
 // MaxBodyBytes limits request bodies.
@@ -44,7 +42,6 @@ const MaxBodyBytes = 4 << 20
 type Params struct {
 	Rooms      room.Admin
 	Recordings recorder.Service
-	Workers    recorder.WorkerAPI
 	Verifier   auth.Verifier
 	Registry   prometheus.Registerer
 	Logger     *slog.Logger
