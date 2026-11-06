@@ -75,17 +75,23 @@ export interface RoomDeps {
   createSignal(): SignalClient;
   createTransport(target: SignalTarget, config: RTCConfiguration): PCTransport;
   sleep(ms: number): Promise<void>;
+  /** Random number in [0, 1) for reconnect jitter; 0.5 (no jitter) when absent. */
+  random?(): number;
 }
 
 const defaultDeps: RoomDeps = {
   createSignal: () => new SignalClient(),
   createTransport: (t, c) => new PCTransport(t, c),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  random: Math.random,
 };
 
-/** Delay before reconnect attempt `attempt` (0-based): 300 ms doubling up to 5 s. */
-export function reconnectDelay(attempt: number): number {
-  return Math.min(300 * 2 ** attempt, 5000);
+/**
+ * Delay before reconnect attempt `attempt` (0-based): 300 ms doubling up to 5 s, scaled by
+ * 0.5-1.5 from `random` so clients of a restarted server do not all retry at once.
+ */
+export function reconnectDelay(attempt: number, random = 0.5): number {
+  return Math.round(Math.min(300 * 2 ** attempt, 5000) * (0.5 + random));
 }
 
 /** Listener signatures of {@link Room} events. */
@@ -405,12 +411,22 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
 
   // ---- RemoteEngine ----
 
+  // Called from timers (adaptive stream) too: while reconnecting the socket is down and
+  // these throw; drop the update rather than surface an uncaught error.
   sendSubscription(trackSids: string[], subscribe: boolean): void {
-    this.#signal?.sendSubscription(trackSids, subscribe);
+    try {
+      this.#signal?.sendSubscription(trackSids, subscribe);
+    } catch {
+      /* not connected */
+    }
   }
 
   sendTrackSettings(settings: TrackSettingsInit): void {
-    this.#signal?.sendTrackSettings(settings);
+    try {
+      this.#signal?.sendTrackSettings(settings);
+    } catch {
+      /* not connected */
+    }
   }
 
   // ---- session ----
@@ -852,7 +868,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
             if (err.code === "resume_failed") full = true;
           }
           if (attempt === 1) full = true; // resume keeps failing: rejoin
-          await this.#deps.sleep(reconnectDelay(attempt));
+          await this.#deps.sleep(reconnectDelay(attempt, this.#deps.random?.() ?? 0.5));
         }
       }
       if (!this.#intentional) this.#teardown(DisconnectReason.SIGNAL_TIMEOUT);
@@ -876,7 +892,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     const restart = stale(this.#pub) || (this.#sub !== undefined && stale(this.#sub) && this.#sub.pc.connectionState !== "new");
     this.#sendSyncState(signal, restart);
     if (restart && this.#pub) await this.#pub.negotiate({ iceRestart: true });
-    for (const e of this.#local.values()) if (e.track.isMuted) signal.sendMute(e.sid, true);
+    // Send every track's mute state: a change made while disconnected was lost.
+    for (const e of this.#local.values()) signal.sendMute(e.sid, e.track.isMuted);
   }
 
   #sendSyncState(signal: SignalClient, iceRestart = false): void {
@@ -978,7 +995,13 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     this.#republish = undefined;
     this.#closeSession();
     for (const identity of [...this.remoteParticipants.keys()]) this.#removeRemote(identity);
-    for (const e of this.#local.values()) e.track.engine = undefined;
+    // The session is over (left, kicked, or reconnecting gave up): release the camera and
+    // mic and forget the publications, so a later connect publishes afresh.
+    for (const e of this.#local.values()) {
+      e.track.engine = undefined;
+      e.track.stop();
+      this.localParticipant.removePublication(e.sid);
+    }
     this.#local.clear();
     this.#pendingTracks.clear();
     this.#bySid.clear();

@@ -103,6 +103,7 @@ const sleeps: number[] = [];
 function newRoom(opts = {}) {
   return new Room(opts, {
     createSignal: () => new FakeSignal(),
+    random: () => 0.5, // no jitter
     createTransport: (target) => {
       const t = fakeTransport(target);
       transports.push(t);
@@ -446,6 +447,10 @@ describe("errors", () => {
 
 describe("reconnectDelay", () => {
   it("doubles and caps at 5 s", () => {
-    expect([0, 1, 2, 3, 4, 5, 9].map(reconnectDelay)).toEqual([300, 600, 1200, 2400, 4800, 5000, 5000]);
+    expect([0, 1, 2, 3, 4, 5, 9].map((a) => reconnectDelay(a))).toEqual([300, 600, 1200, 2400, 4800, 5000, 5000]);
+  });
+
+  it("spreads retries by 0.5-1.5x", () => {
+    expect([reconnectDelay(2, 0), reconnectDelay(2, 0.5), reconnectDelay(2, 0.999)]).toEqual([600, 1200, 1799]);
   });
 });
