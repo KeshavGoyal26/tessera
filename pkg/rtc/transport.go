@@ -303,13 +303,32 @@ func (t *transport) Stats() TransportStats {
 	}
 	t.mu.Unlock()
 	if s.Connected {
-		if sctp := t.pc.SCTP(); sctp != nil {
-			if pair, err := sctp.Transport().ICETransport().GetSelectedCandidatePair(); err == nil && pair != nil {
+		if ice := t.iceTransport(); ice != nil {
+			if pair, err := ice.GetSelectedCandidatePair(); err == nil && pair != nil {
 				s.CandidateType = candidateType(pair.Remote)
+			}
+			if ps, ok := ice.GetSelectedCandidatePairStats(); ok && ps.CurrentRoundTripTime > 0 {
+				s.RTT = time.Duration(ps.CurrentRoundTripTime * float64(time.Second))
 			}
 		}
 	}
 	return s
+}
+
+// iceTransport returns the PeerConnection's ICE transport (bundled: one for all).
+func (t *transport) iceTransport() *webrtc.ICETransport {
+	if sctp := t.pc.SCTP(); sctp != nil && sctp.Transport() != nil {
+		return sctp.Transport().ICETransport()
+	}
+	for _, tr := range t.pc.GetTransceivers() {
+		if r := tr.Receiver(); r != nil && r.Transport() != nil {
+			return r.Transport().ICETransport()
+		}
+		if s := tr.Sender(); s != nil && s.Transport() != nil {
+			return s.Transport().ICETransport()
+		}
+	}
+	return nil
 }
 
 func candidateType(c *webrtc.ICECandidate) string {

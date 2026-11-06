@@ -282,6 +282,15 @@ func (r *ReceiverImpl) ReadPacket(dst []byte, spatial int32, sn uint16) (int, er
 }
 
 // Buffer returns the buffer of a layer (nil if absent).
+// SetRTT passes the publisher round-trip time to every layer's buffer.
+func (r *ReceiverImpl) SetRTT(d time.Duration) {
+	for i := range r.layers {
+		if l := r.layers[i].Load(); l != nil {
+			l.buf.SetRTT(d)
+		}
+	}
+}
+
 func (r *ReceiverImpl) Buffer(spatial int32) *buffer.Buffer {
 	if l := r.layers[spatial].Load(); l != nil {
 		return l.buf
@@ -418,6 +427,23 @@ func (s TrackRemoteSource) RID() string { return s.T.RID() }
 
 // ReceptionReports builds RTCP reception reports for every layer (RR towards
 // the publisher). It must be called from a single goroutine (the RTCP ticker).
+func (r *ReceiverImpl) isAudio() bool {
+	return strings.HasPrefix(strings.ToLower(r.p.Codec.MimeType), "audio/")
+}
+
+// maxSubscriberLoss is the highest loss fraction (0-255) subscribers report.
+func (r *ReceiverImpl) maxSubscriberLoss() uint8 {
+	var worst uint8
+	if downs := r.downs.Load(); downs != nil {
+		for _, d := range *downs {
+			if l, ok := d.(interface{ ReportedFractionLost() uint8 }); ok {
+				worst = max(worst, l.ReportedFractionLost())
+			}
+		}
+	}
+	return worst
+}
+
 func (r *ReceiverImpl) ReceptionReports() []rtcp.ReceptionReport {
 	var out []rtcp.ReceptionReport
 	now := Now()
@@ -436,6 +462,13 @@ func (r *ReceiverImpl) ReceptionReports() []rtcp.ReceptionReport {
 		var frac uint8
 		if expInt > recvInt && expInt > 0 {
 			frac = uint8((expInt - recvInt) * 256 / expInt)
+		}
+		if r.isAudio() {
+			// Opus sizes its in-band FEC from the loss its receiver reports. Here
+			// that receiver is this server, which sees only the publisher's own
+			// link; listeners behind lossy downlinks would get no FEC. Report the
+			// worst loss any subscriber sees (as a direct call would).
+			frac = max(frac, r.maxSubscriberLoss())
 		}
 		rr := rtcp.ReceptionReport{
 			SSRC: l.ssrc, FractionLost: frac, TotalLost: uint32(min(st.PacketsLost, 0x7fffff)),

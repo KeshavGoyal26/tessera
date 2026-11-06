@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 )
@@ -137,6 +138,7 @@ type Buffer struct {
 	hdr         Header
 
 	received, bytes, dup, ooo, nacks atomic.Uint64
+	rtt                              atomic.Int64 // ns, sender round trip (NACK timing)
 	highest, first                   atomic.Uint64
 	jitterBits                       atomic.Uint64
 	lastTS                           atomic.Uint32
@@ -186,6 +188,9 @@ func (b *Buffer) alloc() {
 // Write copies pkt into the ring, parses it and returns the slot's ExtPacket.
 // arrival is monotonic nanoseconds. Duplicates and packets older than the ring
 // return ErrDuplicate / ErrTooOld. No allocation in steady state.
+// SetRTT sets the round-trip time to the sender, used to pace NACK retries.
+func (b *Buffer) SetRTT(d time.Duration) { b.rtt.Store(int64(d)) }
+
 func (b *Buffer) Write(pkt []byte, arrival int64) (*ExtPacket, error) {
 	h := &b.hdr
 	if err := ParseHeader(pkt, h); err != nil {
@@ -374,7 +379,7 @@ func (b *Buffer) ParseExtPacket(raw []byte, e *ExtPacket) error {
 // packets on a 20 ms cadence). now is monotonic nanoseconds.
 func (b *Buffer) MissingSequenceNumbers(dst []uint16, now int64) []uint16 {
 	before := len(dst)
-	dst = b.nack.collect(dst, now, b.highestSN, uint64(len(b.pkts)))
+	dst = b.nack.collect(dst, now, b.highestSN, uint64(len(b.pkts)), b.rtt.Load())
 	if len(dst) > before {
 		b.nacks.Add(uint64(len(dst) - before))
 	}

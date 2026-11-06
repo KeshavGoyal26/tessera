@@ -205,3 +205,39 @@ func FuzzBufferWrite(f *testing.F) {
 		}
 	})
 }
+
+// On a 350 ms RTT link a NACK is repeated once per round trip and kept for several
+// round trips; the old fixed timing (every 20 ms, give up after 300 ms) spent all
+// its tries before the first retransmission could arrive.
+func TestNACKRetriesFollowRTT(t *testing.T) {
+	var q nackQueue
+	const ms = int64(1e6)
+	rtt := 350 * ms
+	q.addRange(100, 101, 0)
+	sends := 0
+	var at []int64
+	for now := int64(0); now <= 3000*ms; now += 10 * ms {
+		if out := q.collect(nil, now, 200, 1000, rtt); len(out) > 0 {
+			sends++
+			at = append(at, now)
+		}
+	}
+	if sends < 3 || sends > 5 {
+		t.Fatalf("sent %d NACKs at %v, want one per ~RTT for 4 RTTs", sends, at)
+	}
+	for i := 1; i < len(at); i++ {
+		if at[i]-at[i-1] < rtt {
+			t.Fatalf("retries %v closer than the RTT", at)
+		}
+	}
+	// Low RTT keeps the fast 20 ms retry.
+	var q2 nackQueue
+	q2.addRange(100, 101, 0)
+	n := 0
+	for now := int64(0); now <= 100*ms; now += 10 * ms {
+		n += len(q2.collect(nil, now, 200, 1000, 0))
+	}
+	if n < 5 {
+		t.Fatalf("low RTT: %d NACKs in 100 ms, want ~6", n)
+	}
+}

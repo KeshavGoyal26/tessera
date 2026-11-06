@@ -1,11 +1,13 @@
 package rtc
 
 import (
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
@@ -74,6 +76,57 @@ func TestReceiverCloseClosesConcurrentlyAddedDownTracks(t *testing.T) {
 			if !d.closed.Load() {
 				t.Fatalf("DownTrack %s accepted but never closed", d.id)
 			}
+		}
+	}
+}
+
+type blockingSource struct{ done chan struct{} }
+
+func (s blockingSource) Read([]byte) (int, error) { <-s.done; return 0, io.EOF }
+func (blockingSource) SSRC() uint32               { return 42 }
+func (blockingSource) RID() string                { return "" }
+
+type lossyDown struct {
+	closeCountingDown
+	frac uint8
+}
+
+func (d *lossyDown) ReportedFractionLost() uint8 { return d.frac }
+
+// The receiver report for an audio track carries the worst subscriber loss, so the
+// publisher's Opus encoder adds in-band FEC for listeners behind lossy links.
+func TestAudioReceiverReportCarriesSubscriberLoss(t *testing.T) {
+	for _, tc := range []struct {
+		mime string
+		kind webrtc.RTPCodecType
+		want uint8
+	}{{webrtc.MimeTypeOpus, webrtc.RTPCodecTypeAudio, 64}, {webrtc.MimeTypeVP8, webrtc.RTPCodecTypeVideo, 0}} {
+		clock := uint32(48000)
+		if tc.kind == webrtc.RTPCodecTypeVideo {
+			clock = 90000
+		}
+		r := NewReceiver(ReceiverParams{TrackID: "TR_x", StreamID: "PA_x", Kind: tc.kind,
+			Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: tc.mime, ClockRate: clock}}})
+		buf := buffer.New(buffer.Config{Slots: 64, ClockRate: clock, MimeType: tc.mime})
+		for i := range 10 {
+			p := rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SequenceNumber: uint16(100 + i), Timestamp: uint32(960 * i), SSRC: 42}, Payload: []byte{1, 2, 3}}
+			raw, _ := p.Marshal()
+			if _, err := buf.Write(raw, int64(i)*20e6); err != nil {
+				t.Fatal(err)
+			}
+		}
+		src := blockingSource{done: make(chan struct{})}
+		if err := r.AddLayer(0, src, buf); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.AddDownTrack(&lossyDown{closeCountingDown: closeCountingDown{id: "a"}, frac: 64}); err != nil {
+			t.Fatal(err)
+		}
+		rrs := r.ReceptionReports()
+		close(src.done)
+		r.Close()
+		if len(rrs) != 1 || rrs[0].FractionLost != tc.want {
+			t.Fatalf("%s: reports %+v, want fraction lost %d", tc.mime, rrs, tc.want)
 		}
 	}
 }

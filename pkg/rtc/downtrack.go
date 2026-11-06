@@ -386,6 +386,10 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 	}
 }
 
+// ReportedFractionLost is the loss fraction (0-255) in the subscriber's last
+// receiver report for this track.
+func (d *DownTrackImpl) ReportedFractionLost() uint8 { return uint8(d.rrFraction.Load()) }
+
 // SenderReport returns an RTCP SR for this DownTrack derived from the
 // publisher's last SR of the current layer, translated through the
 // timestamp offset. Called by the subscriber's RTCP ticker.
@@ -413,9 +417,12 @@ func (d *DownTrackImpl) SenderReport() *rtcp.SenderReport {
 	if clock == 0 {
 		clock = 90000
 	}
-	// Advance the publisher's mapping to now.
+	// Advance the publisher's RTP mapping to now, stamped with this server's
+	// clock: the subscriber's RR echoes the NTP time back (LSR), and RTT is
+	// computed against ntpNow. Using the publisher's NTP clock here made that
+	// subtraction meaningless (any clock offset underflowed it), so RTT was 0.
 	elapsed := time.Duration(Now() - ly.srArrival.Load())
-	ntp := ly.srNTP.Load() + uint64(elapsed.Seconds()*float64(1<<32))
+	ntp := ntpNow()
 	rtpTS := ly.srRTP.Load() + uint32(elapsed.Seconds()*float64(clock)) - off
 	return &rtcp.SenderReport{SSRC: d.ssrc, NTPTime: ntp, RTPTime: rtpTS,
 		PacketCount: uint32(d.meter.Packets()), OctetCount: uint32(d.meter.Bytes())}

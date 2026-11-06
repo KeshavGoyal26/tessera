@@ -318,6 +318,24 @@ func (p *Participant) rtcpLoop() {
 			ptracks = append(ptracks, tr)
 		}
 		p.mu.Unlock()
+		// Round trips measured on the media paths (ICE) pace NACK retries towards
+		// the publisher and the subscriber's congestion controller.
+		if pub != nil {
+			if rtt := pub.Stats().RTT; rtt > 0 {
+				for _, r := range recvs {
+					r.SetRTT(rtt)
+				}
+			}
+		}
+		if sub != nil {
+			if rtt := sub.Stats().RTT; rtt > 0 {
+				p.mu.Lock()
+				if p.twcc != nil {
+					p.twcc.Est.OnRTT(rtt)
+				}
+				p.mu.Unlock()
+			}
+		}
 		now := time.Now()
 		for _, tr := range ptracks {
 			if upd := tr.dynacast(now); upd != nil {

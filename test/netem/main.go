@@ -171,6 +171,12 @@ func (g *relayGen) AllocatePacketConn(c pturn.AllocateListenerConfig) (net.Packe
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	listen := flag.String("listen", "127.0.0.1:3478", "TURN UDP listen address")
 	ctl := flag.String("ctl", "127.0.0.1:3479", "HTTP control address (GET /set, /stats)")
 	p := Profile{}
@@ -188,7 +194,7 @@ func main() {
 	var lc net.ListenConfig
 	pc, err := lc.ListenPacket(context.Background(), "udp4", *listen)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	host, _, _ := net.SplitHostPort(*listen)
 	key := pturn.GenerateAuthKey("netem", "netem", "netem")
@@ -204,7 +210,7 @@ func main() {
 		}},
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() { _ = srv.Close() }()
 
@@ -232,5 +238,5 @@ func main() {
 	})
 	log.Printf("netem TURN on %s (user netem/netem), control on http://%s, profile %+v", *listen, *ctl, p)
 	srv2 := &http.Server{Addr: *ctl, ReadHeaderTimeout: 5 * time.Second}
-	log.Fatal(srv2.ListenAndServe())
+	return srv2.ListenAndServe()
 }
