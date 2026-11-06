@@ -69,7 +69,9 @@ fi
 
 RTC_IPS=""
 if [[ "$HOST" =~ ^[0-9.]+$ ]]; then
-  if [ "$HOST" = 127.0.0.1 ]; then ips='["127.0.0.1"]'; else ips="[\"$HOST\", \"127.0.0.1\"]"; fi
+  # One address only: with two equivalent candidates (LAN and loopback) Chrome may
+  # switch paths mid-call, and media sent on the old path is lost for about a second.
+  ips="[\"$HOST\"]"
   RTC_IPS="rtc:
   ips: $ips"
 fi

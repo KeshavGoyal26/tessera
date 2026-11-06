@@ -185,12 +185,12 @@ func (b *Buffer) alloc() {
 	b.extSNs = make([]uint64, b.cfg.Slots)
 }
 
-// Write copies pkt into the ring, parses it and returns the slot's ExtPacket.
-// arrival is monotonic nanoseconds. Duplicates and packets older than the ring
-// return ErrDuplicate / ErrTooOld. No allocation in steady state.
 // SetRTT sets the round-trip time to the sender, used to pace NACK retries.
 func (b *Buffer) SetRTT(d time.Duration) { b.rtt.Store(int64(d)) }
 
+// Write copies pkt into the ring, parses it and returns the slot's ExtPacket.
+// arrival is monotonic nanoseconds. Duplicates and packets older than the ring
+// return ErrDuplicate / ErrTooOld. No allocation in steady state.
 func (b *Buffer) Write(pkt []byte, arrival int64) (*ExtPacket, error) {
 	h := &b.hdr
 	if err := ParseHeader(pkt, h); err != nil {

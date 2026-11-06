@@ -37,6 +37,16 @@ var videoFeedback = []webrtc.RTCPFeedback{
 	{Type: "goog-remb"}, {Type: "ccm", Parameter: "fir"}, {Type: videoRTCPFBNack}, {Type: videoRTCPFBNack, Parameter: "pli"}, {Type: "transport-cc"},
 }
 
+// MimeTypeRED is RFC 2198 redundant audio; here it always carries Opus.
+const MimeTypeRED = "audio/red"
+
+// redCodec lets browsers (Chrome, Safari) publish Opus with the previous frame
+// repeated in each packet, so a lost packet is rebuilt from the next one. The
+// server forwards it unchanged to subscribers that negotiated it and strips it
+// to the primary Opus frame for the others (DownTrack). It is registered by the
+// server only: pkg/client and the recorder keep receiving plain Opus.
+var redCodec = webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: MimeTypeRED, ClockRate: 48000, Channels: 2, SDPFmtpLine: "111/111"}, PayloadType: 63}
+
 // Codecs returns the codec set of ADR-0006 filtered by enabled MIME types
 // (nil = all). Exported for pkg/client.
 func Codecs(enabled []string) []webrtc.RTPCodecParameters {
@@ -293,6 +303,12 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 	}
 
 	codecs := Codecs(rtcCfg.EnabledCodecs)
+	for _, c := range codecs {
+		if strings.EqualFold(c.MimeType, webrtc.MimeTypeOpus) {
+			codecs = append(codecs, redCodec)
+			break
+		}
+	}
 	pubME, err := NewMediaEngine(codecs, true)
 	if err != nil {
 		return nil, err

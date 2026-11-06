@@ -309,7 +309,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       height: isVideo ? height : 0,
       muted: track.isMuted,
       disableDtx: options.dtx === false,
-      red: options.red ?? false,
+      red: !isVideo && (options.red ?? true),
       source: trackSourceToProto(source),
       layers,
       stream: stream.id,
@@ -324,6 +324,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     });
     entry.transceiver = transceiver;
     if (isVideo) this.#preferCodec(transceiver, options.videoCodec);
+    else if (options.red ?? true) this.#preferRed(transceiver);
     this.#local.set(track, entry);
     track.sid = info.sid;
     track.engine = this;
@@ -746,6 +747,24 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       }, 10_000);
       this.#waiters.set(cid, { resolve, reject, timer });
     });
+  }
+
+  /**
+   * Puts RED (Opus with the previous frame repeated in each packet) first, so a
+   * lost audio packet is rebuilt from the next one. Browsers without RED keep Opus;
+   * a server that does not accept RED answers with Opus.
+   */
+  #preferRed(tr: RTCRtpTransceiver): void {
+    if (typeof RTCRtpSender === "undefined" || !tr.setCodecPreferences) return;
+    const caps = RTCRtpSender.getCapabilities("audio");
+    const isRed = (mime: string) => mime.toLowerCase() === "audio/red";
+    if (!caps?.codecs.some((c) => isRed(c.mimeType))) return;
+    const sorted = [...caps.codecs].sort((a, b) => Number(isRed(b.mimeType)) - Number(isRed(a.mimeType)));
+    try {
+      tr.setCodecPreferences(sorted);
+    } catch {
+      /* the browser rejects the list: keep its default */
+    }
   }
 
   #preferCodec(tr: RTCRtpTransceiver, requested: string | undefined): void {

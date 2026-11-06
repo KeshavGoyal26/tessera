@@ -281,7 +281,6 @@ func (r *ReceiverImpl) ReadPacket(dst []byte, spatial int32, sn uint16) (int, er
 	return l.buf.GetPacket(dst, sn)
 }
 
-// Buffer returns the buffer of a layer (nil if absent).
 // SetRTT passes the publisher round-trip time to every layer's buffer.
 func (r *ReceiverImpl) SetRTT(d time.Duration) {
 	for i := range r.layers {
@@ -291,6 +290,7 @@ func (r *ReceiverImpl) SetRTT(d time.Duration) {
 	}
 }
 
+// Buffer returns the buffer of a layer (nil if absent).
 func (r *ReceiverImpl) Buffer(spatial int32) *buffer.Buffer {
 	if l := r.layers[spatial].Load(); l != nil {
 		return l.buf
@@ -425,8 +425,6 @@ func (s TrackRemoteSource) SSRC() uint32 { return uint32(s.T.SSRC()) }
 // RID implements RTPSource.
 func (s TrackRemoteSource) RID() string { return s.T.RID() }
 
-// ReceptionReports builds RTCP reception reports for every layer (RR towards
-// the publisher). It must be called from a single goroutine (the RTCP ticker).
 func (r *ReceiverImpl) isAudio() bool {
 	return strings.HasPrefix(strings.ToLower(r.p.Codec.MimeType), "audio/")
 }
@@ -444,6 +442,8 @@ func (r *ReceiverImpl) maxSubscriberLoss() uint8 {
 	return worst
 }
 
+// ReceptionReports builds RTCP reception reports for every layer (RR towards
+// the publisher). It must be called from a single goroutine (the RTCP ticker).
 func (r *ReceiverImpl) ReceptionReports() []rtcp.ReceptionReport {
 	var out []rtcp.ReceptionReport
 	now := Now()

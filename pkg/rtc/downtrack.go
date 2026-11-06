@@ -74,6 +74,7 @@ type DownTrackImpl struct {
 	retx       stats.Counter
 	rrLost     atomic.Uint32
 	rrFraction atomic.Uint32
+	redStrip   bool // guarded by mu: send RED as its primary Opus frame
 	rrJitter   atomic.Uint32
 	rttMs      atomic.Uint32
 }
@@ -97,6 +98,12 @@ func NewDownTrack(p DownTrackParams) *DownTrackImpl {
 // Bind implements webrtc.TrackLocal.
 func (d *DownTrackImpl) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
 	want := d.r.Codec()
+	strip := false
+	if strings.EqualFold(want.MimeType, MimeTypeRED) && !hasCodec(ctx.CodecParameters(), MimeTypeRED) {
+		// The subscriber cannot take RED (Firefox, the recorder, Go/Java clients):
+		// send the primary Opus frame of each packet.
+		want.MimeType, strip = webrtc.MimeTypeOpus, true
+	}
 	var chosen *webrtc.RTPCodecParameters
 	for _, c := range ctx.CodecParameters() {
 		if !strings.EqualFold(c.MimeType, want.MimeType) {
@@ -118,6 +125,11 @@ func (d *DownTrackImpl) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParam
 	d.writer = ctx.WriteStream()
 	d.ssrc = uint32(ctx.SSRC())
 	d.pt = uint8(chosen.PayloadType)
+	d.redStrip = strip
+	if lg := d.r.p.Logger; lg != nil {
+		lg.Debug("downtrack bound", "track", d.p.TrackID, "subscriber", d.p.SubscriberID, "want", d.r.Codec().MimeType,
+			"codec", chosen.MimeType, "payload_type", chosen.PayloadType, "red_strip", strip, "offered", len(ctx.CodecParameters()))
+	}
 	if d.p.TWCC != nil {
 		for _, e := range ctx.HeaderExtensions() {
 			if e.URI == extTWCC {
@@ -198,6 +210,14 @@ func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket, layer int32) error {
 	if tp.HasVP8 {
 		n := simulcast.RewriteVP8(d.pay, pkt.Payload, &pkt.VP8, &tp.VP8)
 		payload = d.pay[:n]
+	}
+	if d.redStrip {
+		p, ok := redPrimary(payload)
+		if !ok {
+			d.mu.Unlock()
+			return nil
+		}
+		payload = p
 	}
 	err = d.writeLocked(tp.SequenceNumber, tp.Timestamp, pkt.Marker, payload, false)
 	if err == nil {
@@ -384,6 +404,40 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 		d.retx.Inc()
 		stats.Retransmits.Inc()
 	}
+}
+
+func hasCodec(cs []webrtc.RTPCodecParameters, mime string) bool {
+	for _, c := range cs {
+		if strings.EqualFold(c.MimeType, mime) {
+			return true
+		}
+	}
+	return false
+}
+
+// redPrimary returns the primary (last) block of an RFC 2198 RED payload. Each
+// redundant block has a 4-byte header with a 10-bit length; the final header is
+// one byte and its block runs to the end. ok is false for a malformed payload.
+func redPrimary(b []byte) (primary []byte, ok bool) {
+	i, skip := 0, 0
+	for {
+		if i >= len(b) {
+			return nil, false
+		}
+		if b[i]&0x80 == 0 {
+			i++
+			break
+		}
+		if i+4 > len(b) {
+			return nil, false
+		}
+		skip += int(b[i+2]&0x03)<<8 | int(b[i+3])
+		i += 4
+	}
+	if i+skip > len(b) {
+		return nil, false
+	}
+	return b[i+skip:], true
 }
 
 // ReportedFractionLost is the loss fraction (0-255) in the subscriber's last

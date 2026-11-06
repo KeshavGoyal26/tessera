@@ -40,6 +40,9 @@ type Profile struct {
 
 type counters struct {
 	Passed, Lost, QueueDrops uint64
+	// MaxLateMs is the worst delay of a delivery past its scheduled time since the
+	// last /stats read: when it grows, the tool itself (scheduling) adds jitter.
+	MaxLateMs float64
 }
 
 // link delivers packets in order after the profile's queueing, delay and loss.
@@ -72,6 +75,11 @@ func (l *link) run() {
 			time.Sleep(d)
 		}
 		k.send(k.data)
+		if late := float64(time.Since(k.at)) / 1e6; late > 0 {
+			l.mu.Lock()
+			l.c.MaxLateMs = max(l.c.MaxLateMs, late)
+			l.mu.Unlock()
+		}
 	}
 }
 
@@ -142,7 +150,9 @@ func (l *link) send(b []byte, send func([]byte)) {
 func (l *link) stats() counters {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.c
+	c := l.c
+	l.c.MaxLateMs = 0
+	return c
 }
 
 // impairedConn delays, drops and paces writes through a link.

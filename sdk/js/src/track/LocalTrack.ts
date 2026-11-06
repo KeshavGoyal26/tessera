@@ -14,7 +14,7 @@ export interface TrackPublishOptions {
   videoCodec?: string;
   /** Disable Opus DTX (audio only). */
   dtx?: boolean;
-  /** Request Opus RED (audio only). */
+  /** Send Opus as RED (redundant audio) where the browser supports it (audio only). Default true. */
   red?: boolean;
   /** Overrides the source detected from the track. */
   source?: TrackSource;

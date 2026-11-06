@@ -701,6 +701,8 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 
 // onTrack attaches an incoming track (or simulcast layer) to its Receiver.
 func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
+	p.room.m.logger.Debug("track received", "participant", p.identity, "codec", tr.Codec().MimeType,
+		"payload_type", tr.PayloadType(), "rid", tr.RID())
 	kind := tesserav1.TrackType_TRACK_TYPE_AUDIO
 	if tr.Kind() == webrtc.RTPCodecTypeVideo {
 		kind = tesserav1.TrackType_TRACK_TYPE_VIDEO
@@ -735,6 +737,9 @@ func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 			PLIThrottle: p.room.m.cfg.RTC.PLIThrottle, Logger: p.room.m.logger,
 		})
 		t.info.MimeType = tr.Codec().MimeType
+		if strings.EqualFold(t.info.MimeType, rtc.MimeTypeRED) {
+			t.info.MimeType = webrtc.MimeTypeOpus // RED is transport redundancy around Opus
+		}
 		t.info.Mid = rr.RTPTransceiver().Mid()
 		created = true
 		recv := t.recv
