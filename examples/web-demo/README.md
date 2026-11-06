@@ -3,9 +3,9 @@
 Two pages built with [vite](https://vite.dev) and the local [`@tessera/client`](../../sdk/js) SDK:
 
 - **`/` Live** (`index.html`, `src/live.ts`): presenters stream to the server, viewers see every
-  presenter and watch one or more at a time. One name field, an optional *Record me* tick, and
-  *Go live* / *Watch*. Query parameters: `?room=` (channel, default `live`), `?url=` (server),
-  `?name=`, `?record=1`.
+  presenter and watch one or more at a time. Name and room fields, an optional *Record me* tick, and
+  *Go live* / *Watch*. Query parameters: `?room=` (default `room1`), `?url=` (server),
+  `?name=` (default a random `Guest-NNNN`), `?record=1`.
 - **`/call.html` Video call** (`call.html`, `src/main.ts`): everyone sees everyone. Dark responsive
   grid, mute icons, active speaker ring, quality badge, receive-quality selector, stats overlay,
   screen share and a copy-invite-link button.

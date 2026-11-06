@@ -1,8 +1,8 @@
 // Presenter / viewer demo. Presenters publish to the server and receive nothing.
 // Viewers are hidden, see every presenter and subscribe only to the ones they watch.
 //
-// Query parameters: ?room= (channel, default "live"), ?url= (server, default ws://<host>:7880),
-// ?name=, ?record=1. window.room exposes the Room for debugging.
+// Query parameters: ?room= (default "room1"), ?name= (default a random Guest-NNNN),
+// ?url= (server, default ws://<host>:7880), ?record=1. window.room exposes the Room for debugging.
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 
@@ -15,7 +15,7 @@ const field = (name: string) => form.elements.namedItem(name) as HTMLInputElemen
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 const params = new URLSearchParams(location.search);
-const channel = params.get("room") || "live";
+let channel = "";
 const serverUrl = params.get("url") || `ws://${location.hostname}:7880`;
 
 let room: Room | undefined;
@@ -29,19 +29,13 @@ function toast(msg: string): void {
   toastTimer = window.setTimeout(() => (t.hidden = true), 2500);
 }
 
-function store(key: string, value?: string): string | null {
-  try {
-    if (value !== undefined) localStorage.setItem(key, value);
-    return localStorage.getItem(key);
-  } catch {
-    return null; // storage blocked
-  }
-}
-
 // ---- landing ---------------------------------------------------------------
 
-field("name").value = params.get("name") ?? store("tessera-demo-name") ?? "";
+field("name").value = params.get("name") ?? `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
+field("room").value = params.get("room") || "room1";
 field("record").checked = params.get("record") === "1";
+// A reload while in a room lands here on the room's history entry; make it the join card's.
+history.replaceState(null, "", location.href);
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -63,8 +57,11 @@ async function fetchToken(name: string, role: Role, record: boolean): Promise<st
 
 async function join(role: Role): Promise<void> {
   const name = field("name").value.trim();
-  if (!name) return;
-  store("tessera-demo-name", name);
+  channel = field("room").value.trim();
+  if (!name || !channel) return;
+  // Keep the room in the URL so a reload (after leaving) comes back to it.
+  params.set("room", channel);
+  history.replaceState(null, "", `${location.pathname}?${params}${location.hash}`);
   el("error").hidden = true;
   const buttons = form.querySelectorAll("button");
   for (const b of buttons) b.disabled = true;
@@ -77,6 +74,8 @@ async function join(role: Role): Promise<void> {
     r.on(RoomEvent.Reconnecting, () => setStatus(ConnectionState.Reconnecting))
       .on(RoomEvent.Reconnected, () => setStatus(ConnectionState.Connected))
       .on(RoomEvent.Disconnected, () => location.reload());
+    // In the room is its own history entry: Back (or Leave) returns to the join card.
+    history.pushState({ inRoom: true }, "", location.href);
     for (const n of document.querySelectorAll("[data-room]")) n.textContent = channel;
     setStatus(ConnectionState.Connected);
     el("landing").hidden = true;
@@ -151,7 +150,7 @@ const onClick = (id: string, fn: () => Promise<unknown>) =>
 onClick("p-mic", () => setMic(!pressed("p-mic")));
 onClick("p-cam", () => setCam(!pressed("p-cam")));
 onClick("p-screen", () => setScreen(!pressed("p-screen")));
-onClick("p-leave", async () => room?.disconnect());
+onClick("p-leave", async () => leave());
 
 // ---- viewer ----------------------------------------------------------------
 
@@ -206,7 +205,7 @@ el("watch-all").addEventListener("click", () => {
   viewerChose = true;
   for (const p of presenters()) if (!watched.has(p.identity)) watch(p);
 });
-el("w-leave").addEventListener("click", () => void room?.disconnect());
+el("w-leave").addEventListener("click", leave);
 
 const MEDIA: [TrackSource, string][] = [
   [TrackSource.Camera, '<svg class="ico" viewBox="0 0 24 24"><path d="M15 8v8H5V8h10Zm2 3 4-3v8l-4-3v-2Z"/></svg>'],
@@ -309,3 +308,11 @@ function onSubscribed(track: RemoteTrack, pub: RemoteTrackPublication, p: Remote
   }
   render();
 }
+
+/** Leaves the room by going back to the join card's history entry (popstate disconnects). */
+function leave(): void {
+  if ((history.state as { inRoom?: boolean } | null)?.inRoom) history.back();
+  else void room?.disconnect();
+}
+
+window.addEventListener("popstate", () => void room?.disconnect());

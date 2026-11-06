@@ -24,7 +24,7 @@ Ctrl-C stops everything. Logs are in `.demo/logs/`, recordings in `.demo/recordi
 `scripts/demo.sh --host <ip>` overrides the address printed and advertised for media.
 
 Before the audience arrives: open `http://localhost:5173/` in **three browser windows** (or add a
-phone, see LAN below), allow camera and microphone once, and leave the dashboard open in another
+phone, see LAN below). Allow camera and microphone once, and leave the dashboard open in another
 tab, signed in.
 
 ## The live demo
@@ -32,7 +32,8 @@ tab, signed in.
 Presenters stream to the server; viewers see every presenter and watch one or more at a time. It is
 not a call: presenters receive nothing and never see viewers.
 
-The page has one field (your name), a **Record me when I present** tick, and two buttons:
+The page has two fields, your name (pre-filled with a random `Guest-NNNN`) and the room (default
+`room1`), a **Record me when I present** tick, and two buttons:
 
 - **Go live** streams camera and mic. The bar has Mic, Camera, Screen and End.
 - **Watch** opens the viewer: a live list of presenters (with camera, mic, screen and REC state) and
@@ -40,15 +41,15 @@ The page has one field (your name), a **Record me when I present** tick, and two
   **Watch all**. Each tile has its own mute and ✕. Presenters you are not watching cost no
   bandwidth, and each tile gets the simulcast layer that fits its size.
 
-Everyone lands in the channel `live`; open `?room=<name>` for another one. `?url=ws://host:7880`
-points the page at another server.
+Everyone lands in `room1` unless they type another room (or open `?room=<name>`).
+`?url=ws://host:7880` points the page at another server.
 
 ## The 5-minute script
 
-**0:00 Go live (45 s).** In window A type a name, tick **Record me**, press **Go live**. In window B,
-another name, **Go live** (no tick). No token pasting: the page fetched one from `/dev/token`.
+**0:00 Go live (45 s).** In window A tick **Record me**, press **Go live**. In window B,
+press **Go live** (no tick). No token pasting: the page fetched one from `/dev/token`.
 
-**0:45 Watch (60 s).** In window C type a name and press **Watch**. A's stream appears at once and
+**0:45 Watch (60 s).** In window C press **Watch**. A's stream appears at once and
 both presenters are in the list, A with a **REC** marker. Click B to add it beside A, ✕ to drop it,
 **Watch all** to bring it back. Mute one tile. Press **Screen** in B: C gets a separate
 "(screen)" tile. Say: each presenter uploads once, the SFU sends each viewer only what they watch.
@@ -58,7 +59,7 @@ bandwidth before stepping a viewer up a simulcast layer, so there is no blurry w
 
 **2:15 Dashboard (90 s).** Switch to the dashboard tab.
 1. *Overview*: CPU, bandwidth, packets, and the room and participant counts.
-2. *Rooms*: expand `live` → presenter → tracks.
+2. *Rooms*: expand `room1` → presenter → tracks.
 3. *Track quality*: select A's video. Per-layer bitrate, fps, resolution, loss, and each
    subscriber's current and target layer.
 4. *Connectivity*: ICE candidate types, RTT.
