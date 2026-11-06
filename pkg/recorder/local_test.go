@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestTapNeverBlocksForwarding(t *testing.T) {
 	buf := make([]byte, 1500)
 	n := 0
 	for {
-		if _, err := tp.Read(buf); err == io.EOF {
+		if _, err := tp.Read(buf); errors.Is(err, io.EOF) {
 			break
 		}
 		n++
