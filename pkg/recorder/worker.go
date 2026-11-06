@@ -328,10 +328,13 @@ func (r *jobRun) execute(ctx context.Context) {
 	w.stats.jobStarted(r)
 	defer func() { w.stats.jobFinished(r) }()
 
-	st, err := storage.FromOptions(ctx, r.req.GetStorage(), w.defStorage)
-	if err == nil && r.req.GetStorage().GetLocal() != nil {
+	var st storage.Storage
+	var err error
+	if loc := r.req.GetStorage().GetLocal(); loc == nil {
+		st, err = storage.FromOptions(ctx, r.req.GetStorage(), w.defStorage)
+	} else {
 		// Per-request local directories live below the configured root.
-		dir := path.Clean("/" + r.req.GetStorage().GetLocal().GetDirectory())
+		dir := path.Clean("/" + loc.GetDirectory())
 		var opts []storage.LocalOption
 		if base := w.cfg.Storage.LocalBaseURL; base != "" {
 			opts = append(opts, storage.WithBaseURL(strings.TrimRight(base, "/")+dir))

@@ -48,7 +48,6 @@ func startServer(t *testing.T, mutate ...func(*config.Config)) *server {
 	cfg.Keys = map[string]string{apiKey: apiSecret}
 	cfg.RTC.UDPPort = 0
 	cfg.RTC.IPs = []string{"127.0.0.1"}
-	cfg.RTC.STUNServers = nil
 	cfg.Signal.ResumeWindow = 3 * time.Second
 	for _, m := range mutate {
 		m(cfg)

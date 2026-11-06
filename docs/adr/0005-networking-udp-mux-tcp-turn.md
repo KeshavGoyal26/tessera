@@ -19,8 +19,7 @@ open in firewalls and Kubernetes. Some enterprise networks block all UDP.
 2. **ICE-TCP passive candidates** on a single port (default `7881/tcp`) via
    `ice.NewTCPMuxDefault`; TCP candidates get lower priority so they are only used when UDP
    fails. RFC 4571 framing.
-3. **NAT 1:1 IPs**: `rtc.node_ip` (explicit) or `rtc.use_external_ip` (discover via STUN at
-   start-up) is advertised as host candidates (`SetNAT1To1IPs` with `ICECandidateTypeHost`),
+3. **NAT 1:1 IPs**: `rtc.node_ip` (explicit; STUN discovery at start-up was planned but not built) is advertised as host candidates (`SetNAT1To1IPs` with `ICECandidateTypeHost`),
    so no server-reflexive gathering per session is needed. IPv4 and IPv6 are both supported.
 4. **ICE-lite is not used**; the server runs full ICE so that it works behind NAT 1:1 and
    with ICE-TCP, but candidate gathering is limited to the mux sockets (no per-session

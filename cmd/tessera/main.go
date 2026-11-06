@@ -238,7 +238,8 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	case err = <-errCh:
 	}
 	logger.Info("shutting down")
-	dash.Close() // ends dashboard event streams, which would otherwise hold Shutdown for its full timeout
+	dash.Close()        // ends dashboard event streams, which would otherwise hold Shutdown for its full timeout
+	coordinator.Close() // ends recorder long-polls (ClaimJob) for the same reason
 	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = rooms.Drain(drainCtx)

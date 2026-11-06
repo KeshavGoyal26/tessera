@@ -211,9 +211,12 @@ func (r *Room) join(claims *auth.Claims, cp signal.ConnectParams, conn signal.Co
 		return nil, err
 	}
 	stats.ParticipantJoins.Inc()
-	go r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_JOINED, r, p, nil)
+	// Inline, not in goroutines: webhook Notify only enqueues, and the recording
+	// triggers only take the coordinator lock. Async calls could reorder a rejoin's
+	// joined/left and stop the new session's recording.
+	r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_JOINED, r, p, nil)
 	if rt := r.m.recording; rt != nil && p.kind == tesserav1.ParticipantInfo_KIND_STANDARD && (p.autoRecord || r.recordingEnabled()) {
-		go rt.ParticipantJoined(r.Name(), p.identity)
+		rt.ParticipantJoined(r.Name(), p.identity)
 	}
 	r.broadcastParticipant(p)
 	// Subscribe the newcomer to existing tracks.
@@ -243,19 +246,22 @@ func (r *Room) removeParticipant(p *Participant, reason tesserav1.DisconnectReas
 		delete(r.m.bySID, p.sid)
 	}
 	r.m.mu.Unlock()
+	// Snapshot first: close ends the receivers, whose onReceiverClosed removes
+	// tracks from p (and skips unsubscribing because p is closed).
+	tracks := p.publishedTracks()
 	if !p.close(reason, sendLeave) {
 		return
 	}
 	// Unsubscribe everybody from p's tracks.
 	for _, other := range r.Participants() {
-		for _, t := range p.publishedTracks() {
+		for _, t := range tracks {
 			other.unsubscribe(t.info.GetSid())
 		}
 	}
 	r.broadcastParticipant(p)
-	go r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_LEFT, r, p, nil)
+	r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_PARTICIPANT_LEFT, r, p, nil)
 	if rt := r.m.recording; rt != nil && p.kind == tesserav1.ParticipantInfo_KIND_STANDARD {
-		go rt.ParticipantLeft(r.Name(), p.identity)
+		rt.ParticipantLeft(r.Name(), p.identity)
 	}
 	if empty {
 		r.armDepartureTimer()
@@ -309,7 +315,7 @@ func (r *Room) close(reason tesserav1.DisconnectReason) {
 		r.removeParticipant(p, reason, true)
 	}
 	r.m.removeRoom(r)
-	go r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_ROOM_FINISHED, r, nil, nil)
+	r.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_ROOM_FINISHED, r, nil, nil)
 }
 
 // broadcast sends msg to every participant except `except`.

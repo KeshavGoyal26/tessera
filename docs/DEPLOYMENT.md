@@ -17,14 +17,13 @@ and by sharding rooms across independent nodes in your own routing layer. Measur
 | 6789 | TCP | `/metrics`, `/healthz`, `/readyz`, `/stats`, `/debug/pprof` | **private network only** |
 | 6790 | TCP | Recorder metrics | private |
 
-One UDP port serves all participants, so the firewall needs a single rule (`rtc.port_range_start/end` exists
-for environments that insist on a range). Use `/readyz` for load balancer and orchestrator probes.
+One UDP port serves all participants, so the firewall needs a single rule. Use `/readyz` for load balancer and orchestrator probes.
 
 ## 2. Addressing and NAT 1:1 (cloud VMs)
 
 The server must advertise an address the browser can reach.
 
-- **VM with a public IP on the NIC**: set `rtc.use_external_ip: true` (STUN discovery) or `rtc.node_ip`.
+- **VM with a public IP on the NIC**: nothing to set, or set `rtc.node_ip` to that IP.
 - **Cloud 1:1 NAT (AWS, GCP, Azure: the VM only sees its private IP)**: set `rtc.node_ip` to the public
   (elastic) IP. Candidates carry that address while the socket stays bound to the private one. This is the
   recommended setting; do not rely on STUN discovery behind NAT.
@@ -95,7 +94,7 @@ automatically after UDP, ICE-TCP and `turn:` fail (the SDK passes the list to `R
 
 - `development: false`; secrets in `keys:` of at least 32 bytes, loaded from the environment or `key_file`,
   never from git. Rotate by adding a second key, moving clients, removing the old one.
-- `limits.max_rooms`, `limits.max_participants` and `limits.joins_per_second_per_ip` set to values for the
+- `limits.max_rooms` and `limits.max_participants` set to values for the
   host (see section 6); `room.empty_timeout` to bound idle rooms.
 - `logging.level: info`, JSON logs on (default outside development).
 - `metrics.addr` bound to a private interface, `metrics.pprof` only if that interface is trusted.

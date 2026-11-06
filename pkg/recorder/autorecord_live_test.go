@@ -52,7 +52,6 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 	cfg.Keys = map[string]string{key: secret}
 	cfg.RTC.UDPPort = 0
 	cfg.RTC.IPs = []string{"127.0.0.1"}
-	cfg.RTC.STUNServers = nil
 	eng, err := rtc.NewEngine(cfg.RTC, cfg.TURN, nil, logger)
 	if err != nil {
 		t.Fatal(err)

@@ -503,8 +503,13 @@ func (p *Participant) close(reason tesserav1.DisconnectReason, sendLeave bool) b
 		_ = sub.Close()
 	}
 	if sendLeave {
+		// On shutdown (restart, rolling deploy) clients should rejoin, not give up.
+		action := tesserav1.LeaveRequest_ACTION_DISCONNECT
+		if reason == tesserav1.DisconnectReason_DISCONNECT_REASON_SERVER_SHUTDOWN {
+			action = tesserav1.LeaveRequest_ACTION_RECONNECT
+		}
 		p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Leave{Leave: &tesserav1.LeaveRequest{
-			Reason: reason, Action: tesserav1.LeaveRequest_ACTION_DISCONNECT}}})
+			Reason: reason, Action: action}}})
 	}
 	p.connMu.Lock()
 	c := p.conn

@@ -95,9 +95,9 @@ func (t *transport) HandleRemoteDescription(sd *tesserav1.SessionDescription) (*
 	desc := webrtc.SessionDescription{Type: typ, SDP: sd.GetSdp()}
 	if typ == webrtc.SDPTypeAnswer {
 		t.mu.Lock()
-		if sd.GetId() != 0 && sd.GetId() < t.offerID {
+		if !t.awaitAnswer || (sd.GetId() != 0 && sd.GetId() < t.offerID) {
 			t.mu.Unlock()
-			return nil, nil // stale answer
+			return nil, nil // stale or duplicate answer (an offer may have been resent)
 		}
 		t.mu.Unlock()
 		if err := t.pc.SetRemoteDescription(desc); err != nil {
@@ -142,16 +142,51 @@ func (t *transport) flushCandidatesLocked() {
 	t.pending = nil
 }
 
+// Bounds on ICE candidates queued before the remote description is set.
+const (
+	maxPendingCandidates = 64
+	maxCandidateLen      = 1024
+)
+
 // AddICECandidate implements Transport; candidates are queued until the
 // remote description is set.
 func (t *transport) AddICECandidate(c webrtc.ICECandidateInit) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.remoteSet {
+		// A client that trickles without ever negotiating must not grow this without bound.
+		if len(t.pending) >= maxPendingCandidates || len(c.Candidate) > maxCandidateLen {
+			return errs.New(errs.CodeResourceExhausted, "too many or too large ICE candidates before negotiation")
+		}
 		t.pending = append(t.pending, c)
 		return nil
 	}
 	return t.pc.AddICECandidate(c)
+}
+
+// AnswerTimeout is how long an offer waits for its answer before it is sent again. The
+// offer or answer can be lost with the signaling connection (a resume); without a resend
+// the transport would wait forever and the subscriber would never get new tracks.
+var AnswerTimeout = 5 * time.Second
+
+// resendIfUnanswered sends offer id again every AnswerTimeout until it is answered,
+// superseded or the transport closes.
+func (t *transport) resendIfUnanswered(id uint32) {
+	time.AfterFunc(AnswerTimeout, func() {
+		t.mu.Lock()
+		pending := !t.closed && t.awaitAnswer && t.offerID == id
+		t.mu.Unlock()
+		if !pending {
+			return
+		}
+		ld := t.pc.LocalDescription()
+		if ld == nil {
+			return
+		}
+		t.logger.Debug("subscriber offer unanswered, sending again", "id", id)
+		t.handler.OnOffer(&tesserav1.SessionDescription{Type: "offer", Sdp: ld.SDP, Id: id})
+		t.resendIfUnanswered(id)
+	})
 }
 
 // Negotiate implements Transport (subscriber side only).
@@ -203,6 +238,7 @@ func (t *transport) createOffer() {
 		return
 	}
 	t.handler.OnOffer(&tesserav1.SessionDescription{Type: "offer", Sdp: t.pc.LocalDescription().SDP, Id: id})
+	t.resendIfUnanswered(id)
 }
 
 // AddDownTrack implements Transport: adds a sendonly transceiver and starts

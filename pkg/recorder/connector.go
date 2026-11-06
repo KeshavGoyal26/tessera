@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/pion/webrtc/v4"
@@ -40,7 +41,7 @@ func (cc ClientConnector) Join(ctx context.Context, wsURL, token string, onTrack
 			onTrack(Track{SID: t.SID, ParticipantIdentity: t.ParticipantIdentity, Kind: kind, Source: sourceName(t.Info.GetSource()),
 				Width: w, Height: h, RTP: t})
 		},
-		OnDisconnected: func(tesserav1.DisconnectReason) { onClosed(nil) },
+		OnDisconnected: func(reason tesserav1.DisconnectReason) { onClosed(disconnectErr(reason)) },
 	})
 	if err := c.Connect(ctx, wsURL, token); err != nil {
 		return nil, err
@@ -60,4 +61,15 @@ func sourceName(s tesserav1.TrackSource) string {
 		return "screen_share_audio"
 	}
 	return ""
+}
+
+// disconnectErr is nil for an orderly end (left, removed, room deleted, server shutdown) and an
+// error when the connection was lost, so a cut-short recording is reported as failed, not complete.
+func disconnectErr(reason tesserav1.DisconnectReason) error {
+	switch reason {
+	case tesserav1.DisconnectReason_DISCONNECT_REASON_SIGNAL_TIMEOUT, tesserav1.DisconnectReason_DISCONNECT_REASON_MEDIA_FAILURE,
+		tesserav1.DisconnectReason_DISCONNECT_REASON_STATE_MISMATCH, tesserav1.DisconnectReason_DISCONNECT_REASON_JOIN_FAILURE:
+		return fmt.Errorf("connection lost (%s)", reason)
+	}
+	return nil
 }

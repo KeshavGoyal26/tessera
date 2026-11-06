@@ -23,8 +23,7 @@ type Config struct {
 	NodeID      string `yaml:"node_id"`
 	Region      string `yaml:"region"`
 	// Port is the HTTP port for signaling (/rtc) and the admin API (/twirp).
-	Port          int      `yaml:"port"`
-	BindAddresses []string `yaml:"bind_addresses"`
+	Port int `yaml:"port"`
 	// Keys maps API keys to secrets. Never logged.
 	Keys    map[string]string `yaml:"keys"`
 	KeyFile string            `yaml:"key_file"`
@@ -46,26 +45,15 @@ type RTCConfig struct {
 	UDPPort int `yaml:"udp_port"`
 	// TCPPort is the ICE-TCP passive port; 0 disables ICE-TCP.
 	TCPPort int `yaml:"tcp_port"`
-	// PortRangeStart/End use one port per PeerConnection instead of the mux (debug only).
-	PortRangeStart int `yaml:"port_range_start"`
-	PortRangeEnd   int `yaml:"port_range_end"`
 	// IPs restricts media sockets and host candidates to these local
 	// addresses (empty = all interfaces). Tests use ["127.0.0.1"].
 	IPs []string `yaml:"ips"`
 	// NodeIP is advertised as the host candidate address (NAT 1:1).
 	NodeIP string `yaml:"node_ip"`
-	// UseExternalIP discovers the public IP via STUN at start-up.
-	UseExternalIP bool     `yaml:"use_external_ip"`
-	STUNServers   []string `yaml:"stun_servers"`
 	// ICEServers are extra STUN/TURN servers handed to clients.
 	ICEServers []ICEServerConfig `yaml:"ice_servers"`
 	// SocketBufferSize sets SO_RCVBUF/SO_SNDBUF on media sockets, bytes.
 	SocketBufferSize int `yaml:"socket_buffer_size"`
-	// PacketBufferVideo/Audio are ring sizes (packets) for NACK retransmission.
-	PacketBufferVideo int `yaml:"packet_buffer_video"`
-	PacketBufferAudio int `yaml:"packet_buffer_audio"`
-	// FanoutInlineMax is the downtrack count above which fan-out is parallelised.
-	FanoutInlineMax int `yaml:"fanout_inline_max"`
 	// PLIThrottle is the minimum interval between PLIs per layer.
 	PLIThrottle       time.Duration           `yaml:"pli_throttle"`
 	CongestionControl CongestionControlConfig `yaml:"congestion_control"`
@@ -169,9 +157,8 @@ type LoggingConfig struct {
 
 // LimitsConfig caps resource usage.
 type LimitsConfig struct {
-	MaxRooms            int     `yaml:"max_rooms"`
-	MaxParticipants     int     `yaml:"max_participants"`
-	JoinsPerSecondPerIP float64 `yaml:"joins_per_second_per_ip"`
+	MaxRooms        int `yaml:"max_rooms"`
+	MaxParticipants int `yaml:"max_participants"`
 }
 
 // Default returns the default configuration.
@@ -181,11 +168,7 @@ func Default() *Config {
 		RTC: RTCConfig{
 			UDPPort:           7882,
 			TCPPort:           7881,
-			STUNServers:       []string{"stun:stun.l.google.com:19302"},
 			SocketBufferSize:  25 << 20,
-			PacketBufferVideo: 500,
-			PacketBufferAudio: 100,
-			FanoutInlineMax:   32,
 			PLIThrottle:       500 * time.Millisecond,
 			CongestionControl: CongestionControlConfig{Enabled: true, AllowPause: true, Probe: true},
 			EnabledCodecs:     []string{"audio/opus", "audio/red", "video/VP8", "video/H264"},
@@ -202,7 +185,7 @@ func Default() *Config {
 		},
 		Webhook:   WebhookConfig{Timeout: 10 * time.Second, QueueSize: 1000},
 		Recording: RecordingConfig{Enabled: true, HeartbeatTimeout: 15 * time.Second},
-		Metrics:   MetricsConfig{Addr: ":6789", PProf: true},
+		Metrics:   MetricsConfig{Addr: "127.0.0.1:6789"}, // unauthenticated: loopback, no pprof unless configured
 		Logging:   LoggingConfig{Level: "info"},
 	}
 }
@@ -275,9 +258,6 @@ func (c *Config) Validate() error {
 	}
 	if c.RTC.UDPPort < 0 || c.RTC.UDPPort > 65535 {
 		errs = append(errs, fmt.Errorf("rtc.udp_port %d out of range (0 = random)", c.RTC.UDPPort))
-	}
-	if c.RTC.PortRangeStart > c.RTC.PortRangeEnd {
-		errs = append(errs, errors.New("rtc.port_range_start > rtc.port_range_end"))
 	}
 	if c.TURN.Enabled && c.TURN.TLSPort > 0 && (c.TURN.CertFile == "" || c.TURN.KeyFile == "") {
 		errs = append(errs, errors.New("turn.tls_port requires turn.cert_file and turn.key_file"))

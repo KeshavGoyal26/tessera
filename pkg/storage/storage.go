@@ -334,7 +334,8 @@ func (s *s3store) Check(ctx context.Context) error {
 }
 
 // FromOptions builds a Storage from per-request options, falling back to def.
-// Local directories are resolved below root (the recorder's configured root).
+// Local directories are not handled here: the caller resolves them below its
+// configured root, so a request can never name an arbitrary path.
 func FromOptions(ctx context.Context, opts *tesserav1.StorageOptions, def Storage) (Storage, error) {
 	if opts == nil || opts.GetBackend() == nil {
 		return def, nil
@@ -343,7 +344,7 @@ func FromOptions(ctx context.Context, opts *tesserav1.StorageOptions, def Storag
 	case *tesserav1.StorageOptions_S3:
 		return NewS3(ctx, b.S3)
 	case *tesserav1.StorageOptions_Local:
-		return NewLocal(b.Local.GetDirectory())
+		return nil, errs.New(errs.CodeInvalidArgument, "local storage must be resolved below the recorder root")
 	}
 	return nil, errs.New(errs.CodeInvalidArgument, "unknown storage backend")
 }
