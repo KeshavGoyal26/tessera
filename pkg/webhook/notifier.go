@@ -224,14 +224,16 @@ func (e *endpoint) enqueue(ev *tesserav1.WebhookEvent) {
 
 // next returns the oldest event without removing it (it stays queued while
 // being delivered so Stats shows it and order is preserved).
-func (e *endpoint) next() (ev *tesserav1.WebhookEvent, dropped uint32, ok bool) {
+// closed is read under the same lock as the queue: checking them separately let an event
+// queued just before Close be dropped (the loop saw an empty queue, then closed).
+func (e *endpoint) next() (ev *tesserav1.WebhookEvent, dropped uint32, ok, closed bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.queue) == 0 {
-		return nil, 0, false
+		return nil, 0, false, e.closed
 	}
 	e.flight = true
-	return e.queue[0], e.dropN, true
+	return e.queue[0], e.dropN, true, e.closed
 }
 
 // pop removes the head if it is still ev (overflow may have evicted it).
@@ -250,11 +252,8 @@ func (e *endpoint) run() {
 	defer e.n.wg.Done()
 	defer close(e.done)
 	for {
-		ev, dropped, ok := e.next()
+		ev, dropped, ok, closed := e.next()
 		if !ok {
-			e.mu.Lock()
-			closed := e.closed
-			e.mu.Unlock()
 			if closed {
 				return
 			}
