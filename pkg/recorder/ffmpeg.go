@@ -264,9 +264,19 @@ type vp8Transcoder struct {
 	frames           uint32
 }
 
-func newVP8Transcoder(ctx context.Context, ffmpeg string) (*vp8Transcoder, error) {
-	p, err := startFFmpeg(ctx, ffmpeg, "-f", "ivf", "-i", "pipe:0", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+// newVP8Transcoder starts FFmpeg. FFmpeg fixes the output size at the first frame and scales
+// every later frame to it, so a recording that started on a low simulcast layer would stay
+// small after the switch up. With the published size known (w, h > 0) the output is encoded
+// at that size instead; frames of another size or aspect are scaled and letterboxed into it.
+func newVP8Transcoder(ctx context.Context, ffmpeg string, w, h uint32) (*vp8Transcoder, error) {
+	args := []string{"-f", "ivf", "-i", "pipe:0"}
+	if w >= 16 && h >= 16 {
+		w, h = w&^1, h&^1 // yuv420p needs even dimensions
+		args = append(args, "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", w, h, w, h))
+	}
+	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
 		"-profile:v", "baseline", "-bf", "0", "-g", "50", "-x264-params", "aud=1:keyint=50:min-keyint=50:scenecut=0", "-pix_fmt", "yuv420p", "-f", "h264", "pipe:1")
+	p, err := startFFmpeg(ctx, ffmpeg, args...)
 	if err != nil {
 		return nil, err
 	}

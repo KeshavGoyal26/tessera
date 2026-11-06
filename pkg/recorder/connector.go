@@ -31,7 +31,14 @@ func (cc ClientConnector) Join(ctx context.Context, wsURL, token string, onTrack
 			if t.Info.GetType() == tesserav1.TrackType_TRACK_TYPE_VIDEO {
 				kind = "video"
 			}
-			onTrack(Track{SID: t.SID, ParticipantIdentity: t.ParticipantIdentity, Kind: kind, Source: sourceName(t.Info.GetSource()), RTP: t})
+			w, h := t.Info.GetWidth(), t.Info.GetHeight()
+			for _, l := range t.Info.GetLayers() {
+				if l.GetWidth() > w {
+					w, h = l.GetWidth(), l.GetHeight()
+				}
+			}
+			onTrack(Track{SID: t.SID, ParticipantIdentity: t.ParticipantIdentity, Kind: kind, Source: sourceName(t.Info.GetSource()),
+				Width: w, Height: h, RTP: t})
 		},
 		OnDisconnected: func(tesserav1.DisconnectReason) { onClosed(nil) },
 	})

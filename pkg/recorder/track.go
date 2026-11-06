@@ -24,7 +24,10 @@ type Track struct {
 	Kind string
 	// Source is "camera", "microphone", "screen_share" or "screen_share_audio".
 	Source string
-	RTP    RTPSource
+	// Width and Height are the published video size (the top simulcast layer), 0 if unknown.
+	// VP8 recordings are encoded at this size, so a layer switch does not change it.
+	Width, Height uint32
+	RTP           RTPSource
 }
 
 // SRSource is implemented by tracks that expose RTCP sender reports. The
@@ -350,7 +353,7 @@ func (r *trackRecorder) process(ctx context.Context, p *rtp.Packet, now time.Tim
 		return r.mux.WriteSample(ctx, hls.Sample{DTS: d, Data: append([]byte(nil), p.Payload...)})
 	case "VP8":
 		if r.vp8TC == nil {
-			tc, err := newVP8Transcoder(context.WithoutCancel(ctx), r.opts.ffmpeg)
+			tc, err := newVP8Transcoder(context.WithoutCancel(ctx), r.opts.ffmpeg, r.tr.Width, r.tr.Height)
 			if err != nil {
 				return err
 			}
