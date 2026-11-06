@@ -226,6 +226,11 @@ func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	}
 	next = append(next, dt)
 	r.downs.Store(&next)
+	// Again under dtMu: AddLayer may have raised maxL and walked the old list
+	// between the read above and this insert, leaving dt on a stale layer cap.
+	if d, ok := dt.(*DownTrackImpl); ok {
+		d.fwd.SetAvailableLayers(r.maxL.Load())
+	}
 	return nil
 }
 

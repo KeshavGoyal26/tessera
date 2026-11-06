@@ -512,6 +512,11 @@ func (f *Forwarder) PaddingParams(n int) (sn uint16, ts uint32, err error) {
 		return 0, 0, errs.New(errs.CodeFailedPrecondition, "forwarder not started")
 	}
 	sn = uint16(f.lastOutExtSN + 1)
+	// Padding has no original packet: forget whatever media used these NACK slots
+	// before, or a NACK for lost padding would resend that old packet.
+	for i := 0; i < n; i++ {
+		f.sent[(sn+uint16(i))%nackHistory].valid = false
+	}
 	f.lastOutExtSN += uint64(n)
 	f.snOffset -= uint64(n)
 	// Packets after this point shift by n; late packets from before it keep

@@ -400,6 +400,13 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 		m := simulcast.RewriteVP8(d.pay, e.Payload, &e.VP8, &info.VP8)
 		payload = d.pay[:m]
 	}
+	if d.redStrip { // same as WriteRTP: a non-RED subscriber gets the primary Opus frame
+		p, ok := redPrimary(payload)
+		if !ok {
+			return
+		}
+		payload = p
+	}
 	if d.writeLocked(sn, info.Timestamp, e.Marker, payload, false) == nil {
 		d.retx.Inc()
 		stats.Retransmits.Inc()
