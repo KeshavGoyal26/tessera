@@ -360,3 +360,40 @@ func TestBoxGolden(t *testing.T) {
 		t.Fatalf("data_offset %d moof %d", off, moofSize)
 	}
 }
+
+// Regression: a backwards jump onto a non-keyframe dropped the pending sample, and the
+// next sample dereferenced it (the recorder crashed on Chrome's H.264). Samples with the
+// same timestamp are parts of one access unit and are merged, not treated as a jump.
+func TestMuxerSurvivesJumpsAndSameTimestamp(t *testing.T) {
+	aus := genH264Cached(t)
+	var sps, pps []byte
+	for _, n := range aus[0] {
+		switch n[0] & 0x1f {
+		case nalSPS:
+			sps = n
+		case nalPPS:
+			pps = n
+		}
+	}
+	m, err := NewMuxer(MuxerConfig{TargetSegmentDuration: 4 * time.Second}, TrackSpec{Codec: CodecH264, Timescale: 90000, SPS: sps, PPS: pps}, &DirSink{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	write := func(dts int64, key bool) {
+		t.Helper()
+		if err := m.WriteSample(ctx, Sample{DTS: dts, KeyFrame: key, Data: []byte{0, 0, 0, 1, 0x65}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(9000, true)
+	write(9000, false) // same timestamp: merged into the keyframe
+	write(12000, false)
+	write(3000, false) // clock went back onto a non-keyframe: dropped
+	write(6000, false) // used to panic (nil pending)
+	write(9000, true)  // resumes on the next keyframe
+	write(12000, false)
+	if err := m.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

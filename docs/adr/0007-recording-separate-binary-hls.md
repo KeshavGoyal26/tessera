@@ -58,9 +58,11 @@ output during and after the session.
        or in third-party HLS players.
      - Chrome on desktop added native HLS playback in 2025 (reported for Chrome 142); hls.js
        remains the reference player for our tests.
-7. **VP8 sources** fall back to transcoding to H.264 with an FFmpeg subprocess (IVF/RTP in,
-   fragmented MP4 or Annex B out), because VP8 in fMP4 HLS is not broadly playable. This path
-   is CPU-heavy and the worker advertises reduced capacity while running it.
+7. **Video is never transcoded.** VP8 in fMP4 HLS is not broadly playable, and transcoding it
+   costs a full encoder per presenter, which caps a node at a few dozen recordings. A VP8 (or
+   other non-H.264) video track is refused and the recording fails with an error that asks for
+   H.264. Participants who will be recorded get H.264 listed first, so SDKs publish it by
+   default (ADR-0006). (A VP8-to-H.264 FFmpeg fallback existed until 2026-11-06.)
 8. **Phasing**: per-track recording first (`TrackRecordingTarget`, then
    `ParticipantRecordingTarget` = one participant's audio + video with a shared master
    playlist). A **composite grid** recording (`RoomCompositeTarget`) comes later and will

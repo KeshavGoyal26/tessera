@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,10 +25,7 @@ type Track struct {
 	Kind string
 	// Source is "camera", "microphone", "screen_share" or "screen_share_audio".
 	Source string
-	// Width and Height are the published video size (the top simulcast layer), 0 if unknown.
-	// VP8 recordings are encoded at this size, so a layer switch does not change it.
-	Width, Height uint32
-	RTP           RTPSource
+	RTP    RTPSource
 }
 
 // SRSource is implemented by tracks that expose RTCP sender reports. The
@@ -80,7 +78,6 @@ type trackRecorder struct {
 
 	// FFmpeg fallbacks.
 	aacTC   *aacTranscoder
-	vp8TC   *vp8Transcoder
 	tcOut   <-chan transcoded
 	tcDone  bool
 	release func()
@@ -106,14 +103,14 @@ func newTrackRecorder(tr Track, sink *storageSink, opts trackOptions, logger int
 		r.depack = &hls.H264Depacketizer{}
 		r.clock.Rate = 90000
 		r.parseFmtp(tr.RTP.Codec().SDPFmtpLine)
-	case "video/vp8":
-		r.codec = "VP8"
-		r.clock.Rate = 90000
 	case "audio/opus":
 		r.codec = "Opus"
 		r.clock.Rate = 48000
 	default:
-		return nil, fmt.Errorf("unsupported codec %q", tr.RTP.Codec().MimeType)
+		// Video is never transcoded (a full encoder per presenter would cap capacity):
+		// publishers that are recorded must send H.264.
+		return nil, fmt.Errorf("cannot record %s: recording needs H.264 video and Opus audio (publish with videoCodec \"video/H264\")",
+			tr.RTP.Codec().MimeType)
 	}
 	r.reorder = hls.NewReorderBuffer()
 	if sr, ok := tr.RTP.(SRSource); ok {
@@ -148,7 +145,15 @@ func (r *trackRecorder) parseFmtp(f string) {
 
 // run reads until the source ends or ctx is cancelled, then flushes and
 // closes the muxer. It returns nil on a clean end.
-func (r *trackRecorder) run(ctx context.Context) error {
+func (r *trackRecorder) run(ctx context.Context) (err error) {
+	// A bug on one track must fail that recording, not crash the process and every
+	// other recording with it.
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("recorder panic: %v", p)
+			r.logger.Warn("track recorder panicked", "err", err, "stack", string(debug.Stack()))
+		}
+	}()
 	pkts := make(chan *rtp.Packet, 256)
 	readErr := make(chan error, 1)
 	go func() {
@@ -351,24 +356,6 @@ func (r *trackRecorder) process(ctx context.Context, p *rtp.Packet, now time.Tim
 			}
 		}
 		return r.mux.WriteSample(ctx, hls.Sample{DTS: d, Data: append([]byte(nil), p.Payload...)})
-	case "VP8":
-		if r.vp8TC == nil {
-			tc, err := newVP8Transcoder(context.WithoutCancel(ctx), r.opts.ffmpeg, r.tr.Width, r.tr.Height)
-			if err != nil {
-				return err
-			}
-			r.vp8TC, r.tcOut = tc, tc.out
-			if r.opts.reserve != nil {
-				r.release = r.opts.reserve(3)
-			}
-		}
-		err := r.vp8TC.push(p, func(ts uint32) int64 { return r.dts(ts, now) })
-		if errors.Is(err, hls.ErrPacketLoss) {
-			r.needKey = true
-			r.maybeKeyframe(now)
-			err = nil
-		}
-		return err
 	default:
 		aus, err := r.depack.Push(p)
 		if errors.Is(err, hls.ErrPacketLoss) {
@@ -392,9 +379,6 @@ func (r *trackRecorder) writeAU(ctx context.Context, au *hls.AccessUnit) error {
 
 // writeTranscoded handles output of an FFmpeg pipeline.
 func (r *trackRecorder) writeTranscoded(ctx context.Context, e transcoded) error {
-	if e.au != nil {
-		return r.writeAUAt(ctx, e.au, e.dts)
-	}
 	if r.mux == nil {
 		spec := hls.TrackSpec{ID: 1, Codec: hls.CodecAAC, Timescale: 48000, SampleRate: 48000, Channels: 2, AudioSpecificConfig: aacConfig48kStereo}
 		if err := r.createMuxer(spec, e.dts); err != nil {
@@ -411,9 +395,6 @@ func (r *trackRecorder) finishTranscoder(ctx context.Context) error {
 	case r.aacTC != nil:
 		r.aacTC.closeInput()
 		result = r.aacTC.result
-	case r.vp8TC != nil:
-		r.vp8TC.closeInput()
-		result = r.vp8TC.result
 	default:
 		return nil
 	}

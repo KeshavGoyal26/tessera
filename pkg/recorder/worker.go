@@ -245,14 +245,15 @@ type jobRun struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
-	mu      sync.Mutex
-	tracks  map[string]*recTrack
-	order   []string
-	started time.Time
-	status  tesserav1.RecordingStatus
-	st      storage.Storage
-	prefix  string
-	origin  time.Time
+	mu       sync.Mutex
+	tracks   map[string]*recTrack
+	order    []string
+	rejected []string // tracks that could not be recorded (e.g. VP8): the recording fails with these
+	started  time.Time
+	status   tesserav1.RecordingStatus
+	st       storage.Storage
+	prefix   string
+	origin   time.Time
 }
 
 type recTrack struct {
@@ -476,6 +477,7 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 			aac: r.wantAAC(), ffmpeg: r.w.cfg.FFmpegPath, reserve: r.w.reserve,
 		}, r.w.logger)
 		if err != nil {
+			r.rejected = append(r.rejected, t.SID+": "+err.Error())
 			r.mu.Unlock()
 			r.w.logger.Warn("track not recorded", "track", t.SID, "err", err)
 			r.w.stats.trackErrors.Add(1)
@@ -540,13 +542,13 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 	for k, v := range r.tracks {
 		tracks[k] = v
 	}
+	errMsgs := append([]string(nil), r.rejected...)
 	r.mu.Unlock()
 
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 	defer cancel()
 	var outs []*tesserav1.RecordingOutput
 	var rends []hls.Rendition
-	var errMsgs []string
 	for _, sid := range order {
 		t := tracks[sid]
 		// Ask the track to flush: its source ends when the room is closed;

@@ -1,0 +1,110 @@
+# Recording capacity: plan and homework
+
+Goal: a measured answer to "how many recorded presenters fit on one c8i.xlarge (4 vCPU, 8 GiB)", for
+Tessera and for the alternatives, on the same workload. Today's production baseline is Kurento with
+**300 candidates** per c8i.xlarge (VP8 + Opus in, WebM recording).
+
+## What we know
+
+### How each server records
+
+| Server | Recording path | Video re-encoded? | Output |
+|---|---|---|---|
+| Tessera (H.264 publishers) | recorder joins as a participant, repackages to HLS | no | HLS (fMP4), playable live |
+| Tessera (VP8 publishers) | same, FFmpeg VP8 to H.264 per track | yes | HLS |
+| Kurento (current prod) | RecorderEndpoint inside the media server | no, when VP8 goes to WebM | WebM |
+| LiveKit track egress | egress service joins as a participant | no | WebM/OGG (VP8), MP4 (H.264) |
+| LiveKit track composite | egress, GStreamer pipeline | yes | MP4 / HLS |
+| OpenVidu 3 | LiveKit egress | as LiveKit | as LiveKit |
+| OpenVidu 2 INDIVIDUAL | Kurento | no | WebM |
+| SRS | WebRTC to internal RTMP (`rtc_to_rtmp`, experimental), then HLS/DVR | no, **H.264 only**; Opus to AAC | HLS, FLV, MP4 |
+| Janus | raw RTP to `.mjr`, converted later | no (later, offline) | `.mjr` |
+
+### Published numbers: weak, so they need checking
+
+- **LiveKit:**
+  - The docs recommend at least 4 CPU and 4 GB per egress instance.
+  - Track egress is cheap; the docs say "hundreds" fit on one instance.
+  - The scheduler reserves 1 CPU per track egress, 2 per track composite and 3 per room composite. These are weights, not measurements.
+  - SFU benchmark: 150 publishers and 150 subscribers on 16 cores at 85% CPU.
+- **OpenVidu 2:** forum report of about 60 sessions × 2 participants with INDIVIDUAL recording on 4 CPU. Composed recording needs at least 1 CPU per session.
+- **SRS:**
+  - No WebRTC benchmark published; the PERFORMANCE.md WebRTC table is empty.
+  - Mostly one core per process, as far as we know.
+  - No simulcast that we know of.
+- **Kurento:** no official numbers. Ours is 300 per c8i.xlarge in production.
+
+### Tessera so far (2026-11-06)
+
+Linux VM, 4 vCPU on Apple M1. Each presenter sends 720p30 H.264 at 1.5 Mbit/s plus Opus, and is recorded to HLS.
+
+- **10 presenters:**
+  - 4.5% of a vCPU per presenter (server 2.1%, recorder 2.4%);
+  - 37 MB of recorder memory each;
+  - every recording correct.
+- **These figures are inflated.** A bug, fixed in 42a38e3, made every recording subscribe to every presenter (N² traffic), so these runs carried far more traffic than real use.
+- **After the fix:** not yet measured cleanly.
+
+## Questions for us (answer before testing)
+
+1. **Kurento candidate stream:** what resolution, frame rate and bitrate? Is simulcast on? Does anyone watch live?
+2. **Kurento CPU and memory at 300 candidates:** how much headroom is left?
+3. **Output format:** is WebM acceptable, or must recordings be HLS or MP4?
+4. **Deployment:** must the SFU and recorder share one box, or can recording run on separate instances?
+
+## Test plan
+
+### Workloads (same for every server)
+
+| ID | Publisher | Recording | Mirrors |
+|---|---|---|---|
+| W1 | 640x360 at 15 fps, ~400 kbit/s, Opus, no simulcast | per participant | Kurento prod (adjust to answer 1) |
+| W2 | 720p30 at 1.5 Mbit/s, Opus, no simulcast | per participant | a heavier camera |
+
+Codec variants: **H.264** (Tessera HLS, SRS, LiveKit MP4) and **VP8** (Tessera HLS by re-encoding, LiveKit WebM, Kurento WebM).
+
+### Method
+
+1. **Server box:** a c8i.xlarge running the server and its recorder or egress. Run it on a separate box as well if answer 4 allows.
+2. **Load generator:** a separate box, for example a c8i.2xlarge, so it doesn't compete for CPU. Use real encoded clips looped, as `h264load` already does, not synthetic packets.
+3. **Ramp:** 25, 50, 100, 150, 200, 300 presenters, holding each step for 3 minutes.
+4. **Record at every step:**
+   - CPU per process and for the whole box (`/proc`), memory, and network in and out;
+   - recorder health: active recordings, segment upload delay, dropped samples;
+   - every recording at the end: playlist finalized, duration within 2% of the publish time, `ffprobe` decodes with no errors.
+5. **Capacity:** the largest step where box CPU stays at or below 75%, memory at or below 80%, and every recording is valid.
+
+### Per server
+
+- **Tessera:**
+  - Promote `h264load` (now in the scratchpad) to `tessera-loadtest --codec h264|vp8 --record`.
+  - Run W1 and W2 with H.264 (HLS repackaging) and with VP8 (HLS re-encoding).
+- **LiveKit / OpenVidu 3:** server plus egress, track egress (WebM, or MP4 for H.264) and track composite (HLS). Use `lk load-test`, or the same Pion generator with LiveKit tokens.
+- **SRS:** WHIP publish with H.264 and Opus, and `rtc_to_rtmp` plus HLS on. The generator needs a small WHIP mode.
+- **Kurento:** reuse the production numbers if answers 1 and 2 are known; otherwise one W1 run.
+
+### Likely improvements to try if Tessera is short of 300 (in order)
+
+1. **VP8 passthrough to WebM:** no FFmpeg; the same path as Kurento and LiveKit track egress.
+2. **Single stream for recorded-only publishers:** no simulcast, about 30-50% fewer packets.
+3. **FFmpeg `-threads 1`** for the VP8-to-HLS path: about 1.4x per measurements.
+4. **Recording inside the SFU process:** removes the second WebRTC hop. A bigger change; only if the measurements call for it.
+
+## Next steps
+
+1. **After the usage reset:** a clean Tessera run on the local Linux VM (30, 60, 100) to confirm the fix scales linearly. A few calls.
+2. **Answer the four questions above.**
+3. **Add `--codec h264 --record` to `tessera-loadtest`.**
+4. **EC2 runs:** c8i.xlarge server plus a load-generator box. Run Tessera first, then LiveKit and SRS. Needs AWS access from you.
+5. **Write up a results table here, with the same columns for every server.**
+
+Sources:
+- [LiveKit self-hosting: Egress](https://docs.livekit.io/transport/self-hosting/egress/)
+- [LiveKit benchmarks](https://docs.livekit.io/transport/self-hosting/benchmark/)
+- [LiveKit Egress CPU weights](https://pkg.go.dev/github.com/livekit/egress@v1.8.4)
+- [OpenVidu 3 recording](https://openvidu.io/3.8/docs/troubleshooting/recording/)
+- [OpenVidu 2 recording](https://docs.openvidu.io/en/stable/advanced-features/recording)
+- [OpenVidu forum: 4-CPU capacity](https://openvidu.discourse.group/t/simultaneous-conferences/329)
+- [SRS performance](https://github.com/ossrs/srs/blob/develop/trunk/doc/PERFORMANCE.md)
+- [SRS WebRTC](https://ossrs.io/lts/en-us/docs/v6/doc/webrtc)
+- [Kurento RecorderEndpoint](https://doc-kurento.readthedocs.io/en/stable/_static/client-jsdoc/module-elements.RecorderEndpoint.html)

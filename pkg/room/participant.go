@@ -2,6 +2,7 @@ package room
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -273,6 +274,13 @@ func (p *Participant) start() error {
 		if !strings.EqualFold(c, "audio/red") {
 			codecs = append(codecs, &tesserav1.Codec{Mime: c})
 		}
+	}
+	if p.autoRecord || p.room.recordingEnabled() {
+		// Recordings need H.264 (video is never transcoded): list it first, so SDKs
+		// that publish the first listed codec send H.264 without being told to.
+		sort.SliceStable(codecs, func(i, j int) bool {
+			return strings.EqualFold(codecs[i].Mime, "video/H264") && !strings.EqualFold(codecs[j].Mime, "video/H264")
+		})
 	}
 	p.mu.Lock()
 	p.state = tesserav1.ParticipantInfo_STATE_JOINED

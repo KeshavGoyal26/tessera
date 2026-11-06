@@ -159,7 +159,22 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 		return nil
 	}
 	p := m.pending
+	if p == nil {
+		// Dropped the previous sample (a jump onto a non-keyframe): wait for a keyframe.
+		if m.video && !s.KeyFrame {
+			return nil
+		}
+		m.pending = &s
+		return nil
+	}
 	delta := s.DTS - p.DTS
+	if delta == 0 && m.video {
+		// Same timestamp: more of the same access unit (e.g. Chrome sends parameter sets
+		// and the IDR slice apart). Merge rather than treat it as the clock going back.
+		p.Data = append(append([]byte(nil), p.Data...), s.Data...)
+		p.KeyFrame = p.KeyFrame || s.KeyFrame
+		return nil
+	}
 	switch {
 	case delta <= 0:
 		// Clock went backwards (or duplicate): start a new timeline piece.

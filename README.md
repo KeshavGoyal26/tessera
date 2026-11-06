@@ -21,8 +21,9 @@ records to HLS and comes with a Java server SDK and a TypeScript browser SDK.
 - **Networking**: one UDP port for all media, ICE-TCP fallback, NAT 1:1, embedded TURN
   (UDP/TCP/TLS).
 - **Recording**: a separate `tessera-recorder` service that joins rooms as a hidden subscriber
-  and writes fMP4/CMAF HLS. H.264 and Opus are remuxed without transcoding; AAC mode and VP8
-  sources go through FFmpeg. Output goes to local disk or S3-compatible storage.
+  and writes fMP4/CMAF HLS. H.264 and Opus are remuxed; video is never transcoded, so
+  recorded publishers must send H.264 (the server asks recorded participants for it first). An
+  optional AAC audio mode uses FFmpeg. Output goes to local disk or S3-compatible storage.
 - **Integration**: HS256 JWT access tokens; a Twirp-style admin API (JSON or protobuf);
   HMAC-signed webhooks; a Java 17 SDK whose only runtime dependency is protobuf-java; a small
   framework-free ESM browser SDK.

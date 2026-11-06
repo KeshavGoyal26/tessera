@@ -59,14 +59,8 @@ func (cc ClientConnector) Join(ctx context.Context, wsURL, token string, want fu
 	c.SetCallbacks(client.Callbacks{
 		OnParticipantUpdate: subscribe,
 		OnTrackSubscribed: func(t *client.RemoteTrack) {
-			w, h := t.Info.GetWidth(), t.Info.GetHeight()
-			for _, l := range t.Info.GetLayers() {
-				if l.GetWidth() > w {
-					w, h = l.GetWidth(), l.GetHeight()
-				}
-			}
-			onTrack(Track{SID: t.SID, ParticipantIdentity: t.ParticipantIdentity, Kind: kindName(t.Info.GetType()), Source: sourceName(t.Info.GetSource()),
-				Width: w, Height: h, RTP: t})
+			onTrack(Track{SID: t.SID, ParticipantIdentity: t.ParticipantIdentity, Kind: kindName(t.Info.GetType()),
+				Source: sourceName(t.Info.GetSource()), RTP: t})
 		},
 		OnDisconnected: func(reason tesserav1.DisconnectReason) { onClosed(disconnectErr(reason)) },
 	})

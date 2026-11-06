@@ -65,12 +65,12 @@ after the target. Segments are always uploaded before the playlist that lists th
 | H.264 | H.264 | pure Go remux, **no FFmpeg** (asserted by `TestH264PathNeverSpawnsFFmpeg`) |
 | Opus | Opus (`Opus` + `dOps`) | pure Go remux, default |
 | Opus | AAC-LC 48 kHz stereo | `hls.audio_codec: aac` or `HLSOptions.audio_codec = AAC`; FFmpeg subprocess per track (Ogg Opus on stdin, ADTS on stdout) |
-| VP8 | H.264 baseline | FFmpeg subprocess (IVF in, Annex B out, libx264 ultrafast/zerolatency, GOP 50) |
+| VP8 / other video | refused | not transcoded: the track is skipped and the recording fails with "recording needs H.264 video". Recorded participants are offered H.264 first, so SDKs publish it by default. |
 
-Transcoding tracks reserve extra capacity units on the worker (VP8: 3, AAC: 1, remux: 0 beyond
-the job's own cost) so a worker does not over-admit CPU-heavy jobs. FFmpeg must be on `PATH` or
-set `ffmpeg_path`. VP9/AV1 are not supported yet (the track is skipped and `track_errors`
-increases).
+AAC tracks reserve an extra capacity unit on the worker (remux: 0 beyond
+the job's own cost) so a worker does not over-admit CPU-heavy jobs. FFmpeg is needed only for
+AAC mode (on `PATH` or `ffmpeg_path`). VP9/AV1 are refused like VP8 (`track_errors` increases and
+the recording fails with the reason).
 
 ## Browser and player compatibility (verified facts and open items)
 

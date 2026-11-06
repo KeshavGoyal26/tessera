@@ -53,8 +53,9 @@ VP8 rewriting, the forwarder, RED parsing and TWCC feedback finds nothing.
   GCC-style overuse persistence; probes count only when they prove the upgrade.
 - RTT: measured from ICE and used for NACK pacing (retry once per RTT, give up after 4 RTT);
   sender reports carry the server clock, so receiver-report RTT is right.
-- Recording: VP8 is encoded to H.264 at the published size; before, a recording that started on the
-  low simulcast layer stayed at 320x180 after switching up.
+- Recording: video is never transcoded. Recorded participants are asked for H.264 first; a VP8
+  track is refused with an error. Each recording subscribes only to its own participant's tracks
+  (before, every recording received every participant: N^2 traffic, 1 GB of buffers at 30).
 - Shutdown: dashboard event streams are closed first (an open dashboard tab held shutdown for 30 s),
   a second Ctrl-C exits at once, and shutdown is capped at 60 s.
 - Audio: Opus RED. Browsers that support it publish RED; RED subscribers get it unchanged, others

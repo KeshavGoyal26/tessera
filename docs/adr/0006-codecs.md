@@ -40,8 +40,9 @@ be remuxed into fMP4 without transcoding (ADR-0007).
 3. **Codec preference per room**: `Room.enabled_codecs` limits what clients may publish.
    Rooms with **recording enabled prefer H.264**: the server orders H.264 before VP8 in its
    answer to the publisher and the browser SDK selects H.264 by default when
-   `JoinResponse.enabled_publish_codecs` lists it first. If a publisher cannot send H.264, VP8
-   is accepted and the recorder transcodes (ADR-0007).
+   `JoinResponse.enabled_publish_codecs` lists it first. The same applies to a participant
+   whose token has `auto_record`. A recorded publisher that sends VP8 anyway is not
+   transcoded: its recording fails with an error asking for H.264 (ADR-0007).
 4. **Munging requirements** for layer switching (implemented from scratch in WP1):
    - Sequence numbers: continuous per DownTrack across switches, gaps preserved for real
      loss (so NACKs still work), with an extended-SN to original-SN map for NACK lookup.
