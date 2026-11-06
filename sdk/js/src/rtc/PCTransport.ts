@@ -88,6 +88,18 @@ export class PCTransport {
     }
   }
 
+  /**
+   * Stops waiting for the answer to an offer sent on a signaling connection that has since
+   * been replaced (it may never arrive): negotiation continues at once with a fresh offer.
+   */
+  restartPendingOffer(): void {
+    const w = this.#answerWaiter;
+    if (!w) return;
+    this.#answerWaiter = undefined;
+    this.#renegotiate = true;
+    w.resolve();
+  }
+
   /** Applies a remote offer and returns the local answer. */
   handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
     return this.#serial(async () => {

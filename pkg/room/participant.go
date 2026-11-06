@@ -84,6 +84,7 @@ type subscription struct {
 // Participant is one session in a room.
 type Participant struct {
 	room          *Room
+	claims        auth.Claims // of the joining token, re-signed for token refresh
 	sid, identity string
 	kind          tesserav1.ParticipantInfo_Kind
 	joinedAt      time.Time
@@ -128,7 +129,7 @@ func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signa
 		kind = tesserav1.ParticipantInfo_KIND_LOADTEST
 	}
 	p := &Participant{
-		room: r, sid: newSID("PA_"), identity: c.Identity(), kind: kind, joinedAt: time.Now(),
+		room: r, claims: *c, sid: newSID("PA_"), identity: c.Identity(), kind: kind, joinedAt: time.Now(),
 		autoSubscribe: cp.AutoSubscribe, client: cp.Client, conn: conn,
 		name: c.Name, metadata: c.Metadata, attributes: c.Attributes, perm: perm,
 		autoRecord: c.Grants != nil && c.Grants.AutoRecord,
@@ -373,9 +374,7 @@ func (p *Participant) rtcpLoop() {
 // run is the session read loop; it returns when the connection ends.
 func (p *Participant) run(ctx context.Context) error {
 	p.connMu.Lock()
-	conn := p.conn
-	p.connGen++
-	gen := p.connGen
+	conn, gen := p.conn, p.connGen
 	p.connMu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -397,22 +396,60 @@ func (p *Participant) run(ctx context.Context) error {
 
 func (p *Participant) pingWatch(ctx context.Context, conn signal.Conn) {
 	timeout := p.room.m.cfg.Signal.PingTimeout
-	if timeout <= 0 {
-		return
-	}
+	every := p.refreshInterval()
+	p.refreshToken()
+	nextRefresh := time.Now().Add(every)
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			if time.Since(time.Unix(0, p.lastSeen.Load())) > timeout {
+		case now := <-t.C:
+			if timeout > 0 && now.Sub(time.Unix(0, p.lastSeen.Load())) > timeout {
 				_ = conn.Close(signal.ClosePingTimeout, "ping timeout")
 				return
 			}
+			if now.After(nextRefresh) {
+				p.refreshToken()
+				nextRefresh = now.Add(every)
+			}
 		}
 	}
+}
+
+// tokenTTL is the lifetime of the joining token (6 h if it had no not-before).
+func (p *Participant) tokenTTL() time.Duration {
+	if c := p.claims; c.NotBefore > 0 && c.Expiry > c.NotBefore {
+		return time.Duration(c.Expiry-c.NotBefore) * time.Second
+	}
+	return 6 * time.Hour
+}
+
+// refreshInterval sends a fresh token well before the last one expires.
+func (p *Participant) refreshInterval() time.Duration {
+	return max(min(p.tokenTTL()/2, 5*time.Minute), 10*time.Second)
+}
+
+// refreshToken sends the client its token re-signed with a new lifetime, so a
+// reconnect after the original token expired still succeeds (as LiveKit does).
+func (p *Participant) refreshToken() {
+	keys := p.room.m.keys
+	if keys == nil {
+		return
+	}
+	secret, ok := keys.Secret(p.claims.Issuer)
+	if !ok {
+		return
+	}
+	c := p.claims
+	now := time.Now()
+	c.NotBefore, c.Expiry = now.Unix(), now.Add(p.tokenTTL()).Unix()
+	tok, err := auth.Sign(&c, secret)
+	if err != nil {
+		return
+	}
+	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_RefreshToken{RefreshToken: tok}})
 }
 
 // onConnLost keeps the session for resume_window, then removes it.
@@ -459,7 +496,10 @@ func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	p.mu.Unlock()
 	p.connMu.Lock()
 	old := p.conn
+	// Swap the connection and its generation together: the old read loop's
+	// onConnLost (gen mismatch) must not clear the new connection.
 	p.conn = conn
+	p.connGen++
 	p.connMu.Unlock()
 	if old != nil {
 		_ = old.Close(signal.CloseGoingAway, "resumed elsewhere")

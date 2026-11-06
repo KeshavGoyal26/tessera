@@ -49,6 +49,15 @@ func realMain() int {
 	logger := config.NewLogger(cfg.Logging, cfg.Development)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // a second Ctrl-C or SIGTERM ends the process at once
+		// Finishing recordings may take up to a minute (flush, upload); never hang past that.
+		time.AfterFunc(90*time.Second, func() {
+			logger.Error("shutdown did not finish in time, exiting")
+			os.Exit(1)
+		})
+	}()
 
 	reg := metrics.NewRegistry("recorder")
 	api := admin.NewClient(cfg.ServerURL, cfg.APIKey, cfg.Secret, admin.WorkerGrant())

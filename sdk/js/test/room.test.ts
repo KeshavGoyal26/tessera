@@ -85,6 +85,7 @@ function fakeTransport(target: SignalTarget) {
       getStats: async () => new Map(),
     },
     negotiate: vi.fn(async () => {}),
+    restartPendingOffer: vi.fn(),
     handleOffer: vi.fn(async () => ({ type: "answer" as const, sdp: "A" })),
     handleAnswer: vi.fn(async () => {}),
     addIceCandidate: vi.fn(async () => {}),

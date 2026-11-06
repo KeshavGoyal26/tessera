@@ -369,6 +369,32 @@ func TestLatePacketAfterTemporalDropKeepsItsPosition(t *testing.T) {
 	}
 }
 
+// A filtered packet that arrives right after a gap is absorbed too; the missing
+// packet keeps its slot and fills it when it arrives late.
+func TestFilteredPacketAfterGapIsAbsorbed(t *testing.T) {
+	f := NewForwarder("video/VP8")
+	f.SetAvailableLayers(0)
+	f.SetMaxLayer(types.VideoLayer{Spatial: 0, Temporal: 0})
+	src := newSrc(t, 0, 1000, 90000, 7)
+	key, _ := f.GetTranslation(src.next(true, 0, true), 0)                // in 1000, pid 7
+	late := src.next(false, 0, true)                                      // in 1001, pid 8: lost, recovered later
+	if tp, _ := f.GetTranslation(src.next(false, 1, true), 0); !tp.Drop { // in 1002, TID 1, right after the gap
+		t.Fatalf("TID 1 must be dropped: %+v", tp)
+	}
+	after, _ := f.GetTranslation(src.next(false, 0, true), 0) // in 1003
+	if after.Drop || after.SequenceNumber != key.SequenceNumber+2 {
+		t.Fatalf("in 1003: sn %d, want %d (no hole for the filtered packet)", after.SequenceNumber, key.SequenceNumber+2)
+	}
+	if after.VP8.PictureID != key.VP8.PictureID+2 {
+		t.Fatalf("in 1003: picture id %d, want %d (filtered picture hidden)", after.VP8.PictureID, key.VP8.PictureID+2)
+	}
+	tp, _ := f.GetTranslation(late, 0)
+	if tp.Drop || tp.SequenceNumber != key.SequenceNumber+1 || tp.VP8.PictureID != key.VP8.PictureID+1 {
+		t.Fatalf("late in 1001: sn %d pid %d drop=%v, want sn %d pid %d", tp.SequenceNumber, tp.VP8.PictureID, tp.Drop,
+			key.SequenceNumber+1, key.VP8.PictureID+1)
+	}
+}
+
 // Raising the temporal layer must wait for a layer-sync frame: a higher-layer frame
 // without it references pictures the subscriber never received.
 func TestTemporalUpSwitchWaitsForLayerSync(t *testing.T) {

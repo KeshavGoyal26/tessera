@@ -371,6 +371,7 @@ func (c *client) resume() bool {
 	c.mu.Lock()
 	cb := c.cb
 	sid := c.local.GetSid()
+	token := c.token
 	c.mu.Unlock()
 	if cb.OnReconnecting != nil {
 		cb.OnReconnecting()
@@ -385,7 +386,7 @@ func (c *client) resume() bool {
 			u.Scheme = "wss"
 		}
 		q := url.Values{}
-		q.Set("access_token", c.token)
+		q.Set("access_token", token)
 		q.Set("protocol", fmt.Sprint(version.ProtocolVersion))
 		q.Set("sdk", sdkName(c.opts.SDK))
 		q.Set("reconnect", "1")
@@ -411,6 +412,7 @@ func (c *client) resume() bool {
 		msg, err := c.read(c.ctx)
 		if err != nil || msg.GetReconnect() == nil {
 			_ = ws.CloseNow()
+			time.Sleep(250 * time.Millisecond) // not a tight loop until the deadline
 			continue
 		}
 		_ = c.send(&tesserav1.SignalRequest{Message: &tesserav1.SignalRequest_SyncState{SyncState: &tesserav1.SyncState{}}})
@@ -427,6 +429,10 @@ func (c *client) handle(msg *tesserav1.SignalResponse) {
 	cb := c.cb
 	c.mu.Unlock()
 	switch m := msg.Message.(type) {
+	case *tesserav1.SignalResponse_RefreshToken:
+		c.mu.Lock()
+		c.token = m.RefreshToken // used if the connection has to be resumed
+		c.mu.Unlock()
 	case *tesserav1.SignalResponse_Offer:
 		c.handleOffer(m.Offer)
 	case *tesserav1.SignalResponse_Answer:

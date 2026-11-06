@@ -16,6 +16,7 @@ import (
 type Room struct {
 	m            *manager
 	mu           sync.RWMutex
+	joinMu       sync.Mutex // serializes joins: two joins of one identity must not both get in
 	info         *tesserav1.Room
 	participants map[string]*Participant // by identity
 	closed       bool
@@ -181,6 +182,8 @@ func (r *Room) byIdentity(id string) *Participant {
 }
 
 func (r *Room) join(claims *auth.Claims, cp signal.ConnectParams, conn signal.Conn) (*Participant, error) {
+	r.joinMu.Lock()
+	defer r.joinMu.Unlock()
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -197,6 +200,10 @@ func (r *Room) join(claims *auth.Claims, cp signal.ConnectParams, conn signal.Co
 	}
 	p := newParticipant(r, claims, cp, conn)
 	r.mu.Lock()
+	if r.closed { // closed (empty timeout, deleted) while the old session was removed
+		r.mu.Unlock()
+		return nil, errs.New(errs.CodeUnavailable, "room closed")
+	}
 	if r.emptyTimer != nil {
 		r.emptyTimer.Stop()
 		r.emptyTimer = nil
@@ -290,18 +297,17 @@ func (r *Room) armEmptyTimer() {
 	r.emptyTimer = time.AfterFunc(time.Duration(r.info.EmptyTimeoutSeconds)*time.Second, r.closeIfEmpty)
 }
 
+// closeIfEmpty closes the room unless someone is in it. The check and the close
+// happen under one lock, so a participant joining at that moment is not kicked.
 func (r *Room) closeIfEmpty() {
-	r.mu.RLock()
-	n := len(r.participants)
-	r.mu.RUnlock()
-	if n == 0 {
-		r.close(tesserav1.DisconnectReason_DISCONNECT_REASON_ROOM_DELETED)
-	}
+	r.closeWhen(tesserav1.DisconnectReason_DISCONNECT_REASON_ROOM_DELETED, true)
 }
 
-func (r *Room) close(reason tesserav1.DisconnectReason) {
+func (r *Room) close(reason tesserav1.DisconnectReason) { r.closeWhen(reason, false) }
+
+func (r *Room) closeWhen(reason tesserav1.DisconnectReason, onlyIfEmpty bool) {
 	r.mu.Lock()
-	if r.closed {
+	if r.closed || (onlyIfEmpty && len(r.participants) > 0) {
 		r.mu.Unlock()
 		return
 	}

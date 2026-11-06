@@ -312,13 +312,26 @@ func (r *jobRun) update(ctx context.Context, st tesserav1.RecordingStatus, errMs
 	if terminal(st) {
 		r.w.stats.markStatus(r.id, st, errMsg)
 	}
-	uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	err := r.w.api.UpdateJob(uctx, &tesserav1.UpdateJobRequest{
+	req := &tesserav1.UpdateJobRequest{
 		WorkerId: r.w.cfg.WorkerID, RecordingId: r.id, Status: st, Error: errMsg, Outputs: outs, MasterPlaylistLocation: master,
-	})
-	if err != nil {
-		r.w.logger.Warn("update job failed", "recording", r.id, "err", err)
+	}
+	// The final status is retried: if it never arrives the server marks a finished
+	// recording failed ("worker lost") once heartbeats stop.
+	attempts := 1
+	if terminal(st) {
+		attempts = 3
+	}
+	for i := range attempts {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * 2 * time.Second)
+		}
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		err := r.w.api.UpdateJob(uctx, req)
+		cancel()
+		if err == nil {
+			return
+		}
+		r.w.logger.Warn("update job failed", "recording", r.id, "attempt", i+1, "err", err)
 	}
 }
 
@@ -540,7 +553,12 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 		case <-t.done:
 		case <-time.After(time.Second):
 			t.cancel()
-			<-t.done
+			select {
+			case <-t.done:
+			case <-fctx.Done(): // stuck (FFmpeg or storage): report it, do not hang the job
+				errMsgs = append(errMsgs, sid+": did not finish in time")
+				continue
+			}
 		}
 		if err := t.sink.Drain(fctx); err != nil {
 			errMsgs = append(errMsgs, err.Error())

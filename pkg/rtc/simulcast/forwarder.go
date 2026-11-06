@@ -327,7 +327,7 @@ func (f *Forwarder) GetTranslation(pkt *buffer.ExtPacket, layer int32) (Translat
 	f.updateTemporal(pkt, target.Temporal)
 	// Temporal layer filter (VP8 with TID).
 	if f.isVP8 && pkt.VP8.TIDPresent && int32(pkt.VP8.TID) > f.current.Temporal {
-		if pkt.ExtSequenceNumber == f.lastInExt+1 && pkt.VP8.PictureIDPresent &&
+		if pkt.ExtSequenceNumber > f.lastInExt && pkt.VP8.PictureIDPresent &&
 			(!f.droppedPIDValid || pkt.VP8.PictureID != f.droppedPID) {
 			// Hide the dropped picture so picture ids stay continuous.
 			f.pidOffset = (f.pidOffset + 1) & 0x7fff
@@ -392,10 +392,16 @@ func (f *Forwarder) startLayer(pkt *buffer.ExtPacket, layer int32) {
 	_ = layer
 }
 
-// dropInOrder absorbs an in-order packet that is intentionally not forwarded
-// so the outgoing sequence numbers stay gap-free.
+// dropInOrder absorbs a new (not late) packet that is intentionally not forwarded,
+// so the outgoing sequence numbers stay gap-free. After a gap the packets missing
+// before it keep their slots: they use the offsets of the range before this one.
+// A missing packet that later turns out to be dropped as well leaves its slot empty.
 func (f *Forwarder) dropInOrder(pkt *buffer.ExtPacket) {
-	if pkt.ExtSequenceNumber == f.lastInExt+1 {
+	if pkt.ExtSequenceNumber > f.lastInExt {
+		// The missing packets' slots count as used, so padding cannot take them.
+		if reserved := pkt.ExtSequenceNumber - 1 - f.snOffset; reserved > f.lastOutExtSN {
+			f.lastOutExtSN = reserved
+		}
 		f.snOffset++
 		f.lastInExt = pkt.ExtSequenceNumber
 		f.pushRange(pkt.ExtSequenceNumber + 1)

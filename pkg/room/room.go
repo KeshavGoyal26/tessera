@@ -84,6 +84,7 @@ type manager struct {
 	engine    rtc.Engine
 	notifier  webhook.Notifier
 	recording RecordingTrigger
+	keys      auth.KeyProvider // signs refreshed participant tokens; nil disables refresh
 	logger    *slog.Logger
 	sampler   *stats.NodeSampler
 
@@ -110,7 +111,7 @@ func NewManager(p Params) (Manager, error) {
 		rtc.NegotiationDebounce = cfg.Signal.NegotiationDebounce
 	}
 	m := &manager{
-		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, logger: p.Logger,
+		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, keys: p.Keys, logger: p.Logger,
 		sampler: stats.NewNodeSampler(cfg.NodeID),
 		rooms:   map[string]*Room{}, bySID: map[string]*Participant{},
 	}

@@ -891,6 +891,9 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     const stale = (t: PCTransport | undefined) => !t || ["failed", "disconnected", "closed"].includes(t.pc.connectionState);
     const restart = stale(this.#pub) || (this.#sub !== undefined && stale(this.#sub) && this.#sub.pc.connectionState !== "new");
     this.#sendSyncState(signal, restart);
+    // An offer in flight on the old connection may never be answered; without this the
+    // ICE restart below would queue behind it until its 15 s timeout.
+    this.#pub?.restartPendingOffer();
     if (restart && this.#pub) await this.#pub.negotiate({ iceRestart: true });
     // Send every track's mute state: a change made while disconnected was lost.
     for (const e of this.#local.values()) signal.sendMute(e.sid, e.track.isMuted);

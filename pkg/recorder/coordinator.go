@@ -55,6 +55,10 @@ var (
 
 const maxClaimWait = 30 * time.Second
 
+// maxFinishedJobs bounds how many ended recordings are kept for listing; older
+// ones are forgotten (their files stay in storage).
+const maxFinishedJobs = 1000
+
 // NewCoordinator creates the Coordinator and starts its failure detector.
 // Call Close to stop it.
 func NewCoordinator(p CoordinatorParams) *Coordinator {
@@ -418,7 +422,32 @@ func (c *Coordinator) Heartbeat(_ context.Context, req *tesserav1.HeartbeatReque
 	return resp, nil
 }
 
-// Reap fails or re-queues jobs whose worker missed heartbeats.
+// evictFinishedLocked drops the oldest ended jobs beyond maxFinishedJobs.
+func (c *Coordinator) evictFinishedLocked() {
+	finished := 0
+	for _, id := range c.order {
+		if terminal(c.jobs[id].info.Status) {
+			finished++
+		}
+	}
+	if finished <= maxFinishedJobs {
+		return
+	}
+	drop := finished - maxFinishedJobs
+	kept := c.order[:0]
+	for _, id := range c.order {
+		if drop > 0 && terminal(c.jobs[id].info.Status) {
+			delete(c.jobs, id)
+			drop--
+			continue
+		}
+		kept = append(kept, id)
+	}
+	c.order = kept
+}
+
+// Reap fails or re-queues jobs whose worker missed heartbeats, and forgets the
+// oldest ended jobs beyond maxFinishedJobs.
 func (c *Coordinator) Reap() {
 	now := c.now()
 	var ended []*tesserav1.RecordingInfo
@@ -445,6 +474,7 @@ func (c *Coordinator) Reap() {
 			ended = append(ended, e)
 		}
 	}
+	c.evictFinishedLocked()
 	c.mu.Unlock()
 	for _, e := range ended {
 		c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, e)
