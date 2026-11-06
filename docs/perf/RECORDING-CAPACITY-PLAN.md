@@ -45,6 +45,28 @@ Linux VM, 4 vCPU on Apple M1. Each presenter sends 720p30 H.264 at 1.5 Mbit/s pl
 - **These figures are inflated.** A bug, fixed in 42a38e3, made every recording subscribe to every presenter (N² traffic), so these runs carried far more traffic than real use.
 - **After the fix:** not yet measured cleanly.
 
+### Tessera, measured after the fixes (2026-11-06, commits 42a38e3 and f431665)
+
+Linux VM, 4 vCPU on Apple M1 (arm64). The server, recorder and load generator all run in the VM. Every presenter publishes real H.264 plus Opus and is recorded to HLS, with no FFmpeg.
+
+| Presenters | Stream | Server + recorder CPU | Per presenter | Memory (server + recorder) | Recordings valid |
+|---|---|---|---|---|---|
+| 30 | 720p30, 1.5 Mbit/s | 46% of a vCPU | 1.53% | 282 MB | 30/30 |
+| 60 | 720p30, 1.5 Mbit/s | 83% | 1.39% | 524 MB | 60/60 |
+| 100 | 720p30, 1.5 Mbit/s | 144% | 1.44% | 903 MB | 100/100 |
+| 150 | 360p30, 0.4 Mbit/s | 181% | 1.21% | 1.1 GB | 150/150 (VM 97% busy) |
+| 300 | 360p30, 0.4 Mbit/s | not valid | | | VM saturated by the load generator, 258/300 started |
+
+- **Cost is linear and mostly fixed per presenter.** 0.4 Mbit/s costs nearly as much as 1.5 Mbit/s.
+- **Kernel networking is not in these figures.** It comes to about 1% per presenter in the VM, partly from the load generator.
+- **Where the time goes** (CPU profile at 100 presenters):
+  - system calls for packet I/O: about 20% in each process;
+  - memory copies and GC;
+  - Pion's per-packet interceptors in the recorder. Dropping the congestion-feedback and stats interceptors would save only about 2%.
+- **The structural cost is the recorder being a separate WebRTC participant.** Every recorded packet is encrypted again, sent over loopback, decrypted and parsed. The recorder process is about half of the total.
+
+**Rough c8i.xlarge estimate:** about 2-3% of a vCPU per recorded presenter including the kernel. At 75% CPU that is roughly **100-150 recorded presenters** with the separate recorder. To pass 300, record inside the SFU process: it writes HLS straight from the receive buffer, removing the second hop and about half the cost. ADR-0007 chose a separate process for isolation; revisit that trade-off.
+
 ## Questions for us (answer before testing)
 
 1. **Kurento candidate stream:** what resolution, frame rate and bitrate? Is simulcast on? Does anyone watch live?
