@@ -78,12 +78,23 @@ func realMain() int {
 	logger := cfg.NewLogger()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // a second Ctrl-C or SIGTERM now ends the process at once
+		time.AfterFunc(shutdownLimit, func() {
+			logger.Error("shutdown did not finish in time, exiting", "limit", shutdownLimit)
+			os.Exit(1)
+		})
+	}()
 	if err := run(ctx, cfg, logger, nil, withDevToken(*dev)); err != nil {
 		logger.Error("tessera exited", "err", err)
 		return 1
 	}
 	return 0
 }
+
+// shutdownLimit bounds a graceful shutdown (30 s drain plus closing); past it the process exits.
+const shutdownLimit = 60 * time.Second
 
 // listeners lets tests inject pre-bound listeners (port 0).
 type listeners struct {
@@ -227,6 +238,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	case err = <-errCh:
 	}
 	logger.Info("shutting down")
+	dash.Close() // ends dashboard event streams, which would otherwise hold Shutdown for its full timeout
 	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = rooms.Drain(drainCtx)

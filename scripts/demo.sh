@@ -49,6 +49,11 @@ detect_ip() {
 }
 [ -n "$HOST" ] || HOST="$(detect_ip)"
 
+if old="$(pgrep -f "$DEMO/bin/tessera" 2>/dev/null)"; then
+  old="$(echo $old)" # one line
+  echo "a previous demo is still running (pid $old); stop it with: kill $old" >&2
+  exit 1
+fi
 for p in $PORT $WEB_PORT; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is already in use; stop whatever is listening there first" >&2
@@ -114,7 +119,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill_tree "$pid"; done
   wait 2>/dev/null || true
 }
-trap cleanup INT TERM EXIT
+trap cleanup INT TERM HUP EXIT
 
 start() { # name cmd...
   local name="$1"; shift
