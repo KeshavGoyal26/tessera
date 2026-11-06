@@ -23,7 +23,7 @@ type fakeConnector struct {
 	left   bool
 }
 
-func (f *fakeConnector) Join(_ context.Context, _, _ string, onTrack func(Track), onClosed func(error)) (Room, error) {
+func (f *fakeConnector) Join(_ context.Context, _, _ string, _ func(Track) bool, onTrack func(Track), onClosed func(error)) (Room, error) {
 	f.closed = onClosed
 	for _, t := range f.tracks {
 		onTrack(t)

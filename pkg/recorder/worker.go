@@ -35,7 +35,9 @@ type Room interface {
 // Connector joins a room as a hidden subscriber and delivers subscribed tracks.
 // onClosed is called once when the connection ends (nil error = left cleanly).
 type Connector interface {
-	Join(ctx context.Context, wsURL, token string, onTrack func(Track), onClosed func(error)) (Room, error)
+	// Join connects to the room and subscribes to the tracks want accepts; onTrack is
+	// called for each subscribed track.
+	Join(ctx context.Context, wsURL, token string, want func(Track) bool, onTrack func(Track), onClosed func(error)) (Room, error)
 }
 
 // WorkerOption customises a Worker.
@@ -362,7 +364,7 @@ func (r *jobRun) execute(ctx context.Context) {
 	r.prefix = expandPrefix(r.req.GetFilenamePrefix(), rec.GetRoom(), r.id, r.started)
 
 	closed := make(chan error, 1)
-	room, err := w.conn.Join(ctx, r.job.GetWsUrl(), r.job.GetToken(), r.onTrack(ctx), func(err error) {
+	room, err := w.conn.Join(ctx, r.job.GetWsUrl(), r.job.GetToken(), r.matches, r.onTrack(ctx), func(err error) {
 		select {
 		case closed <- err:
 		default:
