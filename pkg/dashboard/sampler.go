@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,7 +122,14 @@ func (h *Handler) tick() {
 	pt := pointOf(snap, active)
 	alerts := h.alerts(snap, recs)
 	u := &Update{Snapshot: snap, Recorders: recs, Alerts: alerts, Point: pt}
-	b, err := json.Marshal(u)
+	h.mu.Lock()
+	viewers := len(h.subs)
+	h.mu.Unlock()
+	var b []byte
+	err := errNoViewers
+	if viewers > 0 { // the frame grows with participants x subscriptions; skip it when nobody watches
+		b, err = json.Marshal(u)
+	}
 	h.mu.Lock()
 	h.latest = u
 	h.hist.add(pt)
@@ -135,6 +143,8 @@ func (h *Handler) tick() {
 	}
 	h.mu.Unlock()
 }
+
+var errNoViewers = errors.New("no viewers")
 
 // recorders fetches recorder /stats at most every 2 s, in parallel.
 func (h *Handler) recorders() []RecorderStatus {

@@ -56,10 +56,20 @@ func needCreate(g *auth.RoomGrant, room string) error {
 	return nil
 }
 
-func needList(g *auth.RoomGrant) error {
+// needList requires room_list; a grant scoped to a room lists only that room.
+func needList(g *auth.RoomGrant, r *tesserav1.ListRoomsRequest) error {
 	if !g.RoomList {
 		return denied("room_list")
 	}
+	if g.Room == "" {
+		return nil
+	}
+	for _, n := range r.Names {
+		if n != g.Room {
+			return errs.New(errs.CodePermissionDenied, "token is scoped to room %q", g.Room)
+		}
+	}
+	r.Names = []string{g.Room}
 	return nil
 }
 
@@ -111,7 +121,7 @@ func buildRoutes(p Params) map[string]*route {
 			}
 			return &tesserav1.CreateRoomResponse{Room: out}, nil
 		})
-	rpc(m, rs+"ListRooms", func(g *auth.RoomGrant, _ *tesserav1.ListRoomsRequest) error { return needList(g) },
+	rpc(m, rs+"ListRooms", func(g *auth.RoomGrant, r *tesserav1.ListRoomsRequest) error { return needList(g, r) },
 		func(ctx context.Context, r *tesserav1.ListRoomsRequest) (*tesserav1.ListRoomsResponse, error) {
 			if p.Rooms == nil {
 				return nil, errs.NotImplemented("rooms")

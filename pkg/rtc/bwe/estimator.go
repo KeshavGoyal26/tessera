@@ -249,6 +249,11 @@ type ack struct {
 
 // OnTransportFeedback implements Estimator.
 func (e *estimator) OnTransportFeedback(fb *rtcp.TransportLayerCC, receivedAt time.Time) {
+	// A report can claim up to 65535 packets in a few bytes; more than the send
+	// history cannot match anything, so drop it before allocating or locking.
+	if int(fb.PacketStatusCount) > historySize {
+		return
+	}
 	// Decode arrival times.
 	acks := make([]ack, 0, fb.PacketStatusCount)
 	var lost, total int

@@ -337,7 +337,7 @@ func (m *manager) Admit(_ context.Context, claims *auth.Claims, p signal.Connect
 		m.mu.RLock()
 		part := m.bySID[p.ParticipantSID]
 		m.mu.RUnlock()
-		if part == nil || part.Identity() != claims.Identity() || part.isClosed() {
+		if part == nil || part.Identity() != claims.Identity() || part.room.Name() != claims.Grants.Room || part.isClosed() {
 			return signal.ResumeFailed("unknown participant " + p.ParticipantSID)
 		}
 		return nil

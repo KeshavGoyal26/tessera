@@ -24,6 +24,6 @@ recording:
   ws_url: ws://tessera:7880
 metrics:
   addr: ":6789"
-  pprof: true
+  pprof: false # enable only on a trusted network
 logging:
   level: info

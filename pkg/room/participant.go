@@ -349,8 +349,11 @@ func (p *Participant) rtcpLoop() {
 					pkts = append(pkts, sr)
 				}
 			}
-			if len(pkts) > 0 {
-				_ = sub.WriteRTCP(pkts)
+			// 28-byte SRs: 30 per compound packet keeps it well under the MTU.
+			for len(pkts) > 0 {
+				n := min(len(pkts), 30)
+				_ = sub.WriteRTCP(pkts[:n])
+				pkts = pkts[n:]
 			}
 		}
 		if pub != nil && len(recvs) > 0 {
@@ -588,6 +591,10 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "metadata update not allowed")
 			return false
 		}
+		if !metadataWithinLimits(m.UpdateMetadata) {
+			p.respond(id, tesserav1.RequestResponse_REASON_LIMIT_EXCEEDED, "metadata too large")
+			return false
+		}
 		p.mu.Lock()
 		if m.UpdateMetadata.GetName() != "" {
 			p.name = m.UpdateMetadata.GetName()
@@ -677,6 +684,24 @@ func (p *Participant) canPublishSource(src tesserav1.TrackSource) bool {
 	return false
 }
 
+// Per-participant limits, so one client cannot exhaust the node or flood the room.
+const (
+	maxTracksPerParticipant = 32       // published plus pending
+	maxMetadataBytes        = 64 << 10 // name + metadata + attributes
+	maxAttributes           = 100
+)
+
+func metadataWithinLimits(u *tesserav1.UpdateParticipantMetadata) bool {
+	if len(u.GetAttributes()) > maxAttributes {
+		return false
+	}
+	n := len(u.GetName()) + len(u.GetMetadata())
+	for k, v := range u.GetAttributes() {
+		n += len(k) + len(v)
+	}
+	return n <= maxMetadataBytes
+}
+
 func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 	if req.GetCid() == "" || req.GetType() == tesserav1.TrackType_TRACK_TYPE_UNSPECIFIED {
 		p.respond(reqID, tesserav1.RequestResponse_REASON_INVALID, "cid and type required")
@@ -688,6 +713,11 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 	}
 	p.mu.Lock()
 	t := p.pending[req.GetCid()]
+	if t == nil && len(p.pending) >= maxTracksPerParticipant {
+		p.mu.Unlock()
+		p.respond(reqID, tesserav1.RequestResponse_REASON_LIMIT_EXCEEDED, "too many tracks")
+		return
+	}
 	if t == nil {
 		info := &tesserav1.TrackInfo{
 			Sid: newSID("TR_"), Type: req.GetType(), Name: req.GetName(), Muted: req.GetMuted(),

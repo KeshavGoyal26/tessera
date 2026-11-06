@@ -147,8 +147,8 @@ func (v *hmacVerifier) Verify(token string) (*Claims, error) {
 		return nil, unauthenticated("malformed token claims")
 	}
 	secret, ok := v.keys.Secret(c.Issuer)
-	if !ok {
-		return nil, unauthenticated("unknown api key")
+	if !ok { // same message as a bad signature: do not reveal which API keys exist
+		return nil, unauthenticated("invalid token signature")
 	}
 	want := signature(parts[0]+"."+parts[1], secret)
 	if subtle.ConstantTimeCompare([]byte(want), []byte(parts[2])) != 1 {
