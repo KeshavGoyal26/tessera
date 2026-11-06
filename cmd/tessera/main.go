@@ -158,6 +158,29 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		APIKey: recKey, Secret: recSecret, Registry: reg, Logger: logger,
 	})
 	autoRec.set(coordinator)
+	recorderURLs := splitList(os.Getenv("TESSERA_DASHBOARD_RECORDERS"))
+	var recWorker *recorder.Worker
+	if cfg.Recording.InProcess {
+		// Record inside this server: jobs come straight from the coordinator and tracks
+		// straight from the receive buffers (no recorder WebRTC session).
+		w, err := recorder.NewWorker(recorder.InProcessConfig(cfg.Recording, cfg.Development), reg, logger,
+			recorder.WithJobAPI(coordinator), recorder.WithConnector(recorder.LocalConnector{Rooms: rooms, Verifier: verifier}))
+		if err != nil {
+			return err
+		}
+		recWorker = w
+		metrics.HandleExtra("/recorder/stats", w.StatsHandler())
+		if st := cfg.Recording.Storage; st.Kind != "s3" && st.LocalBaseURL != "" {
+			metrics.HandleExtra("/recordings/", recorder.RecordingsHandler(st.LocalRoot))
+		}
+		if addr := cfg.Metrics.Addr; addr != "" {
+			if strings.HasPrefix(addr, ":") {
+				addr = "127.0.0.1" + addr
+			}
+			recorderURLs = append(recorderURLs, "http://"+addr+"/recorder")
+		}
+		logger.Info("recording in process", "storage", cfg.Recording.Storage.Kind, "capacity", cfg.Recording.Capacity)
+	}
 	adminSrv := admin.NewServer(admin.Params{
 		Rooms: rooms, Recordings: coordinator, Workers: coordinator,
 		Verifier: verifier, Registry: reg, Logger: logger,
@@ -166,7 +189,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 
 	dash, err := dashboard.New(dashboard.Params{
 		Stats: rooms, Keys: keys, Rooms: rooms, Recordings: coordinator,
-		RecorderURLs: splitList(os.Getenv("TESSERA_DASHBOARD_RECORDERS")), Logger: logger,
+		RecorderURLs: recorderURLs, Logger: logger,
 	})
 	if err != nil {
 		return err
@@ -223,6 +246,15 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			errCh <- err
 		}
 	}()
+	if recWorker != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := recWorker.Run(ctx); err != nil && ctx.Err() == nil {
+				errCh <- err
+			}
+		}()
+	}
 	if ln.metrics != nil {
 		wg.Add(1)
 		go func() {

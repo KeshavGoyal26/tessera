@@ -26,7 +26,12 @@ import (
 
 // TestLiveRecordingThroughRealServer records a participant (H.264 + Opus) that
 // publishes through a real SFU on loopback, with the production ClientConnector.
-func TestLiveRecordingThroughRealServer(t *testing.T) {
+func TestLiveRecordingThroughRealServer(t *testing.T) { runLiveRecording(t, false) }
+
+// The same recording made inside the server: LocalConnector taps the receivers directly.
+func TestLiveRecordingInProcess(t *testing.T) { runLiveRecording(t, true) }
+
+func runLiveRecording(t *testing.T, inProcess bool) {
 	hlstest.NeedFFmpeg(t)
 	const key, secret = "livekey", "livesecret-livesecret-livesecret-00"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -106,7 +111,11 @@ func TestLiveRecordingThroughRealServer(t *testing.T) {
 	wcfg := DefaultConfig()
 	wcfg.WorkerID, wcfg.Capacity, wcfg.Heartbeat = "live-worker", 10, 100*time.Millisecond
 	wcfg.Storage.LocalRoot = root
-	w, err := NewWorker(wcfg, nil, logger, WithJobAPI(coord), WithConnector(ClientConnector{Logger: logger, SettingEngine: client.LoopbackSettingEngine()}))
+	var conn Connector = ClientConnector{Logger: logger, SettingEngine: client.LoopbackSettingEngine()}
+	if inProcess {
+		conn = LocalConnector{Rooms: mgr, Verifier: auth.NewVerifier(auth.StaticKeys(cfg.Keys))}
+	}
+	w, err := NewWorker(wcfg, nil, logger, WithJobAPI(coord), WithConnector(conn))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,6 +27,9 @@ type Room struct {
 	speakers speaker.Observer
 	quality  map[string]tesserav1.ConnectionQuality
 	done     chan struct{}
+
+	watchers map[uint64]func(PublishedTrack) // in-process consumers (recorder), under mu
+	watchSeq uint64
 }
 
 // SpeakerInterval and QualityInterval drive the room worker.
@@ -346,6 +349,7 @@ func (r *Room) broadcastParticipant(p *Participant) {
 
 // onTrackPublished subscribes interested participants to a new track.
 func (r *Room) onTrackPublished(pub *Participant, t *pubTrack) {
+	r.notifyWatchers(pub, t)
 	r.addSpeakerSource(pub, t)
 	r.broadcastParticipant(pub)
 	for _, p := range r.Participants() {

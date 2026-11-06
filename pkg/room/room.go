@@ -56,6 +56,7 @@ type Manager interface {
 	Drain(ctx context.Context) error
 	// Ready reports readiness (false while draining).
 	Ready() error
+	TrackWatcher
 	Close()
 }
 

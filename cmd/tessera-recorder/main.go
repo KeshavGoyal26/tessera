@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -89,7 +88,7 @@ func serveOps(ctx context.Context, rc *recorder.Config, reg *prometheus.Registry
 	mux := http.NewServeMux()
 	mux.Handle("/stats", w.StatsHandler())
 	if rc.Storage.Kind != "s3" && rc.Storage.LocalBaseURL != "" {
-		mux.Handle("/recordings/", recordingsHandler(rc.Storage.LocalRoot))
+		mux.Handle("/recordings/", recorder.RecordingsHandler(rc.Storage.LocalRoot))
 		logger.Info("serving local recordings", "url", rc.Storage.LocalBaseURL, "dir", rc.Storage.LocalRoot)
 	}
 	mux.Handle("/", metrics.Handler(cfg, reg, w.Ready))
@@ -105,29 +104,4 @@ func serveOps(ctx context.Context, rc *recorder.Config, reg *prometheus.Registry
 		return err
 	}
 	return nil
-}
-
-// recordingsHandler serves the local recordings directory read-only, without directory
-// listings, with CORS so the dashboard (another origin) can fetch playlists and segments.
-func recordingsHandler(root string) http.Handler {
-	files := http.StripPrefix("/recordings/", http.FileServer(http.Dir(root)))
-	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/") {
-			http.NotFound(rw, r)
-			return
-		}
-		rw.Header().Set("Access-Control-Allow-Origin", "*")
-		switch {
-		case strings.HasSuffix(r.URL.Path, ".m3u8"):
-			rw.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			rw.Header().Set("Cache-Control", "no-cache")
-		case strings.HasSuffix(r.URL.Path, ".m4s"):
-			rw.Header().Set("Content-Type", "video/iso.segment")
-		}
-		files.ServeHTTP(rw, r)
-	})
 }

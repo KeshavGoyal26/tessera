@@ -135,9 +135,46 @@ type WebhookEndpoint struct {
 // RecordingConfig configures the in-server recording Coordinator.
 type RecordingConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// WSURL is the signaling URL recorders use to join rooms on this node.
+	// InProcess records inside this server: the recorder reads each track from the
+	// server's receive buffer, with no WebRTC session, encryption or loopback hop.
+	// Otherwise separate tessera-recorder workers join rooms over WebRTC.
+	InProcess bool `yaml:"in_process"`
+	// WSURL is the signaling URL external recorders use to join rooms on this node.
 	WSURL            string        `yaml:"ws_url"`
 	HeartbeatTimeout time.Duration `yaml:"heartbeat_timeout"`
+
+	// In-process recorder settings (same meaning as in recorder.yaml).
+	Capacity   int              `yaml:"capacity"` // units; one remuxed track is one unit
+	TempDir    string           `yaml:"temp_dir"`
+	FFmpegPath string           `yaml:"ffmpeg_path"` // only for the optional AAC audio mode
+	Storage    RecordingStorage `yaml:"storage"`
+	HLS        RecordingHLS     `yaml:"hls"`
+}
+
+// RecordingStorage selects where recordings are written.
+type RecordingStorage struct {
+	// Kind: "local" or "s3".
+	Kind      string `yaml:"kind"`
+	LocalRoot string `yaml:"local_root"`
+	// LocalBaseURL, when set, serves LocalRoot read-only under /recordings/ and reports
+	// playlist URLs below this prefix, so the dashboard can play local recordings.
+	LocalBaseURL string `yaml:"local_base_url"`
+	S3           struct {
+		Bucket         string `yaml:"bucket"`
+		Region         string `yaml:"region"`
+		Endpoint       string `yaml:"endpoint"`
+		AccessKey      string `yaml:"access_key"`
+		Secret         string `yaml:"secret"`
+		ForcePathStyle bool   `yaml:"force_path_style"`
+		Prefix         string `yaml:"prefix"`
+	} `yaml:"s3"`
+}
+
+// RecordingHLS are applied when a recording request leaves options unset.
+type RecordingHLS struct {
+	SegmentDuration time.Duration `yaml:"segment_duration"`
+	// AudioCodec: "opus" (default) or "aac".
+	AudioCodec string `yaml:"audio_codec"`
 }
 
 // MetricsConfig configures the metrics/pprof/health listener.
@@ -183,10 +220,12 @@ func Default() *Config {
 			MaxMessageSize:      1 << 20,
 			NegotiationDebounce: 50 * time.Millisecond,
 		},
-		Webhook:   WebhookConfig{Timeout: 10 * time.Second, QueueSize: 1000},
-		Recording: RecordingConfig{Enabled: true, HeartbeatTimeout: 15 * time.Second},
-		Metrics:   MetricsConfig{Addr: "127.0.0.1:6789"}, // unauthenticated: loopback, no pprof unless configured
-		Logging:   LoggingConfig{Level: "info"},
+		Webhook: WebhookConfig{Timeout: 10 * time.Second, QueueSize: 1000},
+		Recording: RecordingConfig{Enabled: true, HeartbeatTimeout: 15 * time.Second, Capacity: 100, TempDir: os.TempDir() + "/tessera-recorder",
+			FFmpegPath: "ffmpeg", Storage: RecordingStorage{Kind: "local", LocalRoot: "./recordings"},
+			HLS: RecordingHLS{SegmentDuration: 4 * time.Second, AudioCodec: "opus"}},
+		Metrics: MetricsConfig{Addr: "127.0.0.1:6789"}, // unauthenticated: loopback, no pprof unless configured
+		Logging: LoggingConfig{Level: "info"},
 	}
 }
 

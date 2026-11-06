@@ -80,32 +80,11 @@ type Config struct {
 	Heartbeat  time.Duration        `yaml:"heartbeat"`
 }
 
-// StorageConfig selects default storage.
-type StorageConfig struct {
-	// Kind: "local" or "s3".
-	Kind      string `yaml:"kind"`
-	LocalRoot string `yaml:"local_root"`
-	// LocalBaseURL, when set, makes the recorder's ops listener serve LocalRoot read-only
-	// under /recordings/ and report playlist URLs below this prefix (e.g.
-	// "http://localhost:6790/recordings"), so the dashboard can play local recordings.
-	LocalBaseURL string `yaml:"local_base_url"`
-	S3           struct {
-		Bucket         string `yaml:"bucket"`
-		Region         string `yaml:"region"`
-		Endpoint       string `yaml:"endpoint"`
-		AccessKey      string `yaml:"access_key"`
-		Secret         string `yaml:"secret"`
-		ForcePathStyle bool   `yaml:"force_path_style"`
-		Prefix         string `yaml:"prefix"`
-	} `yaml:"s3"`
-}
+// StorageConfig selects default storage (shared with the server's in-process recorder).
+type StorageConfig = config.RecordingStorage
 
 // HLSDefaults are applied when a request leaves options unset.
-type HLSDefaults struct {
-	SegmentDuration time.Duration `yaml:"segment_duration"`
-	// AudioCodec: "opus" (default) or "aac".
-	AudioCodec string `yaml:"audio_codec"`
-}
+type HLSDefaults = config.RecordingHLS
 
 // DefaultConfig returns recorder defaults.
 func DefaultConfig() *Config {
