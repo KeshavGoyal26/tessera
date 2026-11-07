@@ -116,6 +116,42 @@ found the recorder stuck on a paused top simulcast layer (37% of video recorded)
 The default `recording.capacity` was 100 units (50 presenters): recordings beyond it wait in the
 queue and miss their start. It is now 150 units per CPU.
 
+### Long soak and network scenarios (2026-11-07, build with 9e08135 and 6f6c637)
+
+**5 h 5 min soak** (stopped early because every curve was flat): 300 recorded presenters (6 groups of 50,
+each rejoining every 15 min) plus a real Chrome presenter and viewer looping the network scenarios
+below.
+
+| Metric | Result |
+|---|---|
+| Recordings | 12,344 playlists, all finalized, 0 missing segments, 0 under 90% coverage, 99.99% covered |
+| Server CPU | 197-208% of one vCPU (about half the box), flat |
+| RSS | 1.46-1.50 GB for the whole run, no growth |
+| Goroutines / FDs | 18,408 / 316 under load; 21 / 12 after it (baseline) |
+| RSS / heap after the load | 115 MB / 16 MB |
+| Panics, ERROR log lines | 0 / 0 |
+
+**Network scenarios**, real Chrome presenter and viewer in Linux network namespaces shaped with
+`tc netem`, 10 rounds under the load above (medians; freezes are seconds frozen per 45 s phase):
+
+| Condition | Viewer sees |
+|---|---|
+| Presenter uplink 1 Mbit/s, 500 kbit/s | 360p, 18-20 fps, 1-2 s freezes |
+| Presenter uplink 250 / 150 kbit/s | 180p, 14 / 13 fps, 3 / 7.5 s freezes |
+| Viewer downlink 1 Mbit/s / 500 kbit/s | 720p / 360p, smooth |
+| Viewer downlink 250 / 150 kbit/s | 8 / 2 fps, frequent stalls (accepted: below the supported range) |
+| Viewer 5% loss, or 150 ms added delay either way | 720p, smooth |
+| **Presenter 5% loss / 2% loss + 75 ms** | **360p, 11 / 13 s freezes (open)** |
+| Blackout 3-30 s | video back in ~2 s (worst 8.6 s) |
+| Blackout 60 s | video back in 6-7 s (worst 11 s); the SDK rejoins as a new session |
+
+Supported range: medium and fast networks. Slow-link tuning (viewers under 250 kbit/s, presenter
+uplinks under 250 kbit/s) is out of scope.
+
+Failure drills: SIGTERM finalizes all recordings in 0.2 s; a full disk fails the recordings cleanly
+and live media is unaffected; `kill -9` leaves recordings open, closed at the next start since
+a87af1b.
+
 ## Questions for us (answer before testing)
 
 1. **Kurento candidate stream:** what resolution, frame rate and bitrate? Is simulcast on? Does anyone watch live?
