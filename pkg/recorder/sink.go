@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path"
 	"sync"
@@ -36,6 +37,11 @@ type storageSink struct {
 	mu            sync.Mutex
 	playlistKey   string
 	playlistWhere string
+
+	// Crash journal (journal.go): after each playlist upload, the playlist and meta()
+	// are written to the file journal. Both unset = not journaled.
+	journal string
+	meta    func() journalTrack
 }
 
 type upload struct {
@@ -46,6 +52,7 @@ type upload struct {
 	endWall   time.Time
 	dur       time.Duration
 	isPlaylst bool
+	meta      journalTrack
 }
 
 func newStorageSink(ctx context.Context, st storage.Storage, prefix string) *storageSink {
@@ -78,6 +85,14 @@ func (s *storageSink) loop(ctx context.Context) {
 			s.mu.Lock()
 			s.playlistKey, s.playlistWhere = u.key, where
 			s.mu.Unlock()
+			if s.journal != "" {
+				m := u.meta
+				m.Key, m.Playlist = u.key, string(u.data)
+				m.Bytes, m.Segments, m.DurMs = s.bytes.Load(), s.segs.Load(), time.Duration(s.durNs.Load()).Milliseconds()
+				if b, err := json.Marshal(m); err == nil {
+					_ = writeFileAtomic(s.journal, b)
+				}
+			}
 		}
 	}
 }
@@ -108,7 +123,11 @@ func (s *storageSink) WriteSegment(ctx context.Context, seg hls.Segment) error {
 
 // WritePlaylist implements hls.Sink.
 func (s *storageSink) WritePlaylist(ctx context.Context, name string, data []byte) error {
-	return s.enqueue(ctx, upload{key: path.Join(s.prefix, name), ctype: storage.ContentTypePlaylist, data: data, isPlaylst: true})
+	u := upload{key: path.Join(s.prefix, name), ctype: storage.ContentTypePlaylist, data: data, isPlaylst: true}
+	if s.meta != nil {
+		u.meta = s.meta()
+	}
+	return s.enqueue(ctx, u)
 }
 
 // Drain waits for all queued uploads and stops the uploader.

@@ -68,6 +68,12 @@ after the target. Segments are always uploaded before the playlist that lists th
   Each move is a resolution change (above). Without this the video stopped until the top layer
   returned (measured: 37% of a 22-minute throttled session recorded; now 96%).
 - Assumes no B-frames (WebRTC H.264), so DTS = PTS and `ctts` offsets are 0.
+- Crash (kill -9, OOM, power loss): media up to the last uploaded segment is in storage, but the
+  playlists are still live and there is no master. A crash journal in `temp_dir/journal` (last
+  uploaded playlist and track details, removed when a recording ends normally) lets the next
+  start close the playlists, write the master and send `recording_ended` with status `FAILED`
+  and the outputs. Works for local and S3 storage; recordings with per-request S3 credentials
+  are not journaled. Keep `temp_dir` on persistent disk for this to survive a reboot.
 
 ## Codecs and fallbacks
 

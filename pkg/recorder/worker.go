@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -141,6 +142,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		<-hbDone
 	}()
 
+	w.recoverJournal(ctx)
 	backoff := time.Second
 	for ctx.Err() == nil {
 		free := w.freeCapacity()
@@ -248,6 +250,8 @@ type jobRun struct {
 	id     string
 	req    *tesserav1.StartRecordingRequest
 	cancel context.CancelFunc
+	// journal is the crash-journal directory of this recording ("" = not journaled).
+	journal string
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -351,25 +355,19 @@ func (r *jobRun) execute(ctx context.Context) {
 	w.stats.jobStarted(r)
 	defer func() { w.stats.jobFinished(r) }()
 
-	var st storage.Storage
-	var err error
-	if loc := r.req.GetStorage().GetLocal(); loc == nil {
-		st, err = storage.FromOptions(ctx, r.req.GetStorage(), w.defStorage)
-	} else {
-		// Per-request local directories live below the configured root.
-		dir := path.Clean("/" + loc.GetDirectory())
-		var opts []storage.LocalOption
-		if base := w.cfg.Storage.LocalBaseURL; base != "" {
-			opts = append(opts, storage.WithBaseURL(strings.TrimRight(base, "/")+dir))
-		}
-		st, err = storage.NewLocal(path.Join(w.cfg.Storage.LocalRoot, dir), opts...)
-	}
+	st, err := w.storageFor(ctx, r.req)
 	if err != nil {
 		r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_FAILED, "storage: "+err.Error(), nil, "")
 		return
 	}
 	r.st = st
 	r.prefix = expandPrefix(r.req.GetFilenamePrefix(), rec.GetRoom(), r.id, r.started)
+	r.journal = r.startJournal()
+	defer func() {
+		if r.journal != "" {
+			_ = os.RemoveAll(r.journal) // ended normally: nothing to recover
+		}
+	}()
 
 	closed := make(chan error, 1)
 	room, err := w.conn.Join(ctx, r.job.GetWsUrl(), r.job.GetToken(), r.matches, r.onTrack(ctx), func(err error) {
@@ -496,6 +494,13 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 			go sink.Drain(ctx) //nolint:errcheck
 			return
 		}
+		if r.journal != "" {
+			sink.journal = filepath.Join(r.journal, t.SID+".json")
+			sink.meta = func() journalTrack { // called on the track's goroutine
+				return journalTrack{SID: t.SID, Ident: t.ParticipantIdentity, Codecs: tr.codecString,
+					Width: int(tr.stats.width.Load()), Height: int(tr.stats.height.Load()), Audio: tr.codec == "Opus"}
+			}
+		}
 		tctx, tcancel := context.WithCancel(ctx)
 		rt := &recTrack{rec: tr, sink: sink, ident: t.ParticipantIdentity, done: make(chan struct{}), prefix: prefix, cancel: tcancel}
 		r.tracks[t.SID] = rt
@@ -546,6 +551,21 @@ func (r *jobRun) segmentDuration() time.Duration {
 	return min(max(d, 2*time.Second), 6*time.Second)
 }
 
+// storageFor returns the storage of a request: per-request options or the default.
+func (w *Worker) storageFor(ctx context.Context, req *tesserav1.StartRecordingRequest) (storage.Storage, error) {
+	loc := req.GetStorage().GetLocal()
+	if loc == nil {
+		return storage.FromOptions(ctx, req.GetStorage(), w.defStorage)
+	}
+	// Per-request local directories live below the configured root.
+	dir := path.Clean("/" + loc.GetDirectory())
+	var opts []storage.LocalOption
+	if base := w.cfg.Storage.LocalBaseURL; base != "" {
+		opts = append(opts, storage.WithBaseURL(strings.TrimRight(base, "/")+dir))
+	}
+	return storage.NewLocal(path.Join(w.cfg.Storage.LocalRoot, dir), opts...)
+}
+
 // finalize stops all tracks, drains uploads and writes the master playlist.
 func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, string, error) {
 	r.mu.Lock()
@@ -592,14 +612,8 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 		if where == "" {
 			continue
 		}
-		bw := 128000
-		if dur > 0 {
-			bw = int(float64(t.sink.bytes.Load()*8) / dur.Seconds())
-		}
-		rends = append(rends, hls.Rendition{
-			URI: sid + "/index.m3u8", Codecs: t.rec.codecString, Bandwidth: max(bw, 1), Width: int(t.rec.stats.width.Load()),
-			Height: int(t.rec.stats.height.Load()), IsAudio: t.rec.codec == "Opus", Name: t.ident + "-" + sid,
-		})
+		rends = append(rends, rendition(sid, t.ident, t.rec.codecString, int(t.rec.stats.width.Load()), int(t.rec.stats.height.Load()),
+			t.rec.codec == "Opus", t.sink.bytes.Load(), dur))
 	}
 	var master string
 	if len(rends) > 1 || r.req.GetParticipant() != nil {

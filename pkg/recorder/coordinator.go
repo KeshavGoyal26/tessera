@@ -230,6 +230,20 @@ func (c *Coordinator) finishLocked(j *job, st tesserav1.RecordingStatus, msg str
 	return proto.Clone(j.info).(*tesserav1.RecordingInfo)
 }
 
+// RecordingRecovered records a recording that a worker closed after a crash of the
+// process that ran it (the job itself was lost with that process) and sends its
+// recording_ended webhook.
+func (c *Coordinator) RecordingRecovered(info *tesserav1.RecordingInfo) {
+	c.mu.Lock()
+	if _, ok := c.jobs[info.GetRecordingId()]; !ok {
+		c.jobs[info.GetRecordingId()] = &job{info: proto.Clone(info).(*tesserav1.RecordingInfo), started: true}
+		c.order = append(c.order, info.GetRecordingId())
+		c.evictFinishedLocked()
+	}
+	c.mu.Unlock()
+	c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, info)
+}
+
 // OnStopWanted registers f, called with the id of a claimed recording that should
 // stop. A worker in the same process stops it at once instead of on its next
 // heartbeat: when a participant rejoins, the recording of the session that left must
