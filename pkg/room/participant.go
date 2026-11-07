@@ -109,6 +109,7 @@ type Participant struct {
 	perm       *tesserav1.ParticipantPermission
 	autoRecord bool
 	state      tesserav1.ParticipantInfo_State
+	version    uint32 // of the last ToProto snapshot
 	pub, sub   rtc.Transport
 	pending    map[string]*pubTrack // by cid, before media arrives
 	tracks     map[string]*pubTrack // by sid, media flowing
@@ -169,9 +170,13 @@ func (p *Participant) isPublisher() bool {
 func (p *Participant) ToProto() *tesserav1.ParticipantInfo {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Stamped under the same lock as the state it describes, so a later snapshot always has a
+	// higher version: clients drop updates that arrive after a newer one.
+	p.version++
 	info := &tesserav1.ParticipantInfo{
 		Sid: p.sid, Identity: p.identity, State: p.state, Metadata: p.metadata, JoinedAtMs: p.joinedAt.UnixMilli(),
 		Name: p.name, Permission: p.perm, IsPublisher: len(p.tracks) > 0, Kind: p.kind, Attributes: p.attributes,
+		Version: p.version,
 	}
 	for _, t := range p.tracks {
 		info.Tracks = append(info.Tracks, proto.Clone(t.info).(*tesserav1.TrackInfo))

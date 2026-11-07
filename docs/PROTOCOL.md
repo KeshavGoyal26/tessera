@@ -100,6 +100,10 @@ Rules:
    50 ms, at most one outstanding). The client must answer each offer.
 7. `track_subscribed` is sent when the first packet of a subscribed track has been forwarded
    (lets clients measure time-to-first-frame).
+8. `ParticipantInfo.version` increases with every snapshot of a participant. Updates can arrive
+   out of order (for example camera and mic published together): a client ignores an update
+   whose version is not higher than the last one it applied for that sid, and any update about a
+   sid it has seen DISCONNECTED. 0 means an older server; apply it.
 
 ### 2.4 Subscriptions and quality
 

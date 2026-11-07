@@ -16,6 +16,8 @@ export abstract class Participant {
   audioLevel = 0;
   isSpeaking = false;
   connectionQuality: ConnectionQuality = ConnectionQuality.UNSPECIFIED;
+  /** @internal Version of the last applied server snapshot (0: none, or an older server). */
+  version = 0;
 
   protected constructor(sid: string, identity: string, name = "", metadata = "") {
     this.sid = sid;
@@ -39,6 +41,7 @@ export abstract class Participant {
   /** @internal Applies server-side participant state. */
   updateInfo(info: ParticipantInfo): unknown {
     this.sid = info.sid;
+    this.version = info.version;
     if (info.identity) this.identity = info.identity;
     this.name = info.name;
     this.metadata = info.metadata;

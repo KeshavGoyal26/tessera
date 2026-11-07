@@ -196,6 +196,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   #disconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #bySid = new Map<string, RemoteParticipant>();
   #pendingTracks = new Map<string, PendingTrack>();
+  /** Sids of remote sessions that left; later updates about them are stale. */
+  #left = new Set<string>();
   /** Tracks to publish again after a full rejoin; survives failed rejoin attempts. */
   #republish: { track: LocalTrack; options: TrackPublishOptions }[] | undefined;
   #speaking = new Map<string, number>();
@@ -619,7 +621,20 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     return this.#bySid.get(sid);
   }
 
+  /**
+   * Whether `info` is older than what is already applied. The server builds updates on several
+   * goroutines, so two snapshots of one participant can arrive out of order; applying the older
+   * one would drop a track the newer one added (regression: a camera tile stuck off while its
+   * video was being received).
+   */
+  #isStale(info: ParticipantInfo, current: Participant | undefined): boolean {
+    if (this.#left.has(info.sid)) return true;
+    return info.version !== 0 && current?.sid === info.sid && info.version <= current.version;
+  }
+
   #onParticipantInfo(info: ParticipantInfo): void {
+    const current = info.identity === this.localParticipant.identity ? this.localParticipant : this.remoteParticipants.get(info.identity);
+    if (this.#isStale(info, current)) return;
     if (info.identity === this.localParticipant.identity) {
       const before = this.localParticipant.metadata;
       this.localParticipant.updateInfo(info);
@@ -627,6 +642,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       return;
     }
     if (info.state === ParticipantInfo_State.DISCONNECTED) {
+      // A snapshot taken before the leave can still be in flight: never resurrect this session.
+      this.#left.add(info.sid);
       this.#removeRemote(info.identity);
       return;
     }
@@ -1007,6 +1024,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     }
     this.#local.clear();
     this.#pendingTracks.clear();
+    this.#left.clear();
     this.#bySid.clear();
     this.#speaking.clear();
     this.#subscribed.clear();

@@ -83,6 +83,10 @@ message ParticipantInfo {
   bool is_publisher = 9;
   Kind kind = 10;
   map<string, string> attributes = 11;
+  // Increases with every snapshot of this participant. Updates are built on several goroutines
+  // and can reach a client out of order: a client ignores one whose version is not higher than
+  // the last it applied for the same sid. 0 means unknown (an older server).
+  uint32 version = 12;
 }
 
 // ParticipantPermission is the effective permission set of a participant.
