@@ -194,29 +194,42 @@ func ParseVP8(payload []byte, d *VP8Descriptor) error {
 // contains a keyframe: an SPS (7), or an IDR slice (5) in a single NAL unit,
 // a STAP-A, or the first fragment of an FU-A.
 func IsH264KeyFrame(payload []byte) bool {
+	sps, idr := H264KeyFrameParts(payload)
+	return sps || idr
+}
+
+// H264KeyFrameParts reports whether an H.264 RTP payload carries a sequence
+// parameter set (sps) and whether it holds or starts an IDR slice (idr).
+func H264KeyFrameParts(payload []byte) (sps, idr bool) {
 	if len(payload) < 1 {
-		return false
+		return false, false
 	}
 	switch payload[0] & 0x1f {
-	case 5, 7:
-		return true
+	case 5:
+		return false, true
+	case 7:
+		return true, false
 	case 24: // STAP-A
 		for i := 1; i+2 < len(payload); {
 			size := int(binary.BigEndian.Uint16(payload[i:]))
 			i += 2
 			if i >= len(payload) {
-				return false
+				break
 			}
-			if t := payload[i] & 0x1f; t == 5 || t == 7 {
-				return true
+			switch payload[i] & 0x1f {
+			case 5:
+				idr = true
+			case 7:
+				sps = true
 			}
 			i += size
 		}
+		return sps, idr
 	case 28: // FU-A
 		if len(payload) < 2 {
-			return false
+			return false, false
 		}
-		return payload[1]&0x80 != 0 && payload[1]&0x1f == 5
+		return false, payload[1]&0x80 != 0 && payload[1]&0x1f == 5
 	}
-	return false
+	return false, false
 }

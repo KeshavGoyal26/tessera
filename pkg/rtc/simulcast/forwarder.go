@@ -61,6 +61,7 @@ type offsetRange struct {
 }
 
 type sentPacket struct {
+	outSN  uint16 // the munged SN this slot holds (slots are reused every nackHistory)
 	inSN   uint16
 	layer  int8
 	valid  bool
@@ -462,7 +463,7 @@ func (f *Forwarder) translateWith(pkt *buffer.ExtPacket, layer int32, isSwitch b
 			}
 		}
 	}
-	f.sent[uint16(outSN)%nackHistory] = sentPacket{inSN: pkt.SequenceNumber, layer: int8(layer), valid: true,
+	f.sent[uint16(outSN)%nackHistory] = sentPacket{outSN: uint16(outSN), inSN: pkt.SequenceNumber, layer: int8(layer), valid: true,
 		ts: tp.Timestamp, pid: tp.VP8.PictureID, tl0: tp.VP8.TL0PICIDX, key: tp.VP8.KEYIDX}
 	return tp
 }
@@ -480,7 +481,7 @@ func (f *Forwarder) TranslateNACK(munged uint16) (layer int32, original uint16, 
 		return 0, 0, false
 	}
 	s := f.sent[munged%nackHistory]
-	if !s.valid {
+	if !s.valid || s.outSN != munged {
 		return 0, 0, false
 	}
 	return int32(s.layer), s.inSN, true
@@ -499,7 +500,12 @@ func (f *Forwarder) RetransmitInfo(munged uint16, now, minInterval int64) (NACKI
 		return NACKInfo{}, false
 	}
 	s := &f.sent[munged%nackHistory]
-	if !s.valid || s.rtxCnt >= 3 || (s.rtxAt != 0 && now-s.rtxAt < minInterval) {
+	// A slot holds the packet sent nackHistory SNs earlier until its own packet is
+	// forwarded: a NACK for an SN not forwarded yet (lost upstream, still being
+	// recovered) must not resend that older packet. The subscriber would take it in
+	// place of the real one, discard the real one as a duplicate, and could never
+	// assemble the frame (regression: seconds of frozen video under uplink loss).
+	if !s.valid || s.outSN != munged || s.rtxCnt >= 3 || (s.rtxAt != 0 && now-s.rtxAt < minInterval) {
 		return NACKInfo{}, false
 	}
 	s.rtxCnt++

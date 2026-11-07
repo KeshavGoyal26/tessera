@@ -122,6 +122,9 @@ const (
 type Buffer struct {
 	cfg   Config
 	codec codecKind
+	// h264SPS is set once the stream has sent an SPS in band (atomic: parsePayload
+	// also runs for retransmissions on RTCP goroutines).
+	h264SPS atomic.Bool
 
 	mu     sync.Mutex // guards slot contents against concurrent GetPacket
 	slab   *[]byte
@@ -301,7 +304,17 @@ func (b *Buffer) parsePayload(e *ExtPacket, raw []byte, h *Header) {
 			}
 		}
 	case codecH264:
-		e.KeyFrame = IsH264KeyFrame(e.Payload)
+		// A keyframe starts with its SPS: browsers send SPS and PPS before every IDR.
+		// When that packet is lost and comes back late, the IDR fragment after it must
+		// not count as the start: a layer switch there forwards the IDR without the
+		// parameters of the new resolution (the late SPS is from before the switch and
+		// is dropped), the subscriber cannot decode it and freezes until the next
+		// keyframe. Streams that never send an SPS in band start on the IDR.
+		sps, idr := H264KeyFrameParts(e.Payload)
+		if sps && !b.h264SPS.Load() {
+			b.h264SPS.Store(true)
+		}
+		e.KeyFrame = sps || idr && !b.h264SPS.Load()
 	}
 }
 

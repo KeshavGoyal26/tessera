@@ -465,3 +465,44 @@ func TestSwitchIgnoresLateKeyframeStart(t *testing.T) {
 		t.Fatalf("in-order keyframe must start the layer: %+v", tp)
 	}
 }
+
+// A NACK for an SN whose packet has not been forwarded yet (lost upstream, still being
+// recovered) must not be answered with the older packet that used the same history slot.
+func TestNACKForUnsentSNIsNotAnsweredFromAnOlderPacket(t *testing.T) {
+	f := NewForwarder("audio/opus")
+	b := buffer.New(buffer.Config{Slots: 1024, MimeType: "audio/opus"})
+	mk := func(sn uint16) *buffer.ExtPacket {
+		p := rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: sn, Timestamp: uint32(sn) * 960}, Payload: []byte{1}}
+		raw, _ := p.Marshal()
+		e, err := b.Write(raw, int64(sn)*20e6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	var out uint16
+	for sn := uint16(1); sn <= nackHistory+10; sn++ { // fill every slot once
+		tp, _ := f.GetTranslation(mk(sn), 0)
+		out = tp.SequenceNumber
+	}
+	// The next packet is lost upstream; the one after it is forwarded.
+	tp, _ := f.GetTranslation(mk(nackHistory+12), 0)
+	missing := out + 1
+	if tp.SequenceNumber != missing+1 {
+		t.Fatalf("forwarded as %d, want %d (a gap for the lost packet)", tp.SequenceNumber, missing+1)
+	}
+	if _, orig, ok := f.TranslateNACK(missing); ok {
+		t.Fatalf("NACK for the unsent SN %d maps to original %d", missing, orig)
+	}
+	if info, ok := f.RetransmitInfo(missing, 1e9, 0); ok {
+		t.Fatalf("NACK for the unsent SN %d would resend original %d", missing, info.Original)
+	}
+	// Once recovered and forwarded, it can be resent.
+	late, _ := f.GetTranslation(mk(nackHistory+11), 0)
+	if late.SequenceNumber != missing {
+		t.Fatalf("late packet forwarded as %d, want %d", late.SequenceNumber, missing)
+	}
+	if info, ok := f.RetransmitInfo(missing, 2e9, 0); !ok || info.Original != nackHistory+11 {
+		t.Fatalf("recovered packet: resend %+v %v", info, ok)
+	}
+}

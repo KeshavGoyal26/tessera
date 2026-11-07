@@ -220,7 +220,10 @@ func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket, layer int32) error {
 		payload = p
 	}
 	err = d.writeLocked(tp.SequenceNumber, tp.Timestamp, pkt.Marker, payload, false)
-	if err == nil {
+	if err == nil && !pkt.Late {
+		// Only the newest packet tells whether the stream is between frames: a late one
+		// (recovered after loss) that ended an older frame would let probe padding split
+		// the frame being sent, which the subscriber then cannot assemble.
 		d.lastMarker = pkt.Marker
 	}
 	d.mu.Unlock()
