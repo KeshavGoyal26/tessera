@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -140,7 +141,11 @@ type RecordingConfig struct {
 	Enabled          bool          `yaml:"enabled"`
 	HeartbeatTimeout time.Duration `yaml:"heartbeat_timeout"`
 
-	Capacity   int              `yaml:"capacity"` // units; one remuxed track is one unit
+	// Capacity in units (one remuxed track is one unit; a camera+mic presenter is two).
+	// A recording beyond it waits in the queue and misses its start, so the default
+	// scales with the machine: 150 units (75 presenters) per CPU. Measured on a 4 vCPU
+	// GCP n2: 300 recorded presenters (600 units) used 47% of the box, 500 used ~74%.
+	Capacity   int              `yaml:"capacity"`
 	TempDir    string           `yaml:"temp_dir"`
 	FFmpegPath string           `yaml:"ffmpeg_path"` // only for the optional AAC audio mode
 	Storage    RecordingStorage `yaml:"storage"`
@@ -217,7 +222,7 @@ func Default() *Config {
 			NegotiationDebounce: 50 * time.Millisecond,
 		},
 		Webhook: WebhookConfig{Timeout: 10 * time.Second, QueueSize: 1000},
-		Recording: RecordingConfig{Enabled: true, HeartbeatTimeout: 15 * time.Second, Capacity: 100, TempDir: os.TempDir() + "/tessera-recorder",
+		Recording: RecordingConfig{Enabled: true, HeartbeatTimeout: 15 * time.Second, Capacity: 150 * runtime.NumCPU(), TempDir: os.TempDir() + "/tessera-recorder",
 			FFmpegPath: "ffmpeg", Storage: RecordingStorage{Kind: "local", LocalRoot: "./recordings"},
 			HLS: RecordingHLS{SegmentDuration: 4 * time.Second, AudioCodec: "opus"}},
 		Metrics: MetricsConfig{Addr: "127.0.0.1:6789"}, // unauthenticated: loopback, no pprof unless configured

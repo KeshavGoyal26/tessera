@@ -103,8 +103,11 @@ automatically after UDP, ICE-TCP and `turn:` fail (the SDK passes the list to `R
 - Webhooks: set `webhook.endpoints` and a `webhook.api_key`; delivery is queued and retried, not durable
   across restarts.
 - Recording: built into the server (`recording:` config, S3-compatible or local storage). Recording
-  shares the media node's CPU: size nodes for live plus recorded presenters, cap `recording.capacity`,
-  and set `recording.enabled: false` on media-only nodes. FFmpeg is needed only for the AAC audio mode.
+  shares the media node's CPU: size nodes for live plus recorded presenters (measured on a 4 vCPU GCP
+  n2: 300 recorded 360p presenters use 47% of the box, 500 about 75%; `docs/perf/RECORDING-CAPACITY-PLAN.md`).
+  `recording.capacity` defaults to 150 units (75 presenters) per CPU; alert on
+  `tessera_recording_jobs_queued > 0`, since a queued recording misses its start. Set
+  `recording.enabled: false` on media-only nodes. FFmpeg is needed only for the AAC audio mode.
 
 ## 6. Scaling limits (measured and estimated)
 

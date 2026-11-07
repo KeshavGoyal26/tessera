@@ -129,7 +129,9 @@ the participant attribute `recorded=true` so clients can show a REC marker.
 
 ## Configuration (`recording:` in the server config)
 
-`enabled` (default true; disable on media-only nodes), `capacity`, `temp_dir`, `ffmpeg_path`
+`enabled` (default true; disable on media-only nodes), `capacity` (units, one per remuxed track;
+default 150 per CPU, i.e. 75 camera+mic presenters per CPU; a recording beyond it waits in the
+queue and misses its start, watch `tessera_recording_jobs_queued`), `temp_dir`, `ffmpeg_path`
 (only for the AAC audio mode), `storage.kind: local|s3` (+ `local_root` or `s3.*`),
 `hls.segment_duration`, `hls.audio_codec`, `storage.local_base_url` (serve `local_root` read-only
 under `/recordings/` on the metrics listener and report playlist URLs below this prefix, so the

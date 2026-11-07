@@ -87,6 +87,35 @@ Linux VM on an M1 with 8 vCPUs. The server is pinned to 4 cores (`taskset -c 0-3
   2. fewer per-packet copies (the receive ring, pion packetio);
   3. measuring on EC2 before optimising further.
 
+### GCP, separate load generator (2026-11-07, after 9e08135)
+
+Server GCP n2-standard-4 (4 vCPU, asia-south1); load generator n2-standard-8 on the same VPC.
+Every presenter publishes real H.264 360p at 400 kbit/s plus Opus and is recorded; each step
+runs 240 s and every recording is checked (finalized, length).
+
+| Recorded presenters | Server CPU (% of one vCPU) | Share of the box | RSS | Recordings |
+|---|---|---|---|---|
+| 250 | 159% | 40% | 1.1 GB | 500/500 full length |
+| **300** | **189%** | **47%** | 1.35 GB | 600/600 full length |
+| 350 | 215% | 54% | 1.6 GB | 700/700 full length |
+| 400 | 241% | 60% | 1.9 GB | 800/800 full length |
+| 450 | 265% | 66% | 2.1 GB | 900/900 full length |
+| 500 (+50 live) | 302% | 76% | 2.5 GB | full length; 50 more queued (capacity 1000 units) |
+| live only 500 / 700 | 219% / 278% | 55% / 70% | 1.8 / 2.6 GB | n/a |
+
+About 0.6% of a vCPU per recorded presenter and 0.4% per live-only one, linear. Kurento's 300 per
+c8i.xlarge uses under half of this box; ~500 recorded presenters fit with 25% headroom.
+
+A 2 h soak at 200 recorded presenters with churn every 15 min (3,200 playlists) was clean: no lost
+or short recordings, goroutines/FDs back to baseline, heap 9.9 MB after the load.
+
+Real Chrome presenter and viewer on a shaped network (with the 300 above in the background)
+found the recorder stuck on a paused top simulcast layer (37% of video recorded); fixed in
+9e08135 (93-96%, ~2 s per drop of the top layer).
+
+The default `recording.capacity` was 100 units (50 presenters): recordings beyond it wait in the
+queue and miss their start. It is now 150 units per CPU.
+
 ## Questions for us (answer before testing)
 
 1. **Kurento candidate stream:** what resolution, frame rate and bitrate? Is simulcast on? Does anyone watch live?

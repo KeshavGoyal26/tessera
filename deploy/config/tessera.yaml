@@ -21,7 +21,7 @@ webhook:
   #    encoding: json
 recording:
   enabled: true # recorded inside the server; no separate recorder
-  capacity: 100
+  # capacity: default 150 units per CPU (one unit per recorded track)
   storage:
     kind: s3
     s3:
