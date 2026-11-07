@@ -159,6 +159,44 @@ func TestH264KeyFrame(t *testing.T) {
 	}
 }
 
+// A keyframe starts at its SPS. When the SPS packet is lost, the IDR fragment after it
+// must not count as a keyframe start: a layer switch there forwards an IDR without the
+// parameters of the new resolution and the subscriber freezes (regression: seconds of
+// frozen video after a switch under 5% uplink loss). Streams without in-band SPS start
+// on the IDR.
+func TestH264KeyFrameStartsAtSPS(t *testing.T) {
+	stap := []byte{0x78, 0, 2, 0x67, 1, 0, 1, 0x68} // STAP-A: SPS, PPS
+	idrStart := []byte{0x7c, 0x85, 1}               // FU-A start of an IDR slice
+	write := func(b *Buffer, sn uint16, p []byte) bool {
+		e, err := b.Write(mkPkt(t, sn, uint32(sn)*3000, p), int64(sn))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e.KeyFrame
+	}
+
+	b := New(Config{Slots: 64, ClockRate: 90000, MimeType: "video/H264"})
+	defer b.Release()
+	if !write(b, 1, stap) {
+		t.Fatal("SPS packet: want a keyframe start")
+	}
+	if write(b, 2, idrStart) {
+		t.Fatal("IDR after its SPS: not the start")
+	}
+	if write(b, 11, idrStart) { // the next keyframe's SPS (sn 10) was lost
+		t.Fatal("IDR whose SPS was lost: must not be a keyframe start")
+	}
+	if !write(b, 10, stap) { // ... and recovered late
+		t.Fatal("late SPS packet: still a keyframe start (the forwarder ignores late ones)")
+	}
+
+	nosps := New(Config{Slots: 64, ClockRate: 90000, MimeType: "video/H264"})
+	defer nosps.Release()
+	if !write(nosps, 1, idrStart) {
+		t.Fatal("stream without in-band SPS: the IDR starts the keyframe")
+	}
+}
+
 func TestWriteDoesNotAllocate(t *testing.T) {
 	b := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/VP8"})
 	defer b.Release()
