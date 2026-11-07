@@ -230,3 +230,73 @@ func TestWorkerTrackRecordingEndsWithTrackAndReportsLoss(t *testing.T) {
 		t.Fatalf("keyframe requests: %d", v.KeyFrames.Load())
 	}
 }
+
+// lateConnector hands onTrack to the test, so tracks can appear after the join.
+type lateConnector struct {
+	onTrack chan func(Track)
+}
+
+func (f *lateConnector) Join(_ context.Context, _, _ string, _ func(Track) bool, onTrack func(Track), _ func(error)) (Room, error) {
+	f.onTrack <- onTrack
+	return lateRoom{}, nil
+}
+
+type lateRoom struct{}
+
+func (lateRoom) Close(context.Context) error { return nil }
+
+// A participant who drops and rejoins gets a new recording. The recording of the
+// session that left must stop at once, not on the next heartbeat, and must not take
+// the tracks the new session publishes meanwhile (regression: 1-second stray tracks
+// of the new session in the old recording's master playlist).
+func TestStopIsImmediateAndRejectsLaterTracks(t *testing.T) {
+	hlstest.NeedFFmpeg(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	coord := NewCoordinator(CoordinatorParams{Config: config.RecordingConfig{HeartbeatTimeout: time.Hour},
+		APIKey: "k", Secret: "secret-secret-secret-secret-1234"})
+	defer coord.Close()
+	conn := &lateConnector{onTrack: make(chan func(Track), 1)}
+	cfg := DefaultConfig()
+	cfg.WorkerID, cfg.Capacity, cfg.Heartbeat = "w1", 10, time.Hour // stops can only arrive through OnStopWanted
+	cfg.Storage.LocalRoot = t.TempDir()
+	w, err := NewWorker(cfg, nil, nil, WithJobAPI(coord), WithConnector(conn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord.OnStopWanted(w.Stop)
+	go func() { _ = w.Run(ctx) }()
+
+	info, err := coord.StartRecording(ctx, &tesserav1.StartRecordingRequest{Room: "demo",
+		Target: &tesserav1.StartRecordingRequest_Participant{Participant: &tesserav1.ParticipantRecordingTarget{Identity: "alice"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	onTrack := <-conn.onTrack
+	a := NewMemSource("audio/opus", "")
+	onTrack(Track{SID: "TR_old", ParticipantIdentity: "alice", Kind: "audio", Source: "microphone", RTP: a})
+	feedAudio(t, a, hlstest.Opus(t, 6))
+	waitFor(t, "ACTIVE", func() bool {
+		r, _ := coord.GetRecording(ctx, info.RecordingId)
+		return r.Status == tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE
+	})
+
+	if _, err := coord.StopRecording(ctx, info.RecordingId); err != nil { // alice left
+		t.Fatal(err)
+	}
+	late := NewMemSource("audio/opus", "") // alice's new session publishes
+	onTrack(Track{SID: "TR_new", ParticipantIdentity: "alice", Kind: "audio", Source: "microphone", RTP: late})
+	feedAudio(t, late, hlstest.Opus(t, 6))
+	a.Close()
+	late.Close()
+	waitFor(t, "COMPLETE without a heartbeat", func() bool {
+		r, _ := coord.GetRecording(ctx, info.RecordingId)
+		return r.Status == tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE
+	})
+	r, _ := coord.GetRecording(ctx, info.RecordingId)
+	for _, o := range r.Outputs {
+		if o.TrackSid != "TR_old" {
+			t.Fatalf("recording of the session that left took a later track: %v", r.Outputs)
+		}
+	}
+}

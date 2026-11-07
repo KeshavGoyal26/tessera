@@ -16,6 +16,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 // LocalConnector records inside the media server. Each wanted track gets a DownTrack,
@@ -33,6 +34,10 @@ var _ Connector = LocalConnector{}
 // never blocks on it: when full, packets are dropped and the recorder sees the gap
 // (it waits for, and asks for, the next keyframe).
 const tapQueue = 1024
+
+// upgradeHold is how many watch ticks (seconds) a higher simulcast layer must keep
+// arriving before the recorder moves up to it.
+const upgradeHold = 5
 
 // Join implements Connector. The token (minted by the coordinator for the job) names
 // the room; its identity names this recording's DownTracks.
@@ -111,6 +116,10 @@ type tap struct {
 	endOnce sync.Once
 	dropped atomic.Uint64
 	onSR    atomic.Pointer[func(ntp uint64, rtpTS uint32)]
+	// Layer following (watch goroutine only): the layer the DownTrack is pointed at
+	// and how many ticks in a row a higher one has been arriving.
+	layer   int32
+	upTicks int
 }
 
 var (
@@ -125,7 +134,7 @@ func newTap(recv *rtc.ReceiverImpl, subscriber, trackID, streamID string) (*tap,
 		// Offer plain Opus: the DownTrack then sends each packet's primary frame.
 		c.MimeType, c.SDPFmtpLine = webrtc.MimeTypeOpus, "minptime=10;useinbandfec=1"
 	}
-	t := &tap{codec: c, ch: make(chan *rtp.Packet, tapQueue), done: make(chan struct{})}
+	t := &tap{codec: c, ch: make(chan *rtp.Packet, tapQueue), done: make(chan struct{}), layer: -1}
 	dt := rtc.NewDownTrack(rtc.DownTrackParams{SubscriberID: subscriber, Receiver: recv, TrackID: trackID, StreamID: streamID})
 	if _, err := dt.Bind(tapContext{t}); err != nil {
 		return nil, err
@@ -152,6 +161,7 @@ func (t *tap) watch() {
 				t.end()
 				return
 			}
+			t.followLayers()
 			if f := t.onSR.Load(); f != nil {
 				if sr := t.dt.SenderReport(); sr != nil {
 					(*f)(sr.NTPTime, sr.RTPTime)
@@ -159,6 +169,39 @@ func (t *tap) watch() {
 			}
 		}
 	}
+}
+
+// followLayers points the DownTrack at the highest simulcast layer the publisher is
+// sending. A subscriber's bandwidth allocator does this for live viewers; the recorder
+// has no downlink to budget, but without it the forwarder keeps waiting for the top
+// layer while the publisher has paused it (its uplink is short), and the recording
+// has no video until that layer returns, which can take minutes. Going down is
+// immediate; going up waits until the layer has arrived for upgradeHold ticks in a
+// row: a publisher whose estimate hovers at the edge toggles its top layer, and every
+// switch costs the recording a new init segment (and a short gap when going down).
+func (t *tap) followLayers() {
+	if t.dt.Kind() != webrtc.RTPCodecTypeVideo {
+		return
+	}
+	rates := t.dt.Bitrates()
+	best := int32(-1)
+	for s := range types.MaxSpatialLayers {
+		if rates[s][types.MaxTemporalLayers-1] > 0 {
+			best = int32(s)
+		}
+	}
+	switch {
+	case best < 0 || best == t.layer: // nothing arriving (keep waiting) or no change
+		t.upTicks = 0
+		return
+	case best > t.layer && t.layer >= 0:
+		if t.upTicks++; t.upTicks < upgradeHold {
+			return
+		}
+	}
+	t.upTicks = 0
+	t.layer = best
+	t.dt.SetTargetLayer(types.VideoLayer{Spatial: best, Temporal: types.MaxTemporalLayers - 1})
 }
 
 func (t *tap) end() { t.endOnce.Do(func() { close(t.done) }) }

@@ -164,6 +164,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			return err
 		}
 		recWorker = w
+		coordinator.OnStopWanted(w.Stop)
 		metrics.HandleExtra("/recorder/stats", w.StatsHandler())
 		if st := cfg.Recording.Storage; st.Kind != "s3" && st.LocalBaseURL != "" {
 			metrics.HandleExtra("/recordings/", recorder.RecordingsHandler(st.LocalRoot))

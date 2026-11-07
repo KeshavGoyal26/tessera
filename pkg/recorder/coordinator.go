@@ -33,6 +33,8 @@ type Coordinator struct {
 
 	stop chan struct{}
 	done chan struct{}
+
+	onStop func(id string) // guarded by mu; see OnStopWanted
 }
 
 type job struct {
@@ -228,6 +230,16 @@ func (c *Coordinator) finishLocked(j *job, st tesserav1.RecordingStatus, msg str
 	return proto.Clone(j.info).(*tesserav1.RecordingInfo)
 }
 
+// OnStopWanted registers f, called with the id of a claimed recording that should
+// stop. A worker in the same process stops it at once instead of on its next
+// heartbeat: when a participant rejoins, the recording of the session that left must
+// not pick up the new session's tracks (the new session gets its own recording).
+func (c *Coordinator) OnStopWanted(f func(id string)) {
+	c.mu.Lock()
+	c.onStop = f
+	c.mu.Unlock()
+}
+
 // StopRecording implements Service.
 func (c *Coordinator) StopRecording(_ context.Context, id string) (*tesserav1.RecordingInfo, error) {
 	c.mu.Lock()
@@ -246,7 +258,11 @@ func (c *Coordinator) StopRecording(_ context.Context, id string) (*tesserav1.Re
 		j.info.Status = tesserav1.RecordingStatus_RECORDING_STATUS_ENDING
 	}
 	out := proto.Clone(j.info).(*tesserav1.RecordingInfo)
+	onStop := c.onStop
 	c.mu.Unlock()
+	if onStop != nil && j.worker != "" {
+		onStop(id)
+	}
 	if ended != nil {
 		c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, ended)
 	}

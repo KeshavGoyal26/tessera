@@ -232,6 +232,15 @@ func (w *Worker) heartbeatLoop(ctx context.Context, every time.Duration) {
 	}
 }
 
+// Stop asks an active recording to end now (stops otherwise arrive with heartbeats).
+func (w *Worker) Stop(id string) {
+	w.mu.Lock()
+	if r := w.active[id]; r != nil {
+		r.requestStop()
+	}
+	w.mu.Unlock()
+}
+
 // jobRun is one recording job.
 type jobRun struct {
 	w      *Worker
@@ -461,6 +470,11 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 	return func(t Track) {
 		if !r.matches(t) {
 			return
+		}
+		select {
+		case <-r.stopCh: // ending: a track published now belongs to a later recording
+			return
+		default:
 		}
 		r.mu.Lock()
 		if _, dup := r.tracks[t.SID]; dup {

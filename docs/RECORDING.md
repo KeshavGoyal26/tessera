@@ -19,7 +19,8 @@ and no second WebRTC session: about half the per-presenter CPU of the old design
    `RTP → reorder buffer (200 ms) → depacketizer → muxer (fMP4 + playlist) → ordered uploader`.
 4. The worker reports `ACTIVE` when the first sample is muxed, heartbeats every 5 s (the
    Coordinator fails jobs after `recording.heartbeat_timeout`, 15 s, or re-queues them if they
-   never started) and receives stop requests in the heartbeat response.
+   never started) and receives stop requests in the heartbeat response (the in-server
+   worker is told at once, without waiting for a heartbeat).
 5. On stop the muxers flush, uploads drain, a `master.m3u8` is written (participant recordings
    and whenever more than one track was recorded) and the job ends `COMPLETE` (`FAILED` on
    upload/track errors, `ABORTED` when stopped before any media).
@@ -61,6 +62,11 @@ after the target. Segments are always uploaded before the playlist that lists th
   that moves backwards starts a new segment marked `EXT-X-DISCONTINUITY`.
 - SPS/PPS change (resolution switch): the muxer cuts, writes `init_N.mp4` and marks a
   discontinuity.
+- Simulcast: the recorder records the highest layer the publisher is sending. When the
+  publisher pauses its top layer (short uplink, e.g. 720p dropped below ~1 Mbit/s) the
+  recorder moves down within about 2 s, and back up once the higher layer has arrived for 5 s.
+  Each move is a resolution change (above). Without this the video stopped until the top layer
+  returned (measured: 37% of a 22-minute throttled session recorded; now 96%).
 - Assumes no B-frames (WebRTC H.264), so DTS = PTS and `ctts` offsets are 0.
 
 ## Codecs and fallbacks
@@ -115,7 +121,10 @@ they leave, it stops every in-progress participant recording of that identity in
 room created with `recording_enabled` (token `room_config` or `CreateRoom`) records every
 participant who joins it this way. A participant who joins with camera and microphone off is
 recorded once they publish; until then the job waits instead of failing after 30 s. Rejoining
-starts a new recording. In `--dev`, `/dev/token?...&record=1` issues such a token and also sets
+starts a new recording. Short network outages resume the same session and recording (the
+recording has a gap); when the outage is long enough that the SDK rejoins as a new session
+(about 30 s or more in tests), the old recording ends at once and the new session is recorded
+separately. The old recording never takes the new session's tracks. In `--dev`, `/dev/token?...&record=1` issues such a token and also sets
 the participant attribute `recorded=true` so clients can show a REC marker.
 
 ## Configuration (`recording:` in the server config)
