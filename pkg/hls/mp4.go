@@ -305,11 +305,13 @@ func Fragment(trackID uint32, seq uint32, baseDecodeTime uint64, samples []Sampl
 	for _, s := range samples {
 		total += len(s.Data)
 	}
-	mdat := make([]byte, 0, 8+total)
-	mdat = binary.BigEndian.AppendUint32(mdat, uint32(8+total))
-	mdat = append(mdat, "mdat"...)
+	// One allocation at the final size: the media data is copied once.
+	out := make([]byte, 0, len(moof)+8+total)
+	out = append(out, moof...)
+	out = binary.BigEndian.AppendUint32(out, uint32(8+total))
+	out = append(out, "mdat"...)
 	for _, s := range samples {
-		mdat = append(mdat, s.Data...)
+		out = append(out, s.Data...)
 	}
-	return append(moof, mdat...)
+	return out
 }

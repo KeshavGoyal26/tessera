@@ -12,7 +12,7 @@ import (
 // The tap is written on the forwarding path: a recorder that stops reading must cost
 // dropped packets, never a blocked publisher.
 func TestTapNeverBlocksForwarding(t *testing.T) {
-	tp := &tap{ch: make(chan []byte, 4), done: make(chan struct{})}
+	tp := &tap{ch: make(chan *rtp.Packet, 4), done: make(chan struct{})}
 	finished := make(chan struct{})
 	go func() {
 		for i := range 100 {
@@ -30,10 +30,9 @@ func TestTapNeverBlocksForwarding(t *testing.T) {
 	}
 	// Queued packets are still delivered after the stream ends, then EOF.
 	tp.end()
-	buf := make([]byte, 1500)
 	n := 0
 	for {
-		if _, err := tp.Read(buf); errors.Is(err, io.EOF) {
+		if _, err := tp.ReadPacket(); errors.Is(err, io.EOF) {
 			break
 		}
 		n++

@@ -106,7 +106,7 @@ func (lr *localRoom) Close(context.Context) error {
 type tap struct {
 	dt      *rtc.DownTrackImpl
 	codec   webrtc.RTPCodecParameters
-	ch      chan []byte
+	ch      chan *rtp.Packet
 	done    chan struct{}
 	endOnce sync.Once
 	dropped atomic.Uint64
@@ -125,7 +125,7 @@ func newTap(recv *rtc.ReceiverImpl, subscriber, trackID, streamID string) (*tap,
 		// Offer plain Opus: the DownTrack then sends each packet's primary frame.
 		c.MimeType, c.SDPFmtpLine = webrtc.MimeTypeOpus, "minptime=10;useinbandfec=1"
 	}
-	t := &tap{codec: c, ch: make(chan []byte, tapQueue), done: make(chan struct{})}
+	t := &tap{codec: c, ch: make(chan *rtp.Packet, tapQueue), done: make(chan struct{})}
 	dt := rtc.NewDownTrack(rtc.DownTrackParams{SubscriberID: subscriber, Receiver: recv, TrackID: trackID, StreamID: streamID})
 	if _, err := dt.Bind(tapContext{t}); err != nil {
 		return nil, err
@@ -169,40 +169,55 @@ func (t *tap) close() {
 }
 
 // WriteRTP implements webrtc.TrackLocalWriter (called by the DownTrack on the
-// forwarding path: must not block).
+// forwarding path: must not block). The packet is handed over parsed: no marshal,
+// copy and re-parse per packet. The header and payload are copied because the
+// DownTrack reuses its buffers.
 func (t *tap) WriteRTP(h *rtp.Header, payload []byte) (int, error) {
-	b, err := (&rtp.Packet{Header: *h, Payload: payload}).Marshal()
-	if err != nil {
-		return 0, err
-	}
-	return t.push(b), nil
+	t.push(&rtp.Packet{Header: h.Clone(), Payload: append([]byte(nil), payload...)})
+	return len(payload), nil
 }
 
 // Write implements webrtc.TrackLocalWriter.
-func (t *tap) Write(b []byte) (int, error) { return t.push(append([]byte(nil), b...)), nil }
+func (t *tap) Write(b []byte) (int, error) {
+	p := &rtp.Packet{}
+	if err := p.Unmarshal(append([]byte(nil), b...)); err != nil {
+		return 0, err
+	}
+	t.push(p)
+	return len(b), nil
+}
 
-func (t *tap) push(b []byte) int {
+func (t *tap) push(p *rtp.Packet) {
 	select {
-	case t.ch <- b:
+	case t.ch <- p:
 	default:
 		t.dropped.Add(1) // recorder behind: drop rather than stall forwarding
 	}
-	return len(b)
 }
 
-// Read implements RTPSource.
-func (t *tap) Read(b []byte) (int, error) {
+// ReadPacket implements packetSource: the next packet, io.EOF once the stream ended
+// and the queue is drained.
+func (t *tap) ReadPacket() (*rtp.Packet, error) {
 	select {
 	case p := <-t.ch:
-		return copy(b, p), nil
+		return p, nil
 	case <-t.done:
 		select {
 		case p := <-t.ch:
-			return copy(b, p), nil
+			return p, nil
 		default:
-			return 0, io.EOF
+			return nil, io.EOF
 		}
 	}
+}
+
+// Read implements RTPSource (the generic, marshalled form of ReadPacket).
+func (t *tap) Read(b []byte) (int, error) {
+	p, err := t.ReadPacket()
+	if err != nil {
+		return 0, err
+	}
+	return p.MarshalTo(b)
 }
 
 // Codec implements RTPSource.

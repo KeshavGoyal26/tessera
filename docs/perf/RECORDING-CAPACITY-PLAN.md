@@ -67,6 +67,26 @@ Linux VM, 4 vCPU on Apple M1 (arm64). The server, recorder and load generator al
 
 **Rough c8i.xlarge estimate:** about 2-3% of a vCPU per recorded presenter including the kernel. At 75% CPU that is roughly **100-150 recorded presenters** with the separate recorder. To pass 300, record inside the SFU process: it writes HLS straight from the receive buffer, removing the second hop and about half the cost. ADR-0007 chose a separate process for isolation; revisit that trade-off.
 
+### In-process recording, measured (2026-11-07)
+
+Linux VM on an M1 with 8 vCPUs. The server is pinned to 4 cores (`taskset -c 0-3`) and the load generator to the other 4. Every presenter sends 360p at 400 kbit/s and is recorded.
+
+| Presenters | Server process | Cores 0-3 busy (incl. kernel) | Recordings |
+|---|---|---|---|
+| 150 | 139% | 180% | all full length (82-100 s) |
+| 200 | 207-288% | 259-343% | all present, slightly short (median 83 s) |
+| 250 | 322-327% | 381-388% (saturated) | truncated (median 50-62 s) |
+| 300 | 325% | 387% (saturated) | truncated (median 33 s) |
+
+- **Clean capacity on this test bed: about 150-200 recorded presenters per 4 vCPUs.**
+- **Runs are noisy.** At 200 the server used anywhere from 207% to 288% across runs. The M1 mixes performance and efficiency cores, so the server's 4 vCPUs are not uniform.
+- **What it means for c8i.xlarge:** 4 identical, hyper-threaded vCPUs. Only an EC2 run gives the real number.
+- **Where the time goes at 200:** copying (`buffer.Write`, fMP4 fragments), per-packet allocations on the recording path (now reduced) and system calls.
+- **To reach 300 on 4 vCPUs,** the next levers are, in order:
+  1. single-layer publishing for recorded-only presenters (no simulcast), which is about a third fewer packets;
+  2. fewer per-packet copies (the receive ring, pion packetio);
+  3. measuring on EC2 before optimising further.
+
 ## Questions for us (answer before testing)
 
 1. **Kurento candidate stream:** what resolution, frame rate and bitrate? Is simulcast on? Does anyone watch live?

@@ -28,6 +28,12 @@ type Track struct {
 	RTP    RTPSource
 }
 
+// packetSource is implemented by sources that hand over parsed packets (the in-process
+// tap), which saves a marshal, a copy and a re-parse per packet.
+type packetSource interface {
+	ReadPacket() (*rtp.Packet, error)
+}
+
 // SRSource is implemented by tracks that expose RTCP sender reports. The
 // recorder uses them to align audio and video on the sender's wall clock;
 // without it, packet arrival times are used.
@@ -156,18 +162,29 @@ func (r *trackRecorder) run(ctx context.Context) (err error) {
 	}()
 	pkts := make(chan *rtp.Packet, 256)
 	readErr := make(chan error, 1)
-	go func() {
+	read := func() (*rtp.Packet, error) { // generic source: bytes in, parse here
 		buf := make([]byte, 1500)
 		for {
 			n, err := r.tr.RTP.Read(buf)
 			if err != nil {
+				return nil, err
+			}
+			p := &rtp.Packet{}
+			if p.Unmarshal(buf[:n]) == nil {
+				return p, nil
+			}
+		}
+	}
+	if ps, ok := r.tr.RTP.(packetSource); ok {
+		read = ps.ReadPacket // the in-process tap hands over parsed packets
+	}
+	go func() {
+		for {
+			p, err := read()
+			if err != nil {
 				readErr <- err
 				close(pkts)
 				return
-			}
-			p := &rtp.Packet{}
-			if err := p.Unmarshal(append([]byte(nil), buf[:n]...)); err != nil {
-				continue
 			}
 			select {
 			case pkts <- p:
