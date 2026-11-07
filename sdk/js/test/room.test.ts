@@ -195,6 +195,32 @@ describe("signal messages", () => {
     expect([...room.remoteParticipants.keys()]).toEqual(["carol"]);
   });
 
+  it("ignores participant updates older than the one applied", async () => {
+    // The server snapshots a participant on several goroutines: when the camera and mic are
+    // published together, the snapshot with only the mic can arrive after the one with both.
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    const ev: string[] = [];
+    room.on(RoomEvent.TrackPublished, (p) => ev.push(`pub:${p.trackSid}`));
+    room.on(RoomEvent.TrackUnpublished, (p) => ev.push(`unpub:${p.trackSid}`));
+    room.on(RoomEvent.ParticipantConnected, (p) => ev.push(`join:${p.identity}`));
+    const s = sig();
+    const dan = (version: number, sids: string[], state = ParticipantInfo_State.ACTIVE) =>
+      create(ParticipantInfoSchema, {
+        sid: "PA_d", identity: "dan", state, version,
+        tracks: sids.map((sid) => create(TrackInfoSchema, { sid, type: sid === "TR_dv" ? TrackType.VIDEO : TrackType.AUDIO })),
+      });
+
+    s.emit({ case: "update", value: { participants: [dan(3, ["TR_da", "TR_dv"])] } });
+    s.emit({ case: "update", value: { participants: [dan(2, ["TR_da"])] } }); // late, older
+    expect([...room.remoteParticipants.get("dan")!.trackPublications.keys()].sort()).toEqual(["TR_da", "TR_dv"]);
+    s.emit({ case: "update", value: { participants: [dan(4, ["TR_da"])] } }); // newer: applied
+    s.emit({ case: "update", value: { participants: [dan(5, [], ParticipantInfo_State.DISCONNECTED)] } });
+    s.emit({ case: "update", value: { participants: [dan(1, ["TR_da"])] } }); // from before the leave
+    expect(room.remoteParticipants.has("dan")).toBe(false);
+    expect(ev).toEqual(["join:dan", "pub:TR_da", "pub:TR_dv", "unpub:TR_dv", "unpub:TR_da"]);
+  });
+
   it("tracks active speakers loudest first and clears them", async () => {
     const room = newRoom();
     await room.connect("ws://h", "t");

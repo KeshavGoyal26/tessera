@@ -705,12 +705,16 @@ type ParticipantInfo struct {
 	Tracks   []*TrackInfo          `protobuf:"bytes,4,rep,name=tracks,proto3" json:"tracks,omitempty"`
 	Metadata string                `protobuf:"bytes,5,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	// Join time, Unix milliseconds.
-	JoinedAtMs    int64                  `protobuf:"varint,6,opt,name=joined_at_ms,json=joinedAtMs,proto3" json:"joined_at_ms,omitempty"`
-	Name          string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
-	Permission    *ParticipantPermission `protobuf:"bytes,8,opt,name=permission,proto3" json:"permission,omitempty"`
-	IsPublisher   bool                   `protobuf:"varint,9,opt,name=is_publisher,json=isPublisher,proto3" json:"is_publisher,omitempty"`
-	Kind          ParticipantInfo_Kind   `protobuf:"varint,10,opt,name=kind,proto3,enum=tessera.v1.ParticipantInfo_Kind" json:"kind,omitempty"`
-	Attributes    map[string]string      `protobuf:"bytes,11,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	JoinedAtMs  int64                  `protobuf:"varint,6,opt,name=joined_at_ms,json=joinedAtMs,proto3" json:"joined_at_ms,omitempty"`
+	Name        string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
+	Permission  *ParticipantPermission `protobuf:"bytes,8,opt,name=permission,proto3" json:"permission,omitempty"`
+	IsPublisher bool                   `protobuf:"varint,9,opt,name=is_publisher,json=isPublisher,proto3" json:"is_publisher,omitempty"`
+	Kind        ParticipantInfo_Kind   `protobuf:"varint,10,opt,name=kind,proto3,enum=tessera.v1.ParticipantInfo_Kind" json:"kind,omitempty"`
+	Attributes  map[string]string      `protobuf:"bytes,11,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Increases with every snapshot of this participant. Updates are built on several goroutines
+	// and can reach a client out of order: a client ignores one whose version is not higher than
+	// the last it applied for the same sid. 0 means unknown (an older server).
+	Version       uint32 `protobuf:"varint,12,opt,name=version,proto3" json:"version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -820,6 +824,13 @@ func (x *ParticipantInfo) GetAttributes() map[string]string {
 		return x.Attributes
 	}
 	return nil
+}
+
+func (x *ParticipantInfo) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
 }
 
 // ParticipantPermission is the effective permission set of a participant.
@@ -1498,7 +1509,7 @@ const file_tessera_v1_models_proto_rawDesc = "" +
 	"\x11recording_enabled\x18\f \x01(\bR\x10recordingEnabled\"8\n" +
 	"\x05Codec\x12\x12\n" +
 	"\x04mime\x18\x01 \x01(\tR\x04mime\x12\x1b\n" +
-	"\tfmtp_line\x18\x02 \x01(\tR\bfmtpLine\"\xe7\x05\n" +
+	"\tfmtp_line\x18\x02 \x01(\tR\bfmtpLine\"\x81\x06\n" +
 	"\x0fParticipantInfo\x12\x10\n" +
 	"\x03sid\x18\x01 \x01(\tR\x03sid\x12\x1a\n" +
 	"\bidentity\x18\x02 \x01(\tR\bidentity\x127\n" +
@@ -1516,7 +1527,8 @@ const file_tessera_v1_models_proto_rawDesc = "" +
 	" \x01(\x0e2 .tessera.v1.ParticipantInfo.KindR\x04kind\x12K\n" +
 	"\n" +
 	"attributes\x18\v \x03(\v2+.tessera.v1.ParticipantInfo.AttributesEntryR\n" +
-	"attributes\x1a=\n" +
+	"attributes\x12\x18\n" +
+	"\aversion\x18\f \x01(\rR\aversion\x1a=\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"m\n" +
