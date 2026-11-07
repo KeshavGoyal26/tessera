@@ -16,5 +16,6 @@ ADR that supersedes the old one (and editing only the old one's `Status` line).
 | [0009](0009-browser-sdk.md) | TypeScript browser SDK | accepted |
 | [0010](0010-observability-and-deployment.md) | Observability and deployment | accepted |
 | [0011](0011-repository-layout-and-parallel-work.md) | Monorepo layout and ownership rules for parallel work | accepted |
+| [0012](0012-edge-tier-and-private-media-servers.md) | Edge tier (SFU + TURN) in front of private media servers | proposed |
 
 Template: [0000-template.md](0000-template.md).
