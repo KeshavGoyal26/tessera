@@ -24,3 +24,7 @@ examples/java-spring/target/
 *.swp
 .DS_Store
 /.demo/
+
+# Binaries from `go build ./cmd/...` in the repo root
+/tessera
+/tessera-loadtest
