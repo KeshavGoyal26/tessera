@@ -262,7 +262,7 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 		if r.Stats.UploadErrors > 0 || r.Stats.TrackErrors > 0 {
 			add("rec-err:"+r.URL, "critical", "recording", fmt.Sprintf("recorder %s: %d upload errors, %d track errors", r.URL, r.Stats.UploadErrors, r.Stats.TrackErrors))
 		}
-		// Every presenter is recorded; a recording beyond capacity waits and misses its start.
+		// A recording beyond capacity waits for a free slot and misses its start.
 		if c := r.Stats.Capacity; c > 0 && r.Stats.CapacityUsed*10 >= c*9 {
 			sev := "warning"
 			if r.Stats.CapacityUsed >= c {
