@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -196,6 +197,15 @@ func (h *Handler) fetchRecorder(base string) RecorderStatus {
 	return st
 }
 
+// Alert bounds: one alert per participant for downlink loss (not one per
+// subscribed track), at most maxAlerts in an update (the rest are counted in a
+// summary alert), and a presenter's video only counts as stalled once the
+// presenter has been in the room for stallGrace.
+const (
+	maxAlerts  = 100
+	stallGrace = 10 * time.Second
+)
+
 // alerts evaluates the thresholds and keeps first-seen times stable.
 func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 	now := h.p.Now()
@@ -205,19 +215,41 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 	if pct := s.Node.CPUPercent / float64(ncpu); pct > h.p.CPUPercent {
 		add("cpu", "critical", "cpu", fmt.Sprintf("CPU at %.0f%% of %d cores (threshold %.0f%%)", pct, ncpu, h.p.CPUPercent))
 	}
+	owner := map[string]string{} // track sid -> presenter identity, per room
 	for _, r := range s.Rooms {
+		clear(owner)
+		for _, p := range r.Participants {
+			for _, t := range p.Published {
+				owner[t.SID] = p.Identity
+			}
+		}
 		for _, p := range r.Participants {
 			if p.RTTMs > h.p.RTTMs {
 				add("rtt:"+p.SID, "warning", "rtt", fmt.Sprintf("%s in %s: RTT %.0f ms", p.Identity, r.Name, p.RTTMs))
 			}
-			for _, t := range p.Subscribed {
+			var worst *stats.SubscribedTrackStats
+			lossy := 0
+			for i, t := range p.Subscribed {
 				if t.LossPercent > h.p.LossPercent {
-					add("loss:"+p.SID+":"+t.TrackSID, "warning", "loss", fmt.Sprintf("%s in %s: %.1f%% loss on %s", p.Identity, r.Name, t.LossPercent, t.TrackSID))
+					lossy++
+					if worst == nil || t.LossPercent > worst.LossPercent {
+						worst = &p.Subscribed[i]
+					}
 				}
+			}
+			if worst != nil {
+				add("loss:"+p.SID, "warning", "loss", fmt.Sprintf("%s in %s: %.1f%% loss on %s from %s (%d of %d tracks above %.0f%%)",
+					p.Identity, r.Name, worst.LossPercent, worst.Kind, cmp.Or(owner[worst.TrackSID], worst.TrackSID), lossy, len(p.Subscribed), h.p.LossPercent))
 			}
 			for _, t := range p.Published {
 				if t.LossPercent > h.p.LossPercent {
-					add("ploss:"+p.SID+":"+t.SID, "warning", "loss", fmt.Sprintf("%s in %s: %.1f%% uplink loss on %s", p.Identity, r.Name, t.LossPercent, t.SID))
+					add("ploss:"+p.SID+":"+t.SID, "warning", "loss", fmt.Sprintf("%s in %s: %.1f%% uplink loss on %s", p.Identity, r.Name, t.LossPercent, t.Kind))
+				}
+				// Presenters are always on (ADR-0012): a video track of a presenter connected to
+				// this node that stops receiving packets is stalled. Relayed presenters (no
+				// connection here) are paused upstream when nobody watches them, so they are skipped.
+				if t.Kind == "video" && !t.Active && !t.Muted && p.ICECandidateType != "" && now.Sub(p.JoinedAt) > stallGrace {
+					add("stall:"+p.SID+":"+t.SID, "warning", "stall", fmt.Sprintf("%s in %s: no video received (track %s)", p.Identity, r.Name, t.SID))
 				}
 			}
 		}
@@ -229,6 +261,14 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 		}
 		if r.Stats.UploadErrors > 0 || r.Stats.TrackErrors > 0 {
 			add("rec-err:"+r.URL, "critical", "recording", fmt.Sprintf("recorder %s: %d upload errors, %d track errors", r.URL, r.Stats.UploadErrors, r.Stats.TrackErrors))
+		}
+		// Every presenter is recorded; a recording beyond capacity waits and misses its start.
+		if c := r.Stats.Capacity; c > 0 && r.Stats.CapacityUsed*10 >= c*9 {
+			sev := "warning"
+			if r.Stats.CapacityUsed >= c {
+				sev = "critical"
+			}
+			add("rec-cap:"+r.URL, sev, "recording", fmt.Sprintf("recorder %s: capacity %d of %d units used", cmp.Or(r.Stats.WorkerID, r.URL), r.Stats.CapacityUsed, c))
 		}
 		for _, f := range r.Stats.Finished {
 			if f.Status == "RECORDING_STATUS_FAILED" && now.Sub(f.EndedAt) < 15*time.Minute {
@@ -257,5 +297,16 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 		}
 		return out[i].ID < out[j].ID
 	})
+	if len(out) > maxAlerts {
+		rest := out[maxAlerts-1:]
+		since := rest[0].Since
+		for _, a := range rest {
+			if a.Since.Before(since) {
+				since = a.Since
+			}
+		}
+		out = append(out[:maxAlerts-1], Alert{ID: "more", Severity: "warning", Kind: "more", Since: since,
+			Message: fmt.Sprintf("%d more alerts not shown", len(rest))})
+	}
 	return out
 }

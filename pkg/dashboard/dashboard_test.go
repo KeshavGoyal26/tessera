@@ -333,3 +333,80 @@ func TestLoginFailuresExpire(t *testing.T) {
 		t.Fatalf("%d stale failed-login entries kept", n)
 	}
 }
+
+// newHandler returns a handler whose sampler does not tick during the test.
+func newHandler(t *testing.T, now time.Time, recs *fakeRecs) *Handler {
+	t.Helper()
+	h, err := New(Params{
+		Stats: stats.ProviderFunc(snap), Keys: auth.StaticKeys{"key": "s3cret"}, Rooms: &fakeRooms{}, Recordings: recs,
+		Interval: time.Hour, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.Close)
+	return h
+}
+
+func TestAlertsPresenterModel(t *testing.T) {
+	now := time.Now()
+	h := newHandler(t, now, &fakeRecs{})
+	old := now.Add(-time.Minute)
+	s := &stats.Snapshot{Node: stats.NodeStats{NumCPU: 4}, Rooms: []stats.RoomStats{{Name: "g", Participants: []stats.ParticipantStats{
+		// A presenter connected here whose video stopped: stalled.
+		{SID: "PA_bob", Identity: "bob", JoinedAt: old, ICECandidateType: "relay", Published: []stats.PublishedTrackStats{
+			{SID: "TR_bv", Kind: "video"}, {SID: "TR_ba", Kind: "audio", Active: true}}},
+		// Relayed from a media node (no connection here): paused upstream when unwatched, not stalled.
+		{SID: "PA_carol", Identity: "carol", JoinedAt: old, Published: []stats.PublishedTrackStats{{SID: "TR_cv", Kind: "video"}}},
+		// Just joined: no media yet is normal.
+		{SID: "PA_dave", Identity: "dave", JoinedAt: now.Add(-2 * time.Second), ICECandidateType: "host", Published: []stats.PublishedTrackStats{{SID: "TR_dv", Kind: "video"}}},
+		// Admin-muted video is not stalled.
+		{SID: "PA_erin", Identity: "erin", JoinedAt: old, ICECandidateType: "host", Published: []stats.PublishedTrackStats{{SID: "TR_ev", Kind: "video", Muted: true}}},
+		// A viewer with loss on two of three tracks: one alert naming the worst track's presenter.
+		{SID: "PA_alice", Identity: "alice", Subscribed: []stats.SubscribedTrackStats{
+			{TrackSID: "TR_ba", Kind: "audio", LossPercent: 7}, {TrackSID: "TR_bv", Kind: "video", LossPercent: 12}, {TrackSID: "TR_cv", Kind: "video", LossPercent: 1}}},
+	}}}}
+	recs := []RecorderStatus{
+		{URL: "a", OK: true, Stats: &recorder.Stats{WorkerID: "w1", Capacity: 100, CapacityUsed: 92}},
+		{URL: "b", OK: true, Stats: &recorder.Stats{WorkerID: "w2", Capacity: 100, CapacityUsed: 100}},
+		{URL: "c", OK: true, Stats: &recorder.Stats{WorkerID: "w3", Capacity: 100, CapacityUsed: 50}},
+	}
+	got := map[string]Alert{}
+	for _, a := range h.alerts(s, recs) {
+		got[a.ID] = a
+	}
+	if len(got) != 4 {
+		t.Fatalf("want 4 alerts, got %+v", got)
+	}
+	if a, ok := got["stall:PA_bob:TR_bv"]; !ok || a.Kind != "stall" {
+		t.Fatalf("stalled presenter: %+v", got)
+	}
+	if a := got["loss:PA_alice"]; !strings.Contains(a.Message, "12.0% loss on video from bob") || !strings.Contains(a.Message, "2 of 3 tracks") {
+		t.Fatalf("loss alert: %q", a.Message)
+	}
+	if a := got["rec-cap:a"]; a.Severity != "warning" || !strings.Contains(a.Message, "92 of 100") {
+		t.Fatalf("capacity warning: %+v", a)
+	}
+	if a := got["rec-cap:b"]; a.Severity != "critical" {
+		t.Fatalf("capacity full: %+v", a)
+	}
+}
+
+func TestAlertsBounded(t *testing.T) {
+	now := time.Now()
+	h := newHandler(t, now, &fakeRecs{})
+	s := &stats.Snapshot{Node: stats.NodeStats{NumCPU: 1, CPUPercent: 100}, Rooms: []stats.RoomStats{{Name: "g"}}}
+	for i := range 150 {
+		s.Rooms[0].Participants = append(s.Rooms[0].Participants, stats.ParticipantStats{SID: fmt.Sprintf("PA_%03d", i), Identity: "v", RTTMs: 900})
+	}
+	out := h.alerts(s, nil)
+	if len(out) != maxAlerts {
+		t.Fatalf("got %d alerts, want %d", len(out), maxAlerts)
+	}
+	if out[0].ID != "cpu" { // critical first, never cut
+		t.Fatalf("first alert %+v", out[0])
+	}
+	if last := out[len(out)-1]; last.ID != "more" || last.Message != "52 more alerts not shown" || last.Since.IsZero() {
+		t.Fatalf("summary alert %+v", last)
+	}
+}
