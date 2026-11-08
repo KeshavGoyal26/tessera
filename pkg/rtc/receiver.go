@@ -63,6 +63,7 @@ type ReceiverImpl struct {
 	closed    atomic.Bool
 	wg        sync.WaitGroup
 	onClosed  func()
+	onDowns   func(n int)
 	audio     audioLevel
 	closeOnce sync.Once
 }
@@ -200,6 +201,9 @@ func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	}
 	next = append(next, dt)
 	r.downs.Store(&next)
+	if f := r.onDowns; f != nil {
+		f(len(next))
+	}
 	return nil
 }
 
@@ -215,6 +219,9 @@ func (r *ReceiverImpl) RemoveDownTrack(subscriberID string) {
 		}
 	}
 	r.downs.Store(&next)
+	if f := r.onDowns; f != nil && len(next) != len(old) {
+		f(len(next))
+	}
 }
 
 // DownTracks returns the attached DownTracks.
@@ -272,6 +279,19 @@ func (r *ReceiverImpl) Bitrate() int64 {
 	}
 	_, bps := st.meter.Rates(time.Now())
 	return int64(bps)
+}
+
+// OnDownTracksChanged registers a callback with the number of DownTracks after each
+// change (called with the DownTrack list lock held: it must not block or call back).
+func (r *ReceiverImpl) OnDownTracksChanged(f func(n int)) { r.onDowns = f }
+
+// OnClosedHook returns the registered close callback (a no-op when none), so a caller
+// can chain its own.
+func (r *ReceiverImpl) OnClosedHook() func() {
+	if f := r.onClosed; f != nil {
+		return f
+	}
+	return func() {}
 }
 
 // OnClosed registers a callback invoked once when the receiver closes

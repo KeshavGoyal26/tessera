@@ -24,6 +24,11 @@ const (
 	relayIdleStop   = 30 * time.Second
 )
 
+// RelayUnwatchedGrace is how long a relayed track with no viewer on this edge keeps
+// flowing before the relay pauses it upstream (the media node stops sending it); a
+// viewer switching back within it sees the track at once.
+var RelayUnwatchedGrace = 10 * time.Second
+
 // Relays brings each group's presenters from the media nodes that host them to this
 // edge's own room, where the edge's viewers subscribe to them (ADR-0012). One relay
 // session per group and media node: a hidden participant of kind RELAY, joined over
@@ -77,6 +82,12 @@ type localTrack struct {
 	sid      string
 }
 
+// trackWatch is whether a relayed track flows upstream (enabled) and the pending pause.
+type trackWatch struct {
+	enabled bool
+	timer   *time.Timer
+}
+
 type remotePres struct {
 	rp   room.RemotePublisher
 	node string
@@ -92,6 +103,7 @@ type groupRelay struct {
 	sessions map[string]client.Client // by media node id
 	pubs     map[string]remotePres    // by presenter identity
 	tracks   map[string]localTrack    // by the media node's track SID
+	watch    map[string]*trackWatch   // by the media node's track SID
 	idleFrom time.Time
 	done     chan struct{}
 }
@@ -280,7 +292,9 @@ func (g *groupRelay) onTrack(node string, c client.Client, t *client.RemoteTrack
 	if rp == nil {
 		return
 	}
-	sid, err := rp.PublishTrack(t.Info, t.Codec(), relayAudioLevelID, t, t.WriteRTCP)
+	remoteSID := t.SID
+	sid, err := rp.PublishTrack(t.Info, t.Codec(), relayAudioLevelID, t, t.WriteRTCP,
+		func(w bool) { g.setWatched(c, remoteSID, w) })
 	if err != nil {
 		g.r.Logger.Warn("relay: cannot publish relayed track", "group", g.group, "track", t.SID, "err", err)
 		return
@@ -288,12 +302,67 @@ func (g *groupRelay) onTrack(node string, c client.Client, t *client.RemoteTrack
 	g.mu.Lock()
 	g.tracks[t.SID] = localTrack{identity: t.ParticipantIdentity, sid: sid}
 	g.mu.Unlock()
+	g.setWatched(c, remoteSID, false) // nobody watches yet: pause after the grace period
+}
+
+// setWatched resumes a relayed track upstream as soon as a viewer on this edge
+// subscribes, and pauses it RelayUnwatchedGrace after the last one leaves: the relay
+// stays subscribed (no renegotiation, the media node keeps the stream continuous) but
+// the media node stops sending what nobody here watches.
+func (g *groupRelay) setWatched(c client.Client, remoteSID string, watched bool) {
+	g.mu.Lock()
+	if g.watch == nil {
+		g.watch = map[string]*trackWatch{}
+	}
+	tw := g.watch[remoteSID]
+	if tw == nil {
+		tw = &trackWatch{enabled: true}
+		g.watch[remoteSID] = tw
+	}
+	if watched {
+		if tw.timer != nil {
+			tw.timer.Stop()
+			tw.timer = nil
+		}
+		resume := !tw.enabled
+		tw.enabled = true
+		g.mu.Unlock()
+		if resume {
+			g.setUpstream(c, remoteSID, true)
+		}
+		return
+	}
+	if tw.enabled && tw.timer == nil {
+		tw.timer = time.AfterFunc(RelayUnwatchedGrace, func() {
+			g.mu.Lock()
+			if g.watch[remoteSID] != tw || tw.timer == nil {
+				g.mu.Unlock()
+				return
+			}
+			tw.timer, tw.enabled = nil, false
+			g.mu.Unlock()
+			g.setUpstream(c, remoteSID, false)
+		})
+	}
+	g.mu.Unlock()
+}
+
+func (g *groupRelay) setUpstream(c client.Client, remoteSID string, on bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.UpdateTrackSettings(ctx, &tesserav1.UpdateTrackSettings{TrackSids: []string{remoteSID}, Disabled: !on}); err != nil {
+		g.r.Logger.Debug("relay: track setting not sent", "group", g.group, "track", remoteSID, "err", err)
+	}
 }
 
 func (g *groupRelay) onTrackGone(remoteSID string) {
 	g.mu.Lock()
 	lt, ok := g.tracks[remoteSID]
 	delete(g.tracks, remoteSID)
+	if tw := g.watch[remoteSID]; tw != nil && tw.timer != nil {
+		tw.timer.Stop()
+	}
+	delete(g.watch, remoteSID)
 	cur := g.pubs[lt.identity]
 	g.mu.Unlock()
 	if ok && cur.rp != nil {
@@ -327,6 +396,10 @@ func (g *groupRelay) drop(match func(identity string, rp remotePres) bool) {
 		for k, lt := range g.tracks {
 			if lt.identity == id {
 				delete(g.tracks, k)
+				if tw := g.watch[k]; tw != nil && tw.timer != nil {
+					tw.timer.Stop()
+				}
+				delete(g.watch, k)
 			}
 		}
 	}

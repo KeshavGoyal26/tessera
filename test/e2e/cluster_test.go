@@ -10,6 +10,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/cluster"
@@ -223,5 +224,89 @@ func TestEdgeServesViewersThroughRelay(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("the viewer on the edge received no relayed media")
+	}
+}
+
+// relayPaused reports whether the relay's subscription on a media node is paused.
+func relayPaused(s *server) (paused, found bool) {
+	for _, r := range s.Manager.Snapshot().Rooms {
+		for _, p := range r.Participants {
+			if p.Kind != "relay" {
+				continue
+			}
+			for _, st := range p.Subscribed {
+				if st.Kind == "video" {
+					return st.Paused, true
+				}
+			}
+		}
+	}
+	return false, false
+}
+
+// The relay pauses upstream what no viewer on the edge watches, and resumes it when a
+// viewer subscribes (ADR-0012: an edge pulls only the watched presenters).
+func TestEdgeRelaysOnlyWatchedPresenters(t *testing.T) {
+	old := cluster.RelayUnwatchedGrace
+	cluster.RelayUnwatchedGrace = time.Second
+	t.Cleanup(func() { cluster.RelayUnwatchedGrace = old })
+	mr := miniredis.RunT(t)
+	media, _ := startMedia(t, mr, "m1")
+	edge, _ := newEdge(t, mr)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	publishVideo(t, ctx, connect(t, edge, "g1", "pres"), "cam")
+
+	no := false
+	viewer := client.New(client.Options{AutoSubscribe: false, SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger()})
+	got := make(chan struct{}, 1)
+	viewer.SetCallbacks(client.Callbacks{OnTrackSubscribed: func(rt *client.RemoteTrack) {
+		go func() {
+			b := make([]byte, 1500)
+			for n := 0; n < 30; n++ {
+				if _, err := rt.Read(b); err != nil {
+					return
+				}
+			}
+			got <- struct{}{}
+		}()
+	}})
+	if err := viewer.Connect(ctx, edge.URL, token(t, "g1", "viewer", func(g *auth.RoomGrant) { g.CanPublish = &no })); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = viewer.Disconnect(context.Background()) })
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for !cond() {
+			select {
+			case <-ctx.Done():
+				t.Fatal(what)
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+	waitFor("the unwatched presenter was never paused upstream", func() bool { p, ok := relayPaused(media); return ok && p })
+
+	var video string
+	waitFor("the presenter never appeared on the edge", func() bool {
+		for _, p := range viewer.RemoteParticipants() {
+			for _, tr := range p.GetTracks() {
+				if tr.GetType() == tesserav1.TrackType_TRACK_TYPE_VIDEO {
+					video = tr.GetSid()
+				}
+			}
+		}
+		return video != ""
+	})
+	if err := viewer.Subscribe(ctx, video); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-got:
+	case <-ctx.Done():
+		t.Fatal("no media after subscribing to a paused presenter")
+	}
+	if p, _ := relayPaused(media); p {
+		t.Fatal("a watched presenter is still paused upstream")
 	}
 }

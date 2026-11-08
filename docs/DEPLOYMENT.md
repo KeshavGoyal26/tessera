@@ -182,9 +182,10 @@ Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single
   A presenter whose server disappears (no heartbeat for 10 s) is placed again when it rejoins.
 - **Viewers** (tokens with `can_publish: false`) join the edge's own room. The edge relays the
   group's presenters there from every media server hosting the group: one hidden relay
-  session per group and server over the private network (this first version relays every
-  presenter of the group, not only the watched ones). Viewers subscribe on demand
-  (`auto_subscribe: false`) to switch among presenters on one connection.
+  session per group and server over the private network. Only watched presenters flow: a
+  track no viewer on the edge has subscribed to for 10 s is paused upstream (the media
+  server stops sending it) and resumes, with a keyframe, when a viewer subscribes. Viewers
+  subscribe on demand (`auto_subscribe: false`) to switch among presenters on one connection.
 - Admin API calls go to the media server that hosts the presenter (phase 3 adds forwarding
   from edges).
 

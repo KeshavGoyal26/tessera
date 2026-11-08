@@ -1,6 +1,8 @@
 package room
 
 import (
+	"sync/atomic"
+
 	"github.com/pion/webrtc/v4"
 	"google.golang.org/protobuf/proto"
 
@@ -19,9 +21,11 @@ import (
 type RemotePublisher interface {
 	SID() string
 	// PublishTrack adds a track fed by src; writeRTCP carries the receiver's NACK and
-	// PLI back upstream. It returns the track's SID in this room.
+	// PLI back upstream; watched (if set) is told when the track gains its first
+	// subscriber or loses its last one, so the relay can pause it upstream. It
+	// returns the track's SID in this room.
 	PublishTrack(info *tesserav1.TrackInfo, codec webrtc.RTPCodecParameters, audioLevelExtID uint8,
-		src rtc.RTPSource, writeRTCP rtc.FeedbackWriter) (string, error)
+		src rtc.RTPSource, writeRTCP rtc.FeedbackWriter, watched func(bool)) (string, error)
 	UnpublishTrack(sid string)
 	// Close removes the participant from the room.
 	Close()
@@ -86,7 +90,7 @@ func (m *manager) AddRemotePublisher(roomName, identity, name, metadata string, 
 func (rp *remotePublisher) SID() string { return rp.p.sid }
 
 func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.RTPCodecParameters, audioLevelExtID uint8,
-	src rtc.RTPSource, writeRTCP rtc.FeedbackWriter) (string, error) {
+	src rtc.RTPSource, writeRTCP rtc.FeedbackWriter, watched func(bool)) (string, error) {
 	p := rp.p
 	m := p.room.m
 	ti := proto.Clone(info).(*tesserav1.TrackInfo)
@@ -102,6 +106,36 @@ func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.
 		AudioLevelExtID: audioLevelExtID, WriteRTCP: writeRTCP, PLIThrottle: m.cfg.RTC.PLIThrottle, Logger: m.logger})
 	recv, sid := t.recv, ti.Sid
 	recv.OnClosed(func() { p.onReceiverClosed(sid, recv) })
+	if watched != nil {
+		// The callback runs under the receiver's lock: record the latest count and let
+		// one goroutine report it, so reports never arrive out of order.
+		var count atomic.Int32
+		kick := make(chan struct{}, 1)
+		closed := make(chan struct{})
+		recv.OnDownTracksChanged(func(n int) {
+			count.Store(int32(n))
+			select {
+			case kick <- struct{}{}:
+			default:
+			}
+		})
+		prev := recv.OnClosedHook()
+		recv.OnClosed(func() { close(closed); prev() })
+		go func() {
+			last := false
+			for {
+				select {
+				case <-closed:
+					return
+				case <-kick:
+					if w := count.Load() > 0; w != last {
+						last = w
+						watched(w)
+					}
+				}
+			}
+		}()
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
