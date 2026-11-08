@@ -221,6 +221,20 @@ describe("signal messages", () => {
     expect(ev).toEqual(["join:dan", "pub:TR_da", "pub:TR_dv", "unpub:TR_dv", "unpub:TR_da"]);
   });
 
+  it("emits attribute changes", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    const ev: string[] = [];
+    room.on(RoomEvent.ParticipantAttributesChanged, (p) => ev.push(`${p.identity}:${p.attributes.hls_url ?? ""}`));
+    const s = sig();
+    const eve = (version: number, attributes: Record<string, string>) =>
+      create(ParticipantInfoSchema, { sid: "PA_e", identity: "eve", state: ParticipantInfo_State.ACTIVE, version, attributes });
+    s.emit({ case: "update", value: { participants: [eve(1, { role: "presenter" })] } });
+    s.emit({ case: "update", value: { participants: [eve(2, { role: "presenter" })] } }); // unchanged
+    s.emit({ case: "update", value: { participants: [eve(3, { hls_url: "http://x/master.m3u8", role: "presenter" })] } });
+    expect(ev).toEqual(["eve:http://x/master.m3u8"]);
+  });
+
   it("tracks active speakers loudest first and clears them", async () => {
     const room = newRoom();
     await room.connect("ws://h", "t");

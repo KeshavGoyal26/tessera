@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,7 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 	wcfg := DefaultConfig()
 	wcfg.WorkerID, wcfg.Capacity, wcfg.Heartbeat = "auto-worker", 10, 100*time.Millisecond
 	wcfg.Storage.LocalRoot = root
+	wcfg.Storage.LocalBaseURL = "http://rec.test"
 	conn := LocalConnector{Rooms: mgr, Verifier: auth.NewVerifier(auth.StaticKeys(cfg.Keys))}
 	w, err := NewWorker(wcfg, nil, logger, WithJobAPI(coord), WithConnector(conn))
 	if err != nil {
@@ -146,6 +148,24 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 	}
 	waitFor(t, "an auto-started recording", func() bool { return len(recs()) > 0 })
 	waitFor(t, "segments from the live stream", func() bool { return w.Stats().SegmentsWritten >= 2 })
+
+	// While alice is live, her recording has a master playlist (camera + mic) that
+	// viewers find in her attributes.
+	live := recs()[0]
+	liveMaster := filepath.Join(root, "auto", live.RecordingId, "master.m3u8")
+	waitFor(t, "a live master playlist with video and audio", func() bool {
+		b, err := os.ReadFile(liveMaster)
+		return err == nil && strings.Contains(string(b), "TYPE=AUDIO") && strings.Contains(string(b), "#EXT-X-STREAM-INF")
+	})
+	wantURL := "http://rec.test/auto/" + live.RecordingId + "/master.m3u8"
+	waitFor(t, "the playlist URL in alice's attributes", func() bool {
+		p, err := mgr.GetParticipant(ctx, "auto", "alice")
+		return err == nil && p.GetAttributes()[PlaylistAttribute] == wantURL
+	})
+	if r, _ := coord.GetRecording(ctx, live.RecordingId); r.GetMasterPlaylistUrl() != wantURL ||
+		r.Status != tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE {
+		t.Fatalf("live recording: %v", r)
+	}
 	<-sendDone
 
 	// Leaving ends the recording; nobody calls StopRecording.

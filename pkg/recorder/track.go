@@ -74,13 +74,14 @@ type trackRecorder struct {
 
 	fmtpSPS, fmtpPPS []byte
 	lastKeyReq       time.Time
+	segStart         time.Time // when the current segment's first keyframe was written (approx.)
 	needKey          bool
 	pendingRebase    bool
 	sr               atomic.Pointer[srEvent]
 
-	codecString string
-	firstWall   atomic.Int64 // unix nano of first sample
-	started     chan struct{}
+	codecs    atomic.Pointer[string] // RFC 6381 codec string, once the format is known
+	firstWall atomic.Int64           // unix nano of first sample
+	started   chan struct{}
 
 	// FFmpeg fallbacks.
 	aacTC   *aacTranscoder
@@ -273,8 +274,15 @@ loop:
 	return nil
 }
 
+// maybeKeyframe asks the publisher for a keyframe to start the recording, after a loss,
+// and once the current segment is long enough: a segment is only cut on a keyframe, and
+// browsers send one only when asked (without this, segments ran to 13 s and more).
 func (r *trackRecorder) maybeKeyframe(now time.Time) {
-	if r.codec == "Opus" || r.mux != nil && !r.needKey || now.Sub(r.lastKeyReq) < time.Second {
+	if r.codec == "Opus" || now.Sub(r.lastKeyReq) < time.Second {
+		return
+	}
+	segmentDue := !r.segStart.IsZero() && now.Sub(r.segStart) >= r.opts.segment
+	if r.mux != nil && !r.needKey && !segmentDue {
 		return
 	}
 	r.lastKeyReq = now
@@ -360,7 +368,7 @@ func (r *trackRecorder) process(ctx context.Context, p *rtp.Packet, now time.Tim
 					return err
 				}
 				r.aacTC, r.tcOut = tc, tc.out
-				r.codecString = "mp4a.40.2"
+				r.setCodecString("mp4a.40.2")
 				if r.opts.reserve != nil {
 					r.release = r.opts.reserve(1)
 				}
@@ -452,7 +460,7 @@ func (r *trackRecorder) writeAUAt(ctx context.Context, au *hls.AccessUnit, d int
 		r.spec = spec
 		r.stats.width.Store(info.Width)
 		r.stats.height.Store(info.Height)
-		r.codecString = info.CodecString()
+		r.setCodecString(info.CodecString())
 	}
 	if r.mux == nil {
 		r.stats.dropped.Add(1)
@@ -460,9 +468,24 @@ func (r *trackRecorder) writeAUAt(ctx context.Context, au *hls.AccessUnit, d int
 	}
 	if au.KeyFrame {
 		r.needKey = false
+		// The muxer cuts on a keyframe once the segment reaches its target (by DTS); the wall
+		// clock approximates that, with some slack for jitter.
+		if now := time.Now(); r.segStart.IsZero() || now.Sub(r.segStart) >= r.opts.segment-250*time.Millisecond {
+			r.segStart = now
+		}
 	}
 	return r.mux.WriteSample(ctx, hls.Sample{DTS: d, KeyFrame: au.KeyFrame, Data: au.AVCC()})
 }
+
+// codecString is read by the job while the track goroutine may change it (new SPS).
+func (r *trackRecorder) codecString() string {
+	if p := r.codecs.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+func (r *trackRecorder) setCodecString(s string) { r.codecs.Store(&s) }
 
 func (r *trackRecorder) createMuxer(spec hls.TrackSpec, dts int64) error {
 	start := r.clock.At(dts)
@@ -476,7 +499,7 @@ func (r *trackRecorder) createMuxer(spec hls.TrackSpec, dts int64) error {
 	r.firstWall.Store(start.UnixNano())
 	close(r.started)
 	if spec.Codec == hls.CodecOpus {
-		r.codecString = "opus"
+		r.setCodecString("opus")
 	}
 	return nil
 }

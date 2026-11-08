@@ -92,7 +92,7 @@ recording:
   storage:
     kind: local
     local_root: $DEMO/recordings
-    local_base_url: http://127.0.0.1:6789/recordings
+    # --dev serves them on the HTTP port at /recordings/ (reachable from the LAN too)
 metrics:
   addr: "127.0.0.1:6789"
 EOF

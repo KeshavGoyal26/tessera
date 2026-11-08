@@ -202,6 +202,10 @@ message RecordingInfo {
   StartRecordingRequest request = 10;
   // Worker handling the recording.
   string worker_id = 11;
+  // HTTP URL of the master playlist when storage exposes one. A live recording
+  // sets it once its tracks have their first segments (a live EVENT playlist that
+  // players can rewind), so it is known while the recording is still running.
+  string master_playlist_url = 12;
 }
 
 // RecordingJob is what a worker receives.
@@ -236,6 +240,7 @@ message UpdateJobRequest {
   string error = 4;
   repeated RecordingOutput outputs = 5;
   string master_playlist_location = 6;
+  string master_playlist_url = 7;
 }
 
 // UpdateJobResponse is empty.

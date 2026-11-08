@@ -97,6 +97,10 @@ func realMain() int {
 // shutdownLimit bounds a graceful shutdown (30 s drain plus closing); past it the process exits.
 const shutdownLimit = 60 * time.Second
 
+// recordingsPath serves local recordings. As local_base_url it means "on the HTTP port"
+// (the dev default); any other base URL is served by the metrics listener.
+const recordingsPath = "/recordings"
+
 // listeners lets tests inject pre-bound listeners (port 0).
 type listeners struct {
 	http, metrics net.Listener
@@ -119,6 +123,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		return fmt.Errorf("invalid config: %w", err)
 	}
 	logger.Info("starting tessera", "version", version.Version, "node", cfg.NodeID)
+	if st := &cfg.Recording.Storage; o.devToken && st.Kind != "s3" && st.LocalBaseURL == "" {
+		// Dev: recordings play from this server's own port (a relative URL works from any host).
+		st.LocalBaseURL = recordingsPath
+	}
 
 	reg := metrics.NewRegistry("tessera")
 	keys := auth.StaticKeys(cfg.Keys)
@@ -180,8 +188,8 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		recWorker = w
 		coordinator.OnStopWanted(w.Stop)
 		metrics.HandleExtra("/recorder/stats", w.StatsHandler())
-		if st := cfg.Recording.Storage; st.Kind != "s3" && st.LocalBaseURL != "" {
-			metrics.HandleExtra("/recordings/", recorder.RecordingsHandler(st.LocalRoot))
+		if st := cfg.Recording.Storage; st.Kind != "s3" && st.LocalBaseURL != "" && st.LocalBaseURL != recordingsPath {
+			metrics.HandleExtra(recordingsPath+"/", recorder.RecordingsHandler(st.LocalRoot))
 		}
 		if addr := cfg.Metrics.Addr; addr != "" {
 			if strings.HasPrefix(addr, ":") {
@@ -234,6 +242,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	mux.Handle(admin.PathPrefix, adminSrv)
 	mux.Handle(dashboard.PathPrefix+"/", dash)
 	mux.Handle(dashboard.PathPrefix, dash)
+	if st := cfg.Recording.Storage; cfg.Recording.Enabled && st.Kind != "s3" && st.LocalBaseURL == recordingsPath {
+		mux.Handle(recordingsPath+"/", recorder.RecordingsHandler(st.LocalRoot))
+	}
 	if o.devToken {
 		mux.Handle(devTokenPath, devTokenHandler(recKey, recSecret))
 		logger.Warn("dev token endpoint enabled: anyone who can reach this port can join any room", "path", devTokenPath)

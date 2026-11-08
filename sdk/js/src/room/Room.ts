@@ -123,6 +123,8 @@ export interface RoomEventMap {
   ) => void;
   [RoomEvent.TrackSubscriptionFailed]: (trackSid: string, error: string) => void;
   [RoomEvent.ParticipantMetadataChanged]: (participant: Participant) => void;
+  /** Attributes were set or changed, e.g. `hls_url` once the participant's live recording can be played. */
+  [RoomEvent.ParticipantAttributesChanged]: (participant: Participant) => void;
   [RoomEvent.RecordingStatusChanged]: (recording: boolean) => void;
   [RoomEvent.ConnectionStateChanged]: (state: ConnectionState) => void;
 }
@@ -609,8 +611,10 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     if (this.#isStale(info, current)) return;
     if (info.identity === this.localParticipant.identity) {
       const before = this.localParticipant.metadata;
+      const attrs = attrKey(this.localParticipant.attributes);
       this.localParticipant.updateInfo(info);
       if (before !== info.metadata) this.emit(RoomEvent.ParticipantMetadataChanged, this.localParticipant);
+      if (attrs !== attrKey(this.localParticipant.attributes)) this.emit(RoomEvent.ParticipantAttributesChanged, this.localParticipant);
       return;
     }
     if (info.state === ParticipantInfo_State.DISCONNECTED) {
@@ -632,10 +636,12 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       for (const pub of p.trackPublications.values()) this.emit(RoomEvent.TrackPublished, pub, p);
     } else {
       const meta = existing.metadata + "\0" + existing.name;
+      const attrs = attrKey(existing.attributes);
       this.#bySid.delete(existing.sid);
       const { added, removed, changed } = existing.updateInfo(info);
       this.#bySid.set(existing.sid, existing);
       if (meta !== existing.metadata + "\0" + existing.name) this.emit(RoomEvent.ParticipantMetadataChanged, existing);
+      if (attrs !== attrKey(existing.attributes)) this.emit(RoomEvent.ParticipantAttributesChanged, existing);
       for (const pub of added) this.emit(RoomEvent.TrackPublished, pub, existing);
       for (const pub of removed) {
         this.#unsubscribe(pub, existing);
@@ -980,4 +986,9 @@ function openOrTimeout(ch: RTCDataChannel): Promise<void> {
       resolve();
     }, { once: true });
   });
+}
+
+/** A comparable form of an attribute map (key order does not matter). */
+function attrKey(a: Record<string, string>): string {
+  return JSON.stringify(Object.entries(a).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
 }

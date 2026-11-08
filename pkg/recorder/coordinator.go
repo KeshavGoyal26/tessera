@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -379,6 +380,34 @@ func (c *Coordinator) token(room, recordingID string) (string, error) {
 		ToJWT()
 }
 
+// PlaylistAttribute is the participant attribute that carries the master playlist
+// URL of the participant's live recording, so everyone in the room can play it.
+const PlaylistAttribute = "hls_url"
+
+// announcePlaylist sets PlaylistAttribute on the recorded participant.
+func (c *Coordinator) announcePlaylist(info *tesserav1.RecordingInfo) {
+	target := info.GetRequest().GetParticipant()
+	if target == nil || c.p.Rooms == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p, err := c.p.Rooms.GetParticipant(ctx, info.GetRoom(), target.GetIdentity())
+	if err != nil {
+		return // left already
+	}
+	attrs := maps.Clone(p.GetAttributes())
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	attrs[PlaylistAttribute] = info.GetMasterPlaylistUrl()
+	if _, err := c.p.Rooms.UpdateParticipant(ctx, &tesserav1.UpdateParticipantRequest{
+		Room: info.GetRoom(), Identity: target.GetIdentity(), Attributes: attrs,
+	}); err != nil {
+		c.p.Logger.Warn("could not announce the recording playlist", "recording", info.GetRecordingId(), "err", err)
+	}
+}
+
 // UpdateJob implements WorkerAPI.
 func (c *Coordinator) UpdateJob(_ context.Context, req *tesserav1.UpdateJobRequest) error {
 	c.mu.Lock()
@@ -398,6 +427,16 @@ func (c *Coordinator) UpdateJob(_ context.Context, req *tesserav1.UpdateJobReque
 	}
 	if req.GetMasterPlaylistLocation() != "" {
 		j.info.MasterPlaylistLocation = req.GetMasterPlaylistLocation()
+	}
+	if u := req.GetMasterPlaylistUrl(); u != "" && u != j.info.GetMasterPlaylistUrl() && !terminal(j.info.Status) {
+		j.info.MasterPlaylistUrl = u
+		if !terminal(st) { // a live master playlist: players can open it now
+			info := proto.Clone(j.info).(*tesserav1.RecordingInfo)
+			events = append(events, func() {
+				c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_UPDATED, info)
+				c.announcePlaylist(info)
+			})
+		}
 	}
 	j.lastBeat = c.now()
 	switch {

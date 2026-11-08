@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeshavGoyal26/tessera/pkg/hls"
 	"github.com/KeshavGoyal26/tessera/pkg/hls/hlstest"
 	"github.com/KeshavGoyal26/tessera/pkg/storage"
 )
@@ -44,8 +45,8 @@ func TestOpusToAACFallback(t *testing.T) {
 	src := NewMemSource("audio/opus", "")
 	frames := hlstest.Opus(t, 10)
 	dir, tr, _ := runTrack(t, src, trackOptions{aac: true}, func() { feedAudio(t, src, frames) })
-	if tr.codecString != "mp4a.40.2" {
-		t.Fatal(tr.codecString)
+	if tr.codecString() != "mp4a.40.2" {
+		t.Fatal(tr.codecString())
 	}
 	out, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels:format=duration", "-of", "default=nw=1", filepath.Join(dir, "index.m3u8")).CombinedOutput()
 	if err != nil {
@@ -80,5 +81,27 @@ func TestH264PathNeverSpawnsFFmpeg(t *testing.T) {
 	_, tr, _ := runTrack(t, src, trackOptions{}, func() { feedVideo(t, src, aus) })
 	if tr.aacTC != nil {
 		t.Fatal("transcoder started on the remux path")
+	}
+}
+
+// TestKeyframePerSegment: browsers send keyframes only when asked, so the recorder asks
+// once the current segment reaches its target (and repeats, rate-limited, until one comes).
+func TestKeyframePerSegment(t *testing.T) {
+	src := NewMemSource("video/H264", "")
+	tr, err := newTrackRecorder(Track{SID: "TR_v", RTP: src}, nil, trackOptions{segment: 4 * time.Second}, nopLog{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.mux = &hls.Muxer{} // recording started
+	t0 := time.Now()
+	tr.segStart, tr.lastKeyReq = t0, t0
+	for _, c := range []struct {
+		at   time.Duration
+		want int64
+	}{{3 * time.Second, 0}, {4 * time.Second, 1}, {4500 * time.Millisecond, 1}, {5100 * time.Millisecond, 2}} {
+		tr.maybeKeyframe(t0.Add(c.at))
+		if got := src.KeyFrames.Load(); got != c.want {
+			t.Fatalf("at %v: %d keyframe requests, want %d", c.at, got, c.want)
+		}
 	}
 }

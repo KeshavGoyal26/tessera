@@ -4,7 +4,8 @@ Two pages built with [vite](https://vite.dev) and the local [`@tessera/client`](
 
 - **`/` Live** (`index.html`, `src/live.ts`): presenters stream to the server, viewers see every
   presenter and watch one or more at a time. Name and room fields, an optional *Record me* tick, and
-  *Go live* / *Watch*. Query parameters: `?room=` (default `room1`), `?url=` (server),
+  *Go live* / *Watch*. A recorded presenter's tile can switch to their live HLS recording
+  (*⏪ Rewind*, with hls.js) and back to WebRTC (*● Live*). Query parameters: `?room=` (default `room1`), `?url=` (server),
   `?name=` (default a random `Guest-NNNN`), `?record=1`.
 - **`/call.html` Video call** (`call.html`, `src/main.ts`): everyone sees everyone. Dark responsive
   grid, mute icons, active speaker ring, quality badge, receive-quality selector, stats overlay,

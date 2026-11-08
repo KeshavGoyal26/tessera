@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tessera/client": "file:../../sdk/js"
+    "@tessera/client": "file:../../sdk/js",
+    "hls.js": "1.7.4"
   },
   "devDependencies": {
     "typescript": "6.0.3",

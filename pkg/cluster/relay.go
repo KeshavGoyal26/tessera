@@ -370,11 +370,19 @@ func (g *groupRelay) onTrackGone(remoteSID string) {
 	}
 }
 
-// onParticipants removes presenters that left node (not ones that moved elsewhere).
+// onParticipants removes presenters that left node (not ones that moved elsewhere) and
+// mirrors info changes of the others (e.g. a recording's playlist URL in the attributes).
 func (g *groupRelay) onParticipants(node string, ps []*tesserav1.ParticipantInfo) {
 	for _, p := range ps {
 		if p.GetState() == tesserav1.ParticipantInfo_STATE_DISCONNECTED {
 			g.drop(func(identity string, rp remotePres) bool { return identity == p.GetIdentity() && rp.node == node })
+			continue
+		}
+		g.mu.Lock()
+		cur, ok := g.pubs[p.GetIdentity()]
+		g.mu.Unlock()
+		if ok && cur.node == node {
+			cur.rp.SetInfo(p.GetName(), p.GetMetadata(), p.GetAttributes())
 		}
 	}
 }

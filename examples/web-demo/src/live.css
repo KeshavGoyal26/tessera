@@ -85,6 +85,11 @@
 .stage .tile.self:not(.screen) video {
   object-fit: cover;
 }
+/* HLS replay: the label moves up so the player controls stay usable */
+.stage .tile.replay .label {
+  bottom: auto;
+  top: 8px;
+}
 .stage-empty {
   align-self: center;
   justify-self: center;

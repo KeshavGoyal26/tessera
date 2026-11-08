@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -281,6 +282,10 @@ type jobRun struct {
 	st       storage.Storage
 	prefix   string
 	origin   time.Time
+	// masterURL is the master playlist's HTTP URL once written; liveRends is how
+	// many tracks the live master lists. Both are used by the job goroutine only.
+	masterURL string
+	liveRends int
 }
 
 type recTrack struct {
@@ -344,6 +349,7 @@ func (r *jobRun) update(ctx context.Context, st tesserav1.RecordingStatus, errMs
 	}
 	req := &tesserav1.UpdateJobRequest{
 		WorkerId: r.w.cfg.WorkerID, RecordingId: r.id, Status: st, Error: errMsg, Outputs: outs, MasterPlaylistLocation: master,
+		MasterPlaylistUrl: r.masterURL,
 	}
 	// The final status is retried: if it never arrives the server marks a finished
 	// recording failed ("worker lost") once heartbeats stop.
@@ -426,6 +432,9 @@ wait:
 				activeSent = true
 				r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE, "", nil, "")
 			}
+			if activeSent {
+				r.liveMaster(ctx)
+			}
 			if r.allTracksEnded() {
 				break wait
 			}
@@ -446,6 +455,60 @@ wait:
 	default:
 		r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE, "", outs, master)
 	}
+}
+
+// wantsMaster: a participant recording always gets a master playlist (camera + mic),
+// any other recording when it has more than one track.
+func (r *jobRun) wantsMaster(tracks int) bool {
+	return tracks > 0 && (tracks > 1 || r.req.GetParticipant() != nil)
+}
+
+// writeMaster stores master.m3u8 next to the track directories and records its URL.
+func (r *jobRun) writeMaster(ctx context.Context, rends []hls.Rendition) (string, error) {
+	b, err := hls.MasterPlaylist(rends)
+	if err != nil {
+		return "", err
+	}
+	key := path.Join(r.prefix, "master.m3u8")
+	loc, err := r.st.Put(ctx, key, bytes.NewReader(b), int64(len(b)), storage.ContentTypePlaylist)
+	if err != nil {
+		return "", err
+	}
+	r.masterURL = r.st.URL(key)
+	return loc, nil
+}
+
+// liveMaster writes the master playlist while a live recording runs, so players can
+// open it (and rewind) before the recording ends. It lists the tracks that have a
+// segment and is rewritten when another track gets its first one; the media
+// playlists it points to are live EVENT playlists. The URL goes to the coordinator.
+func (r *jobRun) liveMaster(ctx context.Context) {
+	if r.req.GetHls().GetPlaylistType() == tesserav1.PlaylistType_PLAYLIST_TYPE_VOD {
+		return
+	}
+	r.mu.Lock()
+	var rends []hls.Rendition
+	for _, sid := range r.order {
+		if t := r.tracks[sid]; t.sink.segs.Load() > 0 {
+			rends = append(rends, t.rendition(sid))
+		}
+	}
+	r.mu.Unlock()
+	if len(rends) <= r.liveRends || !r.wantsMaster(len(rends)) {
+		return
+	}
+	loc, err := r.writeMaster(ctx, rends)
+	if err != nil {
+		r.w.logger.Warn("live master playlist", "recording", r.id, "err", err)
+		return
+	}
+	r.liveRends = len(rends)
+	r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE, "", nil, loc)
+}
+
+func (t *recTrack) rendition(sid string) hls.Rendition {
+	return rendition(sid, t.ident, t.rec.codecString(), int(t.rec.stats.width.Load()), int(t.rec.stats.height.Load()),
+		t.rec.codec == "Opus", t.sink.bytes.Load(), time.Duration(t.sink.durNs.Load()))
 }
 
 func (r *jobRun) trackCount() int { r.mu.Lock(); defer r.mu.Unlock(); return len(r.tracks) }
@@ -513,7 +576,7 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 		if r.journal != "" {
 			sink.journal, sink.journalH, sink.journalTrack = r.w.journal, r.journal, t.SID
 			sink.meta = func() journalTrack { // called on the track's goroutine
-				return journalTrack{SID: t.SID, Ident: t.ParticipantIdentity, Codecs: tr.codecString,
+				return journalTrack{SID: t.SID, Ident: t.ParticipantIdentity, Codecs: tr.codecString(),
 					Width: int(tr.stats.width.Load()), Height: int(tr.stats.height.Load()), Audio: tr.codec == "Opus"}
 			}
 		}
@@ -622,25 +685,21 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 		dur := time.Duration(t.sink.durNs.Load())
 		out := &tesserav1.RecordingOutput{
 			TrackSid: sid, ParticipantIdentity: t.ident, PlaylistLocation: where, PlaylistUrl: r.st.URL(key),
-			Codecs: t.rec.codecString, SegmentCount: uint32(t.sink.segs.Load()), DurationMs: dur.Milliseconds(), SizeBytes: t.sink.bytes.Load(),
+			Codecs: t.rec.codecString(), SegmentCount: uint32(t.sink.segs.Load()), DurationMs: dur.Milliseconds(), SizeBytes: t.sink.bytes.Load(),
 		}
 		outs = append(outs, out)
 		if where == "" {
 			continue
 		}
-		rends = append(rends, rendition(sid, t.ident, t.rec.codecString, int(t.rec.stats.width.Load()), int(t.rec.stats.height.Load()),
-			t.rec.codec == "Opus", t.sink.bytes.Load(), dur))
+		rends = append(rends, t.rendition(sid))
 	}
 	var master string
-	if len(rends) > 1 || r.req.GetParticipant() != nil {
-		if b, err := hls.MasterPlaylist(rends); err == nil && len(rends) > 0 {
-			loc, err := r.st.Put(fctx, path.Join(r.prefix, "master.m3u8"), strings.NewReader(string(b)), int64(len(b)), storage.ContentTypePlaylist)
-			if err != nil {
-				errMsgs = append(errMsgs, "master playlist: "+err.Error())
-			} else {
-				master = loc
-			}
+	if r.wantsMaster(len(rends)) {
+		loc, err := r.writeMaster(fctx, rends)
+		if err != nil {
+			errMsgs = append(errMsgs, "master playlist: "+err.Error())
 		}
+		master = loc
 	}
 	r.w.stats.recordFinished(r, outs, master)
 	if len(errMsgs) > 0 {

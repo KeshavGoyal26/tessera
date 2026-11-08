@@ -204,6 +204,8 @@ type RecordingStorage struct {
 	LocalRoot string `yaml:"local_root"`
 	// LocalBaseURL, when set, serves LocalRoot read-only under /recordings/ and reports
 	// playlist URLs below this prefix, so the dashboard can play local recordings.
+	// "/recordings" serves them on the HTTP port with relative URLs (the --dev default);
+	// a full URL serves them on the metrics listener.
 	LocalBaseURL string `yaml:"local_base_url"`
 	S3           struct {
 		Bucket         string `yaml:"bucket"`

@@ -265,7 +265,7 @@ events are dropped and `num_dropped` on the next delivered event says how many.
 | `TRACK_PUBLISHED` | track published | `room`, `participant`, `track` |
 | `TRACK_UNPUBLISHED` | track unpublished | `room`, `participant`, `track` |
 | `RECORDING_STARTED` | recording became ACTIVE | `recording` |
-| `RECORDING_UPDATED` | outputs changed (new segment batch, every 30 s at most) | `recording` |
+| `RECORDING_UPDATED` | the live master playlist can be played (`recording.master_playlist_url`) | `recording` |
 | `RECORDING_ENDED` | COMPLETE, FAILED or ABORTED | `recording` |
 
 Hidden participants (recorders) do not generate participant events.
@@ -278,7 +278,14 @@ Hidden participants (recorders) do not generate participant events.
 2. The job contains `ws_url` and a **recorder token** (`room_join`, `hidden`, `recorder`,
    `can_subscribe`, `can_publish=false`, TTL 24 h with refresh via signaling).
 3. Worker joins, subscribes to the targets, and reports `UpdateJob{status=ACTIVE}` once the
-   first segment is written; it sends `UpdateJob` with outputs at least every 30 s.
+   first segment is written. A live recording then writes `master.m3u8` as soon as its tracks
+   have a segment (again when another track gets its first one) and reports
+   `UpdateJob{master_playlist_location, master_playlist_url}`: the master points at the live
+   EVENT media playlists, so players can open it, rewind and catch up before the recording
+   ends. The Coordinator sends `RECORDING_UPDATED` and, for a participant recording, sets the
+   participant's `hls_url` attribute to the URL so everyone in the room can find it (edges
+   mirror it to their viewers). A relative URL (`/recordings/...`, the `--dev` default for
+   local storage) is on the server's HTTP port.
 4. Worker → `Heartbeat` every 5 s; the response lists recordings to stop (from
    `StopRecording`). Missing heartbeats for 15 s mark the worker's jobs `FAILED`
    (or re-queued if still `STARTING`).
@@ -289,7 +296,7 @@ Hidden participants (recorders) do not generate participant events.
 
 ```
 <prefix>/<recording_id>/
-  master.m3u8                     # participant/composite recordings
+  master.m3u8                     # participant/composite recordings (written live, final at the end)
   <track_sid>/init.mp4            # ftyp + moov (avcC or dOps/esds)
   <track_sid>/index.m3u8          # media playlist (EVENT → VOD)
   <track_sid>/seg_00000.m4s       # moof + mdat fragments

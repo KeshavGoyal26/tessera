@@ -225,6 +225,28 @@ func TestEdgeServesViewersThroughRelay(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("the viewer on the edge received no relayed media")
 	}
+
+	// Info set on the media node later (e.g. a recording's playlist URL) reaches the edge's viewers.
+	if _, err := media.Manager.UpdateParticipant(ctx, &tesserav1.UpdateParticipantRequest{Room: "g1", Identity: "pres",
+		Attributes: map[string]string{"hls_url": "/recordings/g1/RC_x/master.m3u8"}}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var seen string
+		for _, p := range viewer.RemoteParticipants() {
+			if p.GetIdentity() == "pres" {
+				seen = p.GetAttributes()["hls_url"]
+			}
+		}
+		if seen == "/recordings/g1/RC_x/master.m3u8" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("the attribute set on the media node never reached the viewer on the edge")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // relayPaused reports whether the relay's subscription on a media node is paused.

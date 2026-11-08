@@ -104,6 +104,7 @@ export enum RoomEvent {
   TrackStreamStateChanged = "trackStreamStateChanged",
   TrackSubscriptionFailed = "trackSubscriptionFailed",
   ParticipantMetadataChanged = "participantMetadataChanged",
+  ParticipantAttributesChanged = "participantAttributesChanged",
   RecordingStatusChanged = "recordingStatusChanged",
   ConnectionStateChanged = "connectionStateChanged",
 }

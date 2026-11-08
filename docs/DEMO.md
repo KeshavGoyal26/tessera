@@ -40,6 +40,9 @@ The page has two fields, your name (pre-filled with a random `Guest-NNNN`) and t
   a stage. The first presenter is shown straight away; click others in the list to add them, or
   **Watch all**. Each tile has its own mute and ✕. Presenters you are not watching cost no
   bandwidth; every tile receives the presenter's one 360p stream (no simulcast, ADR-0012).
+  A recorded presenter's tile gets **⏪ Rewind** a few seconds after they go live: it switches
+  the tile to the live HLS recording (pause, scrub back to the start) and **● Live** returns to
+  WebRTC. If the presenter ends meanwhile, the tile keeps playing the finished recording.
 
 Everyone lands in `room1` unless they type another room (or open `?room=<name>`).
 `?url=ws://host:7880` points the page at another server.
@@ -53,6 +56,8 @@ press **Go live** (no tick). No token pasting: the page fetched one from `/dev/t
 both presenters are in the list, A with a **REC** marker. Click B to add it beside A, ✕ to drop it,
 **Watch all** to bring it back. Mute one tile. Press **Screen** in B: C gets a separate
 "(screen)" tile. Say: each presenter uploads once, the SFU sends each viewer only what they watch.
+On A's tile press **⏪ Rewind**, drag the scrubber back to the start, then **● Live**. Say: the
+recording is HLS while it is being made, so anyone who joined late can catch up.
 
 **1:45 Quality (30 s).** Every tile shows the presenter's 360p stream from the first frame. On a
 link too slow for all tiles the server pauses the lowest-priority ones instead of lowering
@@ -68,9 +73,8 @@ quality, and resumes them when the link recovers.
 **3:45 Recording (45 s).** Press **End** in A. In the dashboard open *Recordings*: A's recording is
 listed with room, start time, duration and status. Click **▶ Play** to watch it with video and audio.
 You can also record anyone from *Rooms* with **Record** (and **■ Stop** in *Recordings*). The files
-are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the server at
-`http://127.0.0.1:6789/recordings/` because `recording.storage.local_base_url` is set in the demo's
-config. To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.m3u8 -c copy out.mp4`.
+are HLS (fMP4) under `.demo/recordings/<room>/<recording_id>/`, served by the server itself at
+`http://<host>:7880/recordings/` (the `--dev` default for local storage). To get an MP4: `ffmpeg -i .demo/recordings/<room>/<recording_id>/master.m3u8 -c copy out.mp4`.
 
 **4:30 Load (30 s).** Start with `--loadtest` (or in another terminal
 `.demo/bin/tessera-loadtest --secret devsecret-devsecret-devsecret-0000 --rooms 5 --publishers 6`).

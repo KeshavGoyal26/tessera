@@ -1208,9 +1208,13 @@ type RecordingInfo struct {
 	Outputs                []*RecordingOutput     `protobuf:"bytes,9,rep,name=outputs,proto3" json:"outputs,omitempty"`
 	Request                *StartRecordingRequest `protobuf:"bytes,10,opt,name=request,proto3" json:"request,omitempty"`
 	// Worker handling the recording.
-	WorkerId      string `protobuf:"bytes,11,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WorkerId string `protobuf:"bytes,11,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	// HTTP URL of the master playlist when storage exposes one. A live recording
+	// sets it once its tracks have their first segments (a live EVENT playlist that
+	// players can rewind), so it is known while the recording is still running.
+	MasterPlaylistUrl string `protobuf:"bytes,12,opt,name=master_playlist_url,json=masterPlaylistUrl,proto3" json:"master_playlist_url,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RecordingInfo) Reset() {
@@ -1316,6 +1320,13 @@ func (x *RecordingInfo) GetRequest() *StartRecordingRequest {
 func (x *RecordingInfo) GetWorkerId() string {
 	if x != nil {
 		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *RecordingInfo) GetMasterPlaylistUrl() string {
+	if x != nil {
+		return x.MasterPlaylistUrl
 	}
 	return ""
 }
@@ -1508,6 +1519,7 @@ type UpdateJobRequest struct {
 	Error                  string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	Outputs                []*RecordingOutput     `protobuf:"bytes,5,rep,name=outputs,proto3" json:"outputs,omitempty"`
 	MasterPlaylistLocation string                 `protobuf:"bytes,6,opt,name=master_playlist_location,json=masterPlaylistLocation,proto3" json:"master_playlist_location,omitempty"`
+	MasterPlaylistUrl      string                 `protobuf:"bytes,7,opt,name=master_playlist_url,json=masterPlaylistUrl,proto3" json:"master_playlist_url,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1580,6 +1592,13 @@ func (x *UpdateJobRequest) GetOutputs() []*RecordingOutput {
 func (x *UpdateJobRequest) GetMasterPlaylistLocation() string {
 	if x != nil {
 		return x.MasterPlaylistLocation
+	}
+	return ""
+}
+
+func (x *UpdateJobRequest) GetMasterPlaylistUrl() string {
+	if x != nil {
+		return x.MasterPlaylistUrl
 	}
 	return ""
 }
@@ -1798,7 +1817,7 @@ const file_tessera_v1_recording_proto_rawDesc = "" +
 	"\vduration_ms\x18\a \x01(\x03R\n" +
 	"durationMs\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\b \x01(\x03R\tsizeBytes\"\xbb\x03\n" +
+	"size_bytes\x18\b \x01(\x03R\tsizeBytes\"\xeb\x03\n" +
 	"\rRecordingInfo\x12!\n" +
 	"\frecording_id\x18\x01 \x01(\tR\vrecordingId\x12\x12\n" +
 	"\x04room\x18\x02 \x01(\tR\x04room\x12\x19\n" +
@@ -1811,7 +1830,8 @@ const file_tessera_v1_recording_proto_rawDesc = "" +
 	"\aoutputs\x18\t \x03(\v2\x1b.tessera.v1.RecordingOutputR\aoutputs\x12;\n" +
 	"\arequest\x18\n" +
 	" \x01(\v2!.tessera.v1.StartRecordingRequestR\arequest\x12\x1b\n" +
-	"\tworker_id\x18\v \x01(\tR\bworkerId\"t\n" +
+	"\tworker_id\x18\v \x01(\tR\bworkerId\x12.\n" +
+	"\x13master_playlist_url\x18\f \x01(\tR\x11masterPlaylistUrl\"t\n" +
 	"\fRecordingJob\x127\n" +
 	"\trecording\x18\x01 \x01(\v2\x19.tessera.v1.RecordingInfoR\trecording\x12\x15\n" +
 	"\x06ws_url\x18\x02 \x01(\tR\x05wsUrl\x12\x14\n" +
@@ -1822,14 +1842,15 @@ const file_tessera_v1_recording_proto_rawDesc = "" +
 	"\fwait_seconds\x18\x03 \x01(\rR\vwaitSeconds\x12\x18\n" +
 	"\aversion\x18\x04 \x01(\tR\aversion\">\n" +
 	"\x10ClaimJobResponse\x12*\n" +
-	"\x03job\x18\x01 \x01(\v2\x18.tessera.v1.RecordingJobR\x03job\"\x8e\x02\n" +
+	"\x03job\x18\x01 \x01(\v2\x18.tessera.v1.RecordingJobR\x03job\"\xbe\x02\n" +
 	"\x10UpdateJobRequest\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12!\n" +
 	"\frecording_id\x18\x02 \x01(\tR\vrecordingId\x123\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x1b.tessera.v1.RecordingStatusR\x06status\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x125\n" +
 	"\aoutputs\x18\x05 \x03(\v2\x1b.tessera.v1.RecordingOutputR\aoutputs\x128\n" +
-	"\x18master_playlist_location\x18\x06 \x01(\tR\x16masterPlaylistLocation\"\x13\n" +
+	"\x18master_playlist_location\x18\x06 \x01(\tR\x16masterPlaylistLocation\x12.\n" +
+	"\x13master_playlist_url\x18\a \x01(\tR\x11masterPlaylistUrl\"\x13\n" +
 	"\x11UpdateJobResponse\"\x83\x01\n" +
 	"\x10HeartbeatRequest\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12#\n" +

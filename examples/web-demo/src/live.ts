@@ -3,6 +3,9 @@
 //
 // Query parameters: ?room= (default "room1"), ?name= (default a random Guest-NNNN),
 // ?url= (server, default ws://<host>:7880), ?record=1. window.room exposes the Room for debugging.
+//
+// A recorded presenter's live recording is announced in their `hls_url` attribute: a viewer can
+// switch that tile to the HLS player (⏪ Rewind) to scrub back, then return to WebRTC (● Live).
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 
@@ -159,6 +162,8 @@ onClick("p-leave", async () => leave());
 const watched = new Set<string>();
 /** Once the viewer picks or drops someone, stop choosing for them. */
 let viewerChose = false;
+/** Presenters shown from their HLS recording instead of WebRTC, by identity. */
+const replays = new Map<string, { destroy(): void }>();
 
 const isPresenter = (p: RemoteParticipant) => p.attributes?.role === "presenter" || p.trackPublications.size > 0;
 const presenters = () =>
@@ -172,14 +177,15 @@ const tileId = (identity: string, screen = false) => `w-${identity}${screen ? "-
 function watchRoom(r: Room): void {
   el("watch").hidden = false;
   r.on(RoomEvent.ParticipantConnected, render)
-    .on(RoomEvent.ParticipantDisconnected, (p) => unwatch(p.identity))
+    .on(RoomEvent.ParticipantDisconnected, (p) => gone(p.identity))
     .on(RoomEvent.TrackPublished, (pub, p) => {
-      if (watched.has(p.identity)) pub.setSubscribed(true);
+      if (watched.has(p.identity) && live(pub, p.identity)) pub.setSubscribed(true);
       render();
     })
     .on(RoomEvent.TrackUnpublished, render)
     .on(RoomEvent.TrackMuted, render)
     .on(RoomEvent.TrackUnmuted, render)
+    .on(RoomEvent.ParticipantAttributesChanged, render)
     .on(RoomEvent.TrackSubscribed, onSubscribed)
     .on(RoomEvent.TrackUnsubscribed, (track) => {
       for (const m of track.detach()) m.remove();
@@ -187,14 +193,30 @@ function watchRoom(r: Room): void {
   render();
 }
 
+/** Camera and mic follow the tile's mode; screen share always stays live (it is not recorded). */
+const live = (pub: RemoteTrackPublication, identity: string) => pub.source === TrackSource.ScreenShare || !replays.has(identity);
+
 function watch(p: RemoteParticipant): void {
   watched.add(p.identity);
-  for (const pub of p.trackPublications.values()) pub.setSubscribed(true);
+  for (const pub of p.trackPublications.values()) pub.setSubscribed(live(pub, p.identity));
+  render();
+}
+
+/** A watched presenter left: a tile playing their recording stays (it is finished now). */
+function gone(identity: string): void {
+  const tile = $(tileId(identity));
+  if (!replays.has(identity) || !tile) return unwatch(identity);
+  watched.delete(identity);
+  tile.classList.add("ended");
+  tile.querySelector<HTMLButtonElement>('[data-act="replay"]')!.hidden = true;
+  tile.querySelector(".nm")!.textContent += " (ended)";
+  $(tileId(identity, true))?.remove();
   render();
 }
 
 function unwatch(identity: string): void {
   watched.delete(identity);
+  stopReplay(identity);
   const p = [...(room?.remoteParticipants.values() ?? [])].find((x) => x.identity === identity);
   if (p) for (const pub of p.trackPublications.values()) pub.setSubscribed(false);
   $(tileId(identity))?.remove();
@@ -217,7 +239,7 @@ const MEDIA: [TrackSource, string][] = [
 /** Redraws the presenter list and the stage from room state. */
 function render(): void {
   const ps = presenters();
-  for (const id of watched) if (!ps.some((p) => p.identity === id)) unwatch(id);
+  for (const id of watched) if (!ps.some((p) => p.identity === id)) gone(id);
   // Until the viewer chooses, show the first presenter so the stage is never empty.
   const first = ps[0];
   if (!viewerChose && watched.size === 0 && first) return watch(first);
@@ -263,7 +285,7 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     tile.id = tileId(p.identity);
     tile.className = "tile";
     tile.innerHTML = `<div class="avatar"></div><div class="label"><span class="nm"></span></div>
-      <div class="tile-actions"><button class="icon-btn" data-act="audio" type="button" title="Mute">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
+      <div class="tile-actions"><button class="icon-btn" data-act="replay" type="button" hidden></button><button class="icon-btn" data-act="audio" type="button" title="Mute">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
     tile.querySelector(".avatar")!.textContent = name.charAt(0).toUpperCase();
     tile.querySelector(".nm")!.textContent = name;
     tile.querySelector('[data-act="close"]')!.addEventListener("click", () => {
@@ -273,17 +295,69 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     tile.querySelector('[data-act="audio"]')!.addEventListener("click", (e) => {
       const muted = tile.classList.toggle("muted-audio");
       (e.currentTarget as HTMLButtonElement).textContent = muted ? "🔇" : "🔊";
-      for (const a of tile.querySelectorAll("audio")) a.muted = muted;
+      for (const a of tile.querySelectorAll<HTMLMediaElement>("audio, video.replay")) a.muted = muted;
+    });
+    tile.querySelector('[data-act="replay"]')!.addEventListener("click", () => {
+      if (replays.has(p.identity)) goLive(p);
+      else void startReplay(p);
     });
     el("watch-stage").append(tile);
   }
-  tile.classList.toggle("has-video", !!tile.querySelector("video") && sending(p, TrackSource.Camera));
+  const replay = replays.has(p.identity);
+  const btn = tile.querySelector<HTMLButtonElement>('[data-act="replay"]')!;
+  btn.hidden = !replay && !p.attributes?.hls_url;
+  btn.textContent = replay ? "● Live" : "⏪ Rewind";
+  btn.title = replay ? "Back to the live stream" : "Watch the recording: pause and scrub back";
+  tile.classList.toggle("replay", replay);
+  tile.classList.toggle("has-video", replay || (!!tile.querySelector("video") && sending(p, TrackSource.Camera)));
   if (!sending(p, TrackSource.ScreenShare)) $(tileId(p.identity, true))?.remove();
   return tile;
 }
 
+/** Switches the tile to the presenter's live HLS recording; WebRTC camera and mic are dropped meanwhile. */
+async function startReplay(p: RemoteParticipant): Promise<void> {
+  const attr = p.attributes?.hls_url;
+  const tile = $(tileId(p.identity));
+  if (!attr || !tile || replays.has(p.identity)) return;
+  const url = new URL(attr, serverUrl.replace(/^ws/, "http")).href; // relative = on the server (--dev)
+  const video = document.createElement("video");
+  video.className = "replay";
+  video.controls = video.playsInline = true;
+  video.muted = tile.classList.contains("muted-audio");
+  const { default: Hls } = await import("hls.js");
+  let player: { destroy(): void };
+  if (Hls.isSupported()) {
+    const hls = new Hls();
+    hls.on(Hls.Events.ERROR, (_e, d) => {
+      if (d.fatal) toast(`Recording playback failed: ${d.details}`);
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    player = hls;
+  } else {
+    video.src = url; // native HLS (Safari without MSE)
+    player = { destroy: () => video.removeAttribute("src") };
+  }
+  replays.set(p.identity, { destroy: () => (player.destroy(), video.remove()) });
+  for (const pub of p.trackPublications.values()) if (!live(pub, p.identity)) pub.setSubscribed(false);
+  tile.prepend(video);
+  void video.play().catch(() => undefined);
+  render();
+}
+
+function goLive(p: RemoteParticipant): void {
+  stopReplay(p.identity);
+  if (watched.has(p.identity)) for (const pub of p.trackPublications.values()) pub.setSubscribed(true);
+  render();
+}
+
+function stopReplay(identity: string): void {
+  replays.get(identity)?.destroy();
+  replays.delete(identity);
+}
+
 function onSubscribed(track: RemoteTrack, pub: RemoteTrackPublication, p: RemoteParticipant): void {
-  if (!watched.has(p.identity)) {
+  if (!watched.has(p.identity) || !live(pub, p.identity)) {
     pub.setSubscribed(false);
     return;
   }

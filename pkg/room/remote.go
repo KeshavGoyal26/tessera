@@ -1,6 +1,7 @@
 package room
 
 import (
+	"maps"
 	"sync/atomic"
 
 	"github.com/pion/webrtc/v4"
@@ -27,6 +28,9 @@ type RemotePublisher interface {
 	PublishTrack(info *tesserav1.TrackInfo, codec webrtc.RTPCodecParameters, audioLevelExtID uint8,
 		src rtc.RTPSource, writeRTCP rtc.FeedbackWriter, watched func(bool)) (string, error)
 	UnpublishTrack(sid string)
+	// SetInfo mirrors a change of the presenter's name, metadata or attributes upstream
+	// (e.g. the playlist URL of their live recording); unchanged info is not broadcast.
+	SetInfo(name, metadata string, attributes map[string]string)
 	// Close removes the participant from the room.
 	Close()
 }
@@ -153,6 +157,20 @@ func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.
 }
 
 func (rp *remotePublisher) UnpublishTrack(sid string) { rp.p.unpublish(sid) }
+
+// SetInfo implements RemotePublisher.
+func (rp *remotePublisher) SetInfo(name, metadata string, attributes map[string]string) {
+	p := rp.p
+	p.mu.Lock()
+	changed := p.name != name || p.metadata != metadata || !maps.Equal(p.attributes, attributes)
+	if changed {
+		p.name, p.metadata, p.attributes = name, metadata, maps.Clone(attributes)
+	}
+	p.mu.Unlock()
+	if changed {
+		p.room.broadcastParticipant(p)
+	}
+}
 
 func (rp *remotePublisher) Close() {
 	rp.p.room.removeParticipant(rp.p, tesserav1.DisconnectReason_DISCONNECT_REASON_CLIENT_INITIATED, false)
