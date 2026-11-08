@@ -24,14 +24,18 @@ type Rooms interface {
 
 // Run publishes the node's heartbeat until ctx ends, then removes its entry. On a
 // media node (rooms non-nil) it also records the rooms it hosts and renews its
-// presenters' placement.
-func (c *Client) Run(ctx context.Context, self NodeInfo, rooms Rooms, logger *slog.Logger) {
+// presenters' placement. summary (optional) is the node's dashboard summary, sent
+// with each heartbeat.
+func (c *Client) Run(ctx context.Context, self NodeInfo, rooms Rooms, summary func() []byte, logger *slog.Logger) {
 	hb := time.NewTicker(heartbeatEvery)
 	defer hb.Stop()
 	refresh := time.NewTicker(refreshRoomsEvery)
 	defer refresh.Stop()
 	beat := func() []string {
 		n := self
+		if summary != nil {
+			n.Stats = summary()
+		}
 		var names []string
 		if rooms != nil {
 			list, _ := rooms.ListRooms(ctx, nil)
@@ -56,7 +60,9 @@ func (c *Client) Run(ctx context.Context, self NodeInfo, rooms Rooms, logger *sl
 			ps, _ := rooms.ListParticipants(ctx, r)
 			ids := []string{}
 			for _, p := range ps {
-				if p.GetKind() == tesserav1.ParticipantInfo_KIND_STANDARD {
+				// Everyone but the internal sessions: load-test presenters are placed (and
+				// found by the admin forwarder) like real ones.
+				if k := p.GetKind(); k != tesserav1.ParticipantInfo_KIND_RELAY && k != tesserav1.ParticipantInfo_KIND_RECORDER {
 					ids = append(ids, p.GetIdentity())
 				}
 			}
