@@ -310,3 +310,76 @@ func TestEdgeRelaysOnlyWatchedPresenters(t *testing.T) {
 		t.Fatal("a watched presenter is still paused upstream")
 	}
 }
+
+// A media node crashes: its presenter rejoins (as the browser SDK does after a failed
+// resume) and is placed on the remaining node; the edge's relay follows it there and the
+// viewer on the edge gets the presenter back (ADR-0012 phase 3 drill).
+func TestMediaNodeCrashPresenterComesBack(t *testing.T) {
+	mr := miniredis.RunT(t)
+	m1, stopM1 := startMedia(t, mr, "m1")
+	m2, _ := startMedia(t, mr, "m2")
+	edge, _ := newEdge(t, mr)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// The presenter app: (re)join and publish; on a lost session, join again.
+	var join func()
+	join = func() {
+		c := client.New(client.Options{SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger()})
+		c.SetCallbacks(client.Callbacks{OnDisconnected: func(tesserav1.DisconnectReason) {
+			if ctx.Err() == nil {
+				go join()
+			}
+		}})
+		for ctx.Err() == nil {
+			if err := c.Connect(ctx, edge.URL, token(t, "g1", "pres")); err == nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		t.Cleanup(func() { _ = c.Disconnect(context.Background()) })
+		publishVideo(t, ctx, c, "cam")
+	}
+	join()
+
+	no := false
+	viewer := client.New(client.Options{AutoSubscribe: true, SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger()})
+	got := make(chan struct{}, 8)
+	viewer.SetCallbacks(client.Callbacks{OnTrackSubscribed: func(rt *client.RemoteTrack) {
+		go func() {
+			b := make([]byte, 1500)
+			for n := 0; n < 30; n++ {
+				if _, err := rt.Read(b); err != nil {
+					return
+				}
+			}
+			got <- struct{}{}
+		}()
+	}})
+	if err := viewer.Connect(ctx, edge.URL, token(t, "g1", "viewer", func(g *auth.RoomGrant) { g.CanPublish = &no })); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = viewer.Disconnect(context.Background()) })
+	select {
+	case <-got:
+	case <-ctx.Done():
+		t.Fatal("no media before the crash")
+	}
+	first, survivor := m1, m2
+	if !hosts(m1, "g1") {
+		first, survivor = m2, m1
+	}
+	if first != m1 {
+		t.Skip("the presenter landed on m2; the drill crashes m1") // ties go to m1
+	}
+	stopM1()   // its registry entry goes (as after the 10 s expiry)
+	m1.crash() // sessions drop
+	select {
+	case <-got:
+	case <-ctx.Done():
+		t.Fatal("the viewer never got the presenter back after the media node crashed")
+	}
+	if !hosts(survivor, "g1") {
+		t.Fatal("the presenter should have rejoined on the remaining media node")
+	}
+}

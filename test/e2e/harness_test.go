@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ type server struct {
 	URL     string
 	Manager room.Manager
 	cfg     *config.Config
+	// crash stops the server abruptly (tests of node failures); safe to call twice.
+	crash func()
 }
 
 func testLogger() *slog.Logger {
@@ -62,12 +65,17 @@ func startServer(t *testing.T, mutate ...func(*config.Config)) *server {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(signal.NewServer(cfg.Signal, auth.NewVerifier(auth.StaticKeys(cfg.Keys)), mgr, logger))
-	t.Cleanup(func() {
-		mgr.Close()
-		srv.Close()
-		_ = eng.Close()
-	})
-	return &server{URL: "ws://" + strings.TrimPrefix(srv.URL, "http://"), Manager: mgr, cfg: cfg}
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			srv.CloseClientConnections()
+			mgr.Close()
+			srv.Close()
+			_ = eng.Close()
+		})
+	}
+	t.Cleanup(stop)
+	return &server{URL: "ws://" + strings.TrimPrefix(srv.URL, "http://"), Manager: mgr, cfg: cfg, crash: stop}
 }
 
 func token(t *testing.T, roomName, identity string, mut ...func(*auth.RoomGrant)) string {
