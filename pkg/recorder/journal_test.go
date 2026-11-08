@@ -126,3 +126,33 @@ func TestRecoverSkipsLiveOwner(t *testing.T) {
 		t.Fatalf("entry of a live process was removed: %v", err)
 	}
 }
+
+// The periodic recovery runs while recordings are in progress: it must not close this
+// process's own recordings (it did on GCP: every recording was sealed and reported FAILED
+// about 30 s after it started, and lost its crash protection). A copy of the entry, as
+// left by a crashed run with the same pid, is still an orphan.
+func TestFileJournalSkipsOwnLiveRecordings(t *testing.T) {
+	tmp := t.TempDir()
+	j := FileJournal{Dir: filepath.Join(tmp, "live")}
+	h, err := j.Begin("RC_live", []byte(`{"recordingId":"RC_live"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Put(h, "TR_v", []byte(`{"sid":"TR_v"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := j.Orphans(context.Background()); len(o) != 0 {
+		t.Fatalf("a recording of this process was taken as an orphan: %v", o[0].ID)
+	}
+	crashed := FileJournal{Dir: filepath.Join(tmp, "crashed")}
+	if err := os.CopyFS(crashed.Dir, os.DirFS(j.Dir)); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := crashed.Orphans(context.Background()); len(o) != 1 || o[0].ID != "RC_live" || len(o[0].Tracks) != 1 {
+		t.Fatalf("an entry of a previous run with the same pid must be an orphan, got %v", o)
+	}
+	j.End(h)
+	if _, err := os.Stat(h); !os.IsNotExist(err) {
+		t.Fatalf("End left the entry: %v", err)
+	}
+}

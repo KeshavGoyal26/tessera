@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +79,11 @@ func WithJournal(j JournalStore) WorkerOption { return func(w *Worker) { w.journ
 // orphaned when the process that wrote it is no longer running.
 type FileJournal struct{ Dir string }
 
+// fileJournalLive holds the entries of recordings running in this process. The periodic
+// recovery must skip them, and their pid file cannot tell: a restarted server often has
+// the pid of the crashed one (pid 1 in a container), so a matching pid means "previous run".
+var fileJournalLive sync.Map // handle (dir) -> struct{}
+
 // Begin implements JournalStore.
 func (f FileJournal) Begin(id string, job []byte) (string, error) {
 	dir := filepath.Join(f.Dir, id)
@@ -92,6 +98,7 @@ func (f FileJournal) Begin(id string, job []byte) (string, error) {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
+	fileJournalLive.Store(dir, struct{}{})
 	return dir, nil
 }
 
@@ -101,7 +108,10 @@ func (FileJournal) Put(handle, track string, data []byte) error {
 }
 
 // End implements JournalStore.
-func (FileJournal) End(handle string) { _ = os.RemoveAll(handle) }
+func (FileJournal) End(handle string) {
+	_ = os.RemoveAll(handle)
+	fileJournalLive.Delete(handle)
+}
 
 // Orphans implements JournalStore.
 func (f FileJournal) Orphans(context.Context) ([]JournalEntry, error) {
@@ -109,6 +119,9 @@ func (f FileJournal) Orphans(context.Context) ([]JournalEntry, error) {
 	var out []JournalEntry
 	for _, e := range entries {
 		dir := filepath.Join(f.Dir, e.Name())
+		if _, live := fileJournalLive.Load(dir); live {
+			continue // recording in this process
+		}
 		if ownerAlive(dir) {
 			continue // another server process on this host shares temp_dir and is recording
 		}
