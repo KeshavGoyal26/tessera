@@ -683,8 +683,12 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 		}
 		key, where := t.sink.playlist()
 		dur := time.Duration(t.sink.durNs.Load())
+		var url string
+		if key != "" { // a track that never wrote a playlist (e.g. no keyframe) has no URL
+			url = r.st.URL(key)
+		}
 		out := &tesserav1.RecordingOutput{
-			TrackSid: sid, ParticipantIdentity: t.ident, PlaylistLocation: where, PlaylistUrl: r.st.URL(key),
+			TrackSid: sid, ParticipantIdentity: t.ident, PlaylistLocation: where, PlaylistUrl: url,
 			Codecs: t.rec.codecString(), SegmentCount: uint32(t.sink.segs.Load()), DurationMs: dur.Milliseconds(), SizeBytes: t.sink.bytes.Load(),
 		}
 		outs = append(outs, out)
