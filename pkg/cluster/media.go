@@ -12,17 +12,19 @@ import (
 // media node renews the claims of the rooms it hosts.
 const (
 	heartbeatEvery    = 2 * time.Second
-	refreshRoomsEvery = 10 * time.Second
+	refreshRoomsEvery = 5 * time.Second
 )
 
 // Rooms is what a node reports about its rooms.
 type Rooms interface {
 	ListRooms(ctx context.Context, names []string) ([]*tesserav1.Room, error)
+	ListParticipants(ctx context.Context, room string) ([]*tesserav1.ParticipantInfo, error)
 	Ready() error
 }
 
 // Run publishes the node's heartbeat until ctx ends, then removes its entry. On a
-// media node (rooms non-nil) it also keeps the claims of the rooms it hosts.
+// media node (rooms non-nil) it also records the rooms it hosts and renews its
+// presenters' placement.
 func (c *Client) Run(ctx context.Context, self NodeInfo, rooms Rooms, logger *slog.Logger) {
 	hb := time.NewTicker(heartbeatEvery)
 	defer hb.Stop()
@@ -46,12 +48,22 @@ func (c *Client) Run(ctx context.Context, self NodeInfo, rooms Rooms, logger *sl
 		return names
 	}
 	keep := func(names []string) {
-		conflicts, err := c.KeepRooms(ctx, self.ID, names)
-		if err != nil && ctx.Err() == nil {
-			logger.Warn("cluster: renewing room claims failed", "err", err)
+		if rooms == nil {
+			return
 		}
-		for _, r := range conflicts {
-			logger.Error("cluster: room is hosted on another node too", "room", r)
+		presenters := map[string][]string{}
+		for _, r := range names {
+			ps, _ := rooms.ListParticipants(ctx, r)
+			ids := []string{}
+			for _, p := range ps {
+				if p.GetKind() == tesserav1.ParticipantInfo_KIND_STANDARD {
+					ids = append(ids, p.GetIdentity())
+				}
+			}
+			presenters[r] = ids
+		}
+		if err := c.KeepRooms(ctx, self.ID, presenters); err != nil && ctx.Err() == nil {
+			logger.Warn("cluster: renewing room and presenter placement failed", "err", err)
 		}
 	}
 	keep(beat())

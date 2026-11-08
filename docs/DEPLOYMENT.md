@@ -174,12 +174,19 @@ recording:
   enabled: false
 ```
 
-Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single server. An
-edge checks the token, places the room on the least-loaded live media server that is not
-draining (or finds where it already is) and relays the WebSocket there; a reconnect carries
-the same token and reaches the same server. A room whose media server disappears (no heartbeat
-for 10 s) is placed on another one at the next join. Admin API calls go to the media server
-that hosts the room (phase 3 adds forwarding from edges).
+Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single server.
+
+- **Presenters** (tokens that may publish) are relayed to a media server: the one they are on
+  (a reconnect resumes there), else a server already hosting their group with fewer than 250
+  sessions, else the least-loaded live server that is not draining. A group can span servers.
+  A presenter whose server disappears (no heartbeat for 10 s) is placed again when it rejoins.
+- **Viewers** (tokens with `can_publish: false`) join the edge's own room. The edge relays the
+  group's presenters there from every media server hosting the group: one hidden relay
+  session per group and server over the private network (this first version relays every
+  presenter of the group, not only the watched ones). Viewers subscribe on demand
+  (`auto_subscribe: false`) to switch among presenters on one connection.
+- Admin API calls go to the media server that hosts the presenter (phase 3 adds forwarding
+  from edges).
 
 ## 7. Monitoring and alerting
 

@@ -1,12 +1,14 @@
 // Package cluster runs Tessera as two tiers (ADR-0012): public edges in front of
 // private media servers, coordinated through Redis. Redis is never on the media
-// path: it holds the node registry and which media node hosts each room.
+// path: it holds the node registry, which media nodes host each group (room), and
+// where each presenter is.
 //
-// Keys:
+// Keys (prefix "tessera:"):
 //
-//	node:<id>   hash (role, private_url, sessions, rooms, draining), expires 10 s after the last heartbeat
-//	nodes       set of node ids (stale ids are dropped when their hash is gone)
-//	room:<name> id of the media node hosting the room, refreshed by that node, expires 60 s after it stops
+//	node:<id>               hash (role, private_url, sessions, rooms, draining); expires 10 s after the last heartbeat
+//	nodes                   set of node ids (stale ids are dropped when their hash is gone)
+//	group:<room>            sorted set of media node ids hosting the room, scored by last refresh (ms)
+//	pres:<room>\x00<identity> media node of a presenter; refreshed by that node, expires 60 s after it stops
 package cluster
 
 import (
@@ -62,8 +64,7 @@ func New(ctx context.Context, cfg config.RedisConfig) (*Client, error) {
 // Close closes the Redis connection.
 func (c *Client) Close() error { return c.rdb.Close() }
 
-func nodeKey(id string) string   { return keyPrefix + "node:" + id }
-func roomKey(name string) string { return keyPrefix + "room:" + name }
+func nodeKey(id string) string { return keyPrefix + "node:" + id }
 
 // Heartbeat publishes the node's entry; it expires nodeTTL after the last call.
 func (c *Client) Heartbeat(ctx context.Context, n NodeInfo) error {
@@ -118,38 +119,61 @@ func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	return out, nil
 }
 
-// ErrNoMediaNode is returned when no media node can take a room.
+// ErrNoMediaNode is returned when no media node can take a presenter.
 var ErrNoMediaNode = errs.New(errs.CodeUnavailable, "no media server available")
 
-// PlaceRoom returns the media node hosting room, placing the room on the
-// least-loaded live media node that is not draining when it has none (or its node
-// is gone). Concurrent placements agree: the first claim wins.
-func (c *Client) PlaceRoom(ctx context.Context, room string) (NodeInfo, error) {
+// SpillSessions is how many sessions a media node may hold before a group's next
+// presenter goes to another node instead of joining the group where it already is.
+var SpillSessions = 250
+
+func presKey(room, identity string) string { return keyPrefix + "pres:" + room + "\x00" + identity }
+func groupKey(room string) string          { return keyPrefix + "group:" + room }
+
+// PlacePresenter returns the media node for a presenter of room. A presenter stays
+// on its node while that node is alive (a reconnect resumes the session there).
+// Otherwise it goes to a live, not draining node that already hosts the room if that
+// node has fewer than SpillSessions sessions, else to the least-loaded node; one
+// group can span several nodes (ADR-0012). Concurrent placements agree.
+func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (NodeInfo, error) {
 	nodes, err := c.Nodes(ctx)
 	if err != nil {
 		return NodeInfo{}, err
 	}
 	media := map[string]NodeInfo{}
-	var best *NodeInfo
-	for i := range nodes {
-		n := nodes[i]
-		if n.Role != config.RoleMedia {
-			continue
-		}
-		media[n.ID] = n
-		if !n.Draining && (best == nil || n.Sessions < best.Sessions) {
-			best = &nodes[i]
+	for _, n := range nodes {
+		if n.Role == config.RoleMedia {
+			media[n.ID] = n
 		}
 	}
+	hosting, err := c.RoomNodes(ctx, room)
+	if err != nil {
+		return NodeInfo{}, err
+	}
+	var best *NodeInfo
+	pick := func(n NodeInfo) {
+		if !n.Draining && (best == nil || n.Sessions < best.Sessions) {
+			best = &n
+		}
+	}
+	for _, id := range hosting {
+		if n, ok := media[id]; ok && n.Sessions < SpillSessions {
+			pick(n)
+		}
+	}
+	if best == nil {
+		for _, n := range media {
+			pick(n)
+		}
+	}
+	key := presKey(room, identity)
 	for range 3 {
-		owner, err := c.rdb.Get(ctx, roomKey(room)).Result()
+		owner, err := c.rdb.Get(ctx, key).Result()
 		switch {
 		case err == nil:
 			if n, ok := media[owner]; ok {
-				return n, nil // the room lives there (even while draining: sessions in it continue)
+				return n, nil
 			}
-			// Its node is gone: release the claim (only if still that node's) and place again.
-			if err := c.releaseIf(ctx, room, owner); err != nil {
+			if err := c.releaseIf(ctx, key, owner); err != nil {
 				return NodeInfo{}, err
 			}
 			continue
@@ -159,57 +183,50 @@ func (c *Client) PlaceRoom(ctx context.Context, room string) (NodeInfo, error) {
 		if best == nil {
 			return NodeInfo{}, ErrNoMediaNode
 		}
-		ok, err := c.rdb.SetNX(ctx, roomKey(room), best.ID, roomTTL).Result()
+		ok, err := c.rdb.SetNX(ctx, key, best.ID, roomTTL).Result()
 		if err != nil {
 			return NodeInfo{}, err
 		}
 		if ok {
 			return *best, nil
 		}
-		// Another edge placed it first: read the winner.
 	}
-	return NodeInfo{}, errs.New(errs.CodeUnavailable, "cluster: could not place room %q", room)
+	return NodeInfo{}, errs.New(errs.CodeUnavailable, "cluster: could not place a presenter of %q", room)
 }
 
-// RoomNode returns the id of the node hosting room ("" when none).
-func (c *Client) RoomNode(ctx context.Context, room string) (string, error) {
-	id, err := c.rdb.Get(ctx, roomKey(room)).Result()
-	if errors.Is(err, redis.Nil) {
-		return "", nil
+// RoomNodes returns the media nodes hosting room (refreshed within roomTTL), by id.
+func (c *Client) RoomNodes(ctx context.Context, room string) ([]string, error) {
+	min := strconv.FormatInt(time.Now().Add(-roomTTL).UnixMilli(), 10)
+	ids, err := c.rdb.ZRangeByScore(ctx, groupKey(room), &redis.ZRangeBy{Min: min, Max: "+inf"}).Result()
+	if err != nil {
+		return nil, err
 	}
-	return id, err
+	sort.Strings(ids)
+	return ids, nil
 }
 
-// keepRoom refreshes this node's claim on room (claiming it when it expired). It
-// reports false when another node holds the room.
-var keepRoom = redis.NewScript(`
-local v = redis.call("GET", KEYS[1])
-if v == false or v == ARGV[1] then
-  redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
-  return 1
-end
-return 0`)
-
-// KeepRooms refreshes the claims of the rooms hosted by node and returns the rooms
-// another node holds (a split, logged by the caller).
-func (c *Client) KeepRooms(ctx context.Context, node string, rooms []string) ([]string, error) {
-	var conflicts []string
-	for _, r := range rooms {
-		ok, err := keepRoom.Run(ctx, c.rdb, []string{roomKey(r)}, node, roomTTL.Milliseconds()).Int()
-		if err != nil {
-			return conflicts, err
+// KeepRooms records that node hosts these rooms and renews its presenters' placement
+// (presenters maps room to the identities on this node).
+func (c *Client) KeepRooms(ctx context.Context, node string, presenters map[string][]string) error {
+	now := time.Now()
+	_, err := c.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for room, ids := range presenters {
+			p.ZAdd(ctx, groupKey(room), redis.Z{Score: float64(now.UnixMilli()), Member: node})
+			p.ZRemRangeByScore(ctx, groupKey(room), "-inf", strconv.FormatInt(now.Add(-roomTTL).UnixMilli(), 10))
+			p.Expire(ctx, groupKey(room), 2*roomTTL)
+			for _, id := range ids {
+				p.Set(ctx, presKey(room, id), node, roomTTL)
+			}
 		}
-		if ok == 0 {
-			conflicts = append(conflicts, r)
-		}
-	}
-	return conflicts, nil
+		return nil
+	})
+	return err
 }
 
 var releaseIf = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end
 return 0`)
 
-func (c *Client) releaseIf(ctx context.Context, room, node string) error {
-	return releaseIf.Run(ctx, c.rdb, []string{roomKey(room)}, node).Err()
+func (c *Client) releaseIf(ctx context.Context, key, node string) error {
+	return releaseIf.Run(ctx, c.rdb, []string{key}, node).Err()
 }

@@ -44,56 +44,59 @@ func TestRegistryExpires(t *testing.T) {
 	}
 }
 
-func TestPlaceRoom(t *testing.T) {
+func TestPlacePresenter(t *testing.T) {
 	c, mr := newTestClient(t)
 	ctx := context.Background()
-	if _, err := c.PlaceRoom(ctx, "r1"); !errors.Is(err, ErrNoMediaNode) {
+	if _, err := c.PlacePresenter(ctx, "g1", "a"); !errors.Is(err, ErrNoMediaNode) {
 		t.Fatalf("no media node: err %v", err)
 	}
+	old := SpillSessions
+	SpillSessions = 10
+	t.Cleanup(func() { SpillSessions = old })
 	draining := media("m0", 0)
 	draining.Draining = true
 	for _, n := range []NodeInfo{draining, media("m1", 5), media("m2", 2), {ID: "e1", Role: config.RoleEdge}} {
 		_ = c.Heartbeat(ctx, n)
 	}
-	n, err := c.PlaceRoom(ctx, "r1")
-	if err != nil || n.ID != "m2" {
-		t.Fatalf("least-loaded live media node: got %+v err %v", n, err)
+	if n, err := c.PlacePresenter(ctx, "g1", "a"); err != nil || n.ID != "m2" {
+		t.Fatalf("first presenter: least-loaded live media node, got %+v err %v", n, err)
 	}
-	// Placed rooms stay put, even when another node becomes less loaded.
-	_ = c.Heartbeat(ctx, media("m1", 0))
-	if n, _ := c.PlaceRoom(ctx, "r1"); n.ID != "m2" {
-		t.Fatalf("room moved to %s", n.ID)
+	// The group is hosted on m1 (under the spill threshold): the next presenter joins it
+	// there although m2 is less loaded.
+	if err := c.KeepRooms(ctx, "m1", map[string][]string{"g1": {}}); err != nil {
+		t.Fatal(err)
 	}
-	// The hosting node disappears: the room is placed again.
+	if n, _ := c.PlacePresenter(ctx, "g1", "b"); n.ID != "m1" {
+		t.Fatalf("second presenter: the node already hosting the group, got %s", n.ID)
+	}
+	// m1 reaches the spill threshold: the next presenter goes to the least-loaded node.
+	_ = c.Heartbeat(ctx, media("m1", 10))
+	if n, _ := c.PlacePresenter(ctx, "g1", "c"); n.ID != "m2" {
+		t.Fatalf("spill: got %s", n.ID)
+	}
+	// A placed presenter stays (a reconnect resumes there) until its node is gone.
+	if n, _ := c.PlacePresenter(ctx, "g1", "a"); n.ID != "m2" {
+		t.Fatalf("placed presenter moved to %s", n.ID)
+	}
 	mr.FastForward(nodeTTL + time.Second)
-	for _, n := range []NodeInfo{media("m1", 0), media("m3", 1)} {
-		_ = c.Heartbeat(ctx, n)
-	}
-	if n, err := c.PlaceRoom(ctx, "r1"); err != nil || n.ID != "m1" {
-		t.Fatalf("after m2 left: got %+v err %v", n, err)
-	}
-	if id, _ := c.RoomNode(ctx, "r1"); id != "m1" {
-		t.Fatalf("room key %q", id)
+	_ = c.Heartbeat(ctx, media("m3", 0))
+	if n, err := c.PlacePresenter(ctx, "g1", "a"); err != nil || n.ID != "m3" {
+		t.Fatalf("after its node left: got %+v err %v", n, err)
 	}
 }
 
-func TestKeepRooms(t *testing.T) {
+func TestRoomNodes(t *testing.T) {
 	c, mr := newTestClient(t)
 	ctx := context.Background()
-	_ = c.Heartbeat(ctx, media("m1", 0))
-	if _, err := c.PlaceRoom(ctx, "r1"); err != nil {
-		t.Fatal(err)
+	_ = c.KeepRooms(ctx, "m2", map[string][]string{"g1": {"a"}})
+	_ = c.KeepRooms(ctx, "m1", map[string][]string{"g1": {"b"}, "g2": {}})
+	if ids, err := c.RoomNodes(ctx, "g1"); err != nil || len(ids) != 2 || ids[0] != "m1" || ids[1] != "m2" {
+		t.Fatalf("g1 nodes %v err %v", ids, err)
 	}
-	mr.FastForward(roomTTL + time.Second) // the claim expired (e.g. a Redis failover lost it)
-	_ = c.Heartbeat(ctx, media("m1", 0))
-	conflicts, err := c.KeepRooms(ctx, "m1", []string{"r1"})
-	if err != nil || len(conflicts) != 0 {
-		t.Fatalf("conflicts %v err %v", conflicts, err)
-	}
-	if id, _ := c.RoomNode(ctx, "r1"); id != "m1" {
-		t.Fatalf("the hosting node must reclaim its room, key %q", id)
-	}
-	if conflicts, _ := c.KeepRooms(ctx, "m2", []string{"r1"}); len(conflicts) != 1 {
-		t.Fatalf("another node's room must be reported, got %v", conflicts)
+	// RoomNodes filters by refresh time against the wall clock; miniredis only
+	// expires keys, so a stale member is checked through the presenter key instead.
+	mr.FastForward(roomTTL + time.Second)
+	if v, _ := mr.Get(presKey("g1", "a")); v != "" {
+		t.Fatalf("presenter placement must expire with its node's refreshes, got %q", v)
 	}
 }

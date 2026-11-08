@@ -17,8 +17,8 @@ import (
 )
 
 // Edge serves /rtc on an edge node (ADR-0012). Presenters (tokens that may publish)
-// are relayed to the media node hosting their room: the edge checks the token, finds
-// or places the room and relays the WebSocket to the node's private address. Viewers
+// are relayed to their media node: the edge checks the token, finds or places the
+// presenter (see PlacePresenter) and relays the WebSocket to the node's private address. Viewers
 // (tokens with can_publish false) join the edge's own room when Local is set: Relays
 // brings the group's presenters there from the media node. Clients connect to the edge
 // exactly as to a single server; a reconnect carries the same token and lands where
@@ -63,10 +63,10 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	node, err := e.Cluster.PlaceRoom(ctx, claims.Grants.Room)
+	node, err := e.Cluster.PlacePresenter(ctx, claims.Grants.Room, claims.Identity())
 	cancel()
 	if err != nil {
-		e.Logger.Warn("edge: no media node for room", "room", claims.Grants.Room, "err", err)
+		e.Logger.Warn("edge: no media node for presenter", "room", claims.Grants.Room, "err", err)
 		if errs.CodeOf(err) != errs.CodeUnavailable {
 			err = errs.Wrap(errs.CodeUnavailable, err, "cluster unavailable")
 		}
