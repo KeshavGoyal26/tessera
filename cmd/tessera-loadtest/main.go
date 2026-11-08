@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,7 +63,7 @@ type Params struct {
 
 func main() {
 	var p Params
-	flag.StringVar(&p.URL, "url", "ws://localhost:7880", "server URL")
+	flag.StringVar(&p.URL, "url", "ws://localhost:7880", "server URL; a comma-separated list spreads clients over servers (cluster edges)")
 	flag.StringVar(&p.APIKey, "api-key", "devkey", "API key")
 	flag.StringVar(&p.Secret, "secret", "", "API secret")
 	flag.IntVar(&p.Rooms, "rooms", 1, "number of rooms")
@@ -227,6 +229,15 @@ loop:
 	return nil
 }
 
+// pickURL spreads clients over a comma-separated list of server URLs (by identity, so a
+// client always uses the same one).
+func pickURL(list, identity string) string {
+	urls := strings.Split(list, ",")
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(identity))
+	return strings.TrimSpace(urls[int(h.Sum32()%uint32(len(urls)))])
+}
+
 func lossPct(c *collector) float64 {
 	exp := c.expected.Load()
 	if exp == 0 {
@@ -264,7 +275,7 @@ func startClient(ctx context.Context, p Params, roomName, identity string, publi
 	}})
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := c.Connect(cctx, p.URL, tok); err != nil {
+	if err := c.Connect(cctx, pickURL(p.URL, identity), tok); err != nil {
 		return nil, err
 	}
 	col.mu.Lock()
