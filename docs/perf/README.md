@@ -9,9 +9,9 @@
 
 ## Benchmark regression gate
 
-`.github/workflows/bench.yml` runs `docs/perf/benchgate.sh` on pushes and pull requests that touch `pkg/**`
+`.github/workflows/bench.yml` runs `docs/perf/benchgate.sh` when started by hand (`gh workflow run bench`)
 (about 1 minute including the Go build). It runs the benchmarks of `pkg/rtc`, `pkg/rtc/buffer` and
-`pkg/rtc/simulcast` six times and compares them with `baseline/bench.txt` using `benchstat`. The job fails
+`pkg/rtc/forward` six times and compares them with `baseline/bench.txt` using `benchstat`. The job fails
 when a benchmark is slower in sec/op by more than `BENCH_MAX_REGRESSION` percent (default 40) **and**
 benchstat reports the difference as significant (p < 0.05). 40% leaves room for shared-runner noise
 (single benchmarks vary by 15 to 30% run to run); real regressions on the packet path are usually larger.

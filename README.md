@@ -116,7 +116,8 @@ See [sdk/java/README.md](sdk/java/README.md) for the exact API.
 ## Development
 
 `make lint test-race` (Go), `make js`, `make java`, `make proto` (buf + protoc-gen-go +
-protoc-gen-es). CI runs the same checks on every push to `main`.
+protoc-gen-es). `scripts/ci-local.sh` runs every CI job locally; the GitHub workflows run only
+when started by hand (`gh workflow run ci`), to save Actions minutes.
 
 Tessera takes design inspiration from Kurento, Janus, OpenVidu, LiveKit, Pion, mediasoup and
 ion-sfu. It contains no code from them.

@@ -26,7 +26,8 @@ and 11 ADRs.
 
 ## Tests and CI
 
-CI (`.github/workflows/ci.yml`) has eight jobs: `proto`, `go` (build, vet, golangci-lint,
+CI (`.github/workflows/ci.yml`, started by hand; `scripts/ci-local.sh` runs the same jobs
+locally) has eight jobs: `proto`, `go` (build, vet, golangci-lint,
 `go test -race ./...`, one benchmark iteration), `js`, `java`, `e2e` (Playwright, Chromium and
 Firefox), `recorder` (FFmpeg-backed, fails if any test is skipped), `go-e2e` (whole `test/e2e`
 suite under `-race` with ffmpeg) and `dashboard-web`.

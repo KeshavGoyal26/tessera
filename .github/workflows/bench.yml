@@ -2,12 +2,8 @@ name: bench
 
 # Forwarding-path benchmark regression gate (benchstat vs docs/perf/baseline/bench.txt).
 # Separate workflow so it stays out of the critical path of ci.yml; target runtime ~1-2 min.
+# Runs only when started by hand (`gh workflow run bench`), to save Actions minutes.
 on:
-  push:
-    branches: [main]
-    paths: ["pkg/**", "go.mod", "go.sum", "docs/perf/**", ".github/workflows/bench.yml"]
-  pull_request:
-    paths: ["pkg/**", "go.mod", "go.sum", "docs/perf/**", ".github/workflows/bench.yml"]
   workflow_dispatch:
 
 permissions:

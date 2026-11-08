@@ -2,10 +2,10 @@
 # edits to other jobs go through a dedicated "ci:" commit.
 name: ci
 
+# Runs only when started by hand (Actions > ci > Run workflow, or `gh workflow run ci`), to
+# save Actions minutes; scripts/ci-local.sh runs the same jobs locally.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
