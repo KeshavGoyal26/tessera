@@ -48,4 +48,6 @@ export interface Update { snapshot: Snapshot; recorders: RecorderStatus[]; alert
 export interface CoordRecording { recording_id: string; room: string; status: string; started_at_ms?: string; ended_at_ms?: string; error?: string; worker_id?: string
   request?: { participant?: { identity: string }; track?: { track_sid: string } }
   master_playlist_location?: string
+  /** Set once the tracks have their first segments, so also while recording (a live EVENT playlist). */
+  master_playlist_url?: string
   outputs?: { track_sid: string; participant_identity?: string; playlist_url?: string; duration_ms?: string }[] }

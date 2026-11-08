@@ -43,7 +43,11 @@ function route(): void {
   const [name = 'overview', ...args] = location.hash.replace(/^#\/?/, '').split('/');
   const r = ROUTES[name] ?? ROUTES.overview!;
   const key = ROUTES[name] ? name : 'overview';
-  document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#/${key}`));
+  document.querySelectorAll('nav a').forEach((a) => {
+    const on = a.getAttribute('href') === `#/${key}`;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
   const argStr = args.join('/');
   if (current && current.name === key && current.args === argStr) return;
   current?.view.destroy();
@@ -55,17 +59,19 @@ function route(): void {
 
 function shell(): void {
   app.innerHTML = `<header><div class="brand">Tessera <span class="muted">admin</span></div>
-    <nav>${Object.entries(ROUTES).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
-    <div class="spacer"></div><span id="conn" class="conn" title="live stream"></span>
-    <span class="muted user">${esc(session.apiKey)}</span><button id="theme" title="Toggle theme">◐</button><button id="logout">Log out</button></header>
+    <nav aria-label="Views">${Object.entries(ROUTES).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
+    <div class="spacer"></div><span id="conn" class="conn" role="status" title="live stream"></span>
+    <span class="muted user">${esc(session.apiKey)}</span><button id="theme" title="Toggle theme" aria-label="Toggle light or dark theme">◐</button><button id="logout">Log out</button></header>
     <main id="view"></main>`;
   document.getElementById('theme')!.onclick = toggleTheme;
   document.getElementById('logout')!.onclick = async () => { store.close(); unsub?.(); await logout(); location.reload(); };
   unsub = store.on(() => {
     const c = document.getElementById('conn');
     if (c) { c.className = 'conn ' + (store.connected ? 'on' : 'off'); c.textContent = store.connected ? 'live' : 'reconnecting…'; }
-    current?.view.update();
+    // A hidden tab skips the work of rendering (charts, tables) and catches up when shown.
+    if (!document.hidden) current?.view.update();
   });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) current?.view.update(); });
   window.addEventListener('hashchange', route);
   void store.start();
   route();
@@ -75,7 +81,7 @@ function loginForm(error = ''): void {
   app.innerHTML = `<form class="login"><h1>Tessera <span class="muted">admin</span></h1>
     <label>API key<input name="k" autocomplete="username" required autofocus></label>
     <label>Secret<input name="s" type="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button><p class="error">${esc(error)}</p></form>`;
+    <button type="submit">Sign in</button><p class="error" role="alert">${esc(error)}</p></form>`;
   app.querySelector('form')!.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target as HTMLFormElement);

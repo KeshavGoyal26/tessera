@@ -25,7 +25,8 @@ export async function login(api_key: string, secret: string): Promise<void> {
 export const logout = (): Promise<unknown> => req('logout', { method: 'POST', body: '{}' });
 export const history = (): Promise<{ interval_ms: number; points: Point[] }> => req('history');
 export const snapshot = (): Promise<Update> => req('snapshot');
-export const recordings = (): Promise<{ recordings: CoordRecording[] }> => req('recordings');
+/** Recordings in progress and the newest ended ones; total counts all the coordinator keeps. */
+export const recordings = (): Promise<{ recordings: CoordRecording[]; total?: number }> => req('recordings');
 export function action(name: string, body: Record<string, unknown>): Promise<unknown> {
   return req(`actions/${name}`, { method: 'POST', body: JSON.stringify(body) });
 }

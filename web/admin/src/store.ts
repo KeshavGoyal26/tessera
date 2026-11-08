@@ -1,5 +1,6 @@
 import { history, stream } from './api';
 import type { Alert, Point, Update } from './types';
+import { sortSnapshot } from './util';
 
 export interface TrackPoint { t: number; bitrate: number; loss: number; jitter: number; rtt: number; bwe: number }
 
@@ -24,6 +25,7 @@ class Store {
   close(): void { this.stop?.(); this.stop = undefined; this.connected = false; }
 
   private ingest(u: Update): void {
+    sortSnapshot(u.snapshot);
     this.update = u;
     const last = this.points[this.points.length - 1];
     if (!last || u.point.t > last.t) this.points.push(u.point);

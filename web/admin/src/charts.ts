@@ -14,7 +14,11 @@ export interface ChartDef {
   fmt?: (v: number) => string;
   /** Fix the lower y bound to 0 (default true). */
   zero?: boolean;
+  /** Whole-number y ticks (counts, ms), so small ranges do not repeat a rounded label. */
+  int?: boolean;
 }
+
+const INT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6, 2e6, 5e6, 1e7];
 
 const cssVar = (n: string): string => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888';
 
@@ -39,7 +43,7 @@ export class Chart {
         scales: { x: { time: true }, y: { range: (_u, min, max) => [def.zero === false ? min : 0, Math.max(max * 1.1, def.zero === false ? max + 1 : 1)] } },
         axes: [
           { stroke: fg, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
-          { stroke: fg, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, size: 80, values: (_u, vals) => vals.map((v) => fmt(v)) },
+          { stroke: fg, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, size: 80, values: (_u, vals) => vals.map((v) => fmt(v)), ...(def.int ? { incrs: INT_INCRS } : {}) },
         ],
         series: [
           {},
@@ -66,6 +70,8 @@ export class Chart {
       data.push(col);
     }
     this.plot.setData(data as uPlot.AlignedData);
+    // Without the pointer over the chart, the legend shows the latest values instead of dashes.
+    if (n > 0 && (this.plot.cursor.left == null || this.plot.cursor.left < 0)) this.plot.setLegend({ idx: n - 1 });
   }
   destroy(): void {
     this.plot.destroy();

@@ -1,14 +1,17 @@
 import { action, recordings } from '../api';
 import { store } from '../store';
-import type { CoordRecording } from '../types';
-import { badge, esc, fmtBytes, fmtDur, fmtNum, playUrl } from '../util';
-import { table, toast } from './rooms';
-import type { View } from './view';
+import type { CoordRecording, RecTrack } from '../types';
+import { badge, esc, fmtBytes, fmtDur, fmtNum, matches, playUrl, table } from '../util';
+import { toast } from './rooms';
+import { filterBox, render, type View } from './view';
 
 export class Recordings implements View {
   private root!: HTMLElement;
   private coord: CoordRecording[] = [];
+  private coordTotal = 0;
   private coordErr = '';
+  private loaded = false;
+  private filter!: HTMLInputElement;
   private timer?: number;
   private hls?: { destroy(): void };
   private onClick = (e: Event) => void this.click(e);
@@ -16,14 +19,22 @@ export class Recordings implements View {
   mount(root: HTMLElement): void {
     this.root = root;
     root.addEventListener('click', this.onClick);
-    root.innerHTML = '<h2>Recordings</h2><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><p class="muted player-msg"></p></div><div class="body"></div>';
+    root.innerHTML = '<div class="view-head"><h2>Recordings</h2></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><p class="muted player-msg" role="status"></p></div><div class="body"></div>';
+    this.filter = filterBox(root.querySelector('.view-head')!, 'Filter by participant, room or id', () => this.update());
     void this.refreshCoord();
-    this.timer = window.setInterval(() => void this.refreshCoord(), 5000);
+    // The list is not in the live stream; refresh it while the page is visible.
+    this.timer = window.setInterval(() => { if (!document.hidden) void this.refreshCoord(); }, 5000);
     this.update();
   }
 
   private async refreshCoord(): Promise<void> {
-    try { this.coord = (await recordings()).recordings; this.coordErr = ''; } catch (e) { this.coordErr = (e as Error).message; }
+    try {
+      const r = await recordings();
+      this.coord = r.recordings ?? [];
+      this.coordTotal = r.total ?? this.coord.length;
+      this.coordErr = '';
+    } catch (e) { this.coordErr = (e as Error).message; }
+    this.loaded = true;
     this.update();
   }
 
@@ -70,8 +81,9 @@ export class Recordings implements View {
   }
 
   update(): void {
-    const body = this.root.querySelector('.body');
+    const body = this.root.querySelector<HTMLElement>('.body');
     if (!body) return;
+    const q = this.filter.value;
     const recs = store.update?.recorders ?? [];
     const workers = recs.map((r) => {
       if (!r.ok || !r.stats) return `<div class="card bad"><div class="label">${esc(r.url)}</div><div class="value">down</div><div class="sub">${esc(r.error ?? '')}</div></div>`;
@@ -79,10 +91,14 @@ export class Recordings implements View {
       return `<div class="card"><div class="label">${esc(s.worker_id)}</div><div class="value">${s.active_recordings} active</div>
         <div class="sub">${s.tracks_recording} tracks · capacity ${s.capacity_used}/${s.capacity} · backlog ${s.upload_backlog} · delay ${fmtNum(s.segment_delay_ms)} ms (max ${fmtNum(s.segment_delay_max_ms)}) · ${fmtBytes(s.bytes_uploaded)} uploaded · errors ${s.upload_errors + s.track_errors}</div></div>`;
     }).join('');
-    const active = recs.flatMap((r) => r.stats?.recordings ?? []);
-    const activeRows = active.flatMap((a) => a.tracks.map((t) => `<tr><td>${esc(a.recording_id)}</td><td>${esc(a.room)}</td><td>${esc(t.participant)}/${esc(t.track_sid)} ${esc(t.kind)}</td><td>${esc(t.codec)}${t.width ? ` ${t.width}×${t.height}` : ''}</td>
-      <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${(t.last_packet_age_ms / 1000).toFixed(1)}s</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : badge('ok', 'ok')}</td></tr>`));
-    const fin = recs.flatMap((r) => r.stats?.finished ?? []).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
+    const active = recs.flatMap((r) => r.stats?.recordings ?? []).filter((a) => matches(q, a.recording_id, a.room, ...a.tracks.map((t) => t.participant)));
+    // Problems first (errors, then no RTP for over 3 s), the rest in a stable order.
+    const rank = (t: RecTrack): number => (t.error || t.upload_errors ? 0 : t.last_packet_age_ms > 3000 ? 1 : 2);
+    const tracks = active.flatMap((a) => a.tracks.map((t) => ({ a, t })))
+      .sort((x, y) => rank(x.t) - rank(y.t) || x.a.recording_id.localeCompare(y.a.recording_id) || x.t.track_sid.localeCompare(y.t.track_sid));
+    const activeRows = tracks.map(({ a, t }) => `<tr><td>${esc(a.recording_id)}</td><td>${esc(a.room)}</td><td>${esc(t.participant)}/${esc(t.track_sid)} ${esc(t.kind)}</td><td>${esc(t.codec)}${t.width ? ` ${t.width}×${t.height}` : ''}</td>
+      <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${t.last_packet_age_ms > 3000 ? badge(`${(t.last_packet_age_ms / 1000).toFixed(0)}s`, 'warn') : `${(t.last_packet_age_ms / 1000).toFixed(1)}s`}</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : badge('ok', 'ok')}</td></tr>`);
+    const fin = recs.flatMap((r) => r.stats?.finished ?? []).filter((f) => matches(q, f.recording_id, f.room, ...f.outputs.map((o) => o.participant))).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
     const finRows = fin.map((f) => {
       const who = [...new Set(f.outputs.map((o) => o.participant).filter(Boolean))].join(', ') || '—';
       const title = `${who} · ${f.room} · ${new Date(f.ended_at).toLocaleString()}`;
@@ -101,24 +117,31 @@ export class Recordings implements View {
       return `<tr><td>${esc(who)}</td><td>${esc(f.room)}</td><td>${new Date(f.ended_at).toLocaleTimeString()}</td><td>${fmtDur(f.duration_ms)}</td><td>${st}</td>
         <td class="actions">${play} ${tracks}</td><td>${esc(f.error ?? '')}</td></tr>`;
     });
-    const coordRows = this.coord.slice().reverse().map((c) => {
-      const who = c.request?.participant?.identity ?? c.outputs?.find((o) => o.participant_identity)?.participant_identity ?? (c.request?.track ? `track ${c.request.track.track_sid}` : '');
+    const now = Date.now();
+    const coordRows = this.coord.slice().reverse().filter((c) => matches(q, who(c), c.room, c.recording_id)).map((c) => {
+      const name = who(c);
       const started = c.started_at_ms ? new Date(Number(c.started_at_ms)) : undefined;
-      const dur = started && c.ended_at_ms ? fmtDur(Number(c.ended_at_ms) - started.getTime()) : '';
       const st = c.status.replace('RECORDING_STATUS_', '').toLowerCase();
-      const stBadge = st === 'complete' ? badge(st, 'ok') : /starting|active|ending/.test(st) ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
+      const live = /starting|active|ending/.test(st);
+      const dur = started ? fmtDur((c.ended_at_ms ? Number(c.ended_at_ms) : live ? now : started.getTime()) - started.getTime()) : '';
+      const stBadge = st === 'complete' ? badge(st, 'ok') : live ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
       const url = playUrl(c);
-      const title = `${who || c.recording_id} · ${c.room}${started ? ' · ' + started.toLocaleString() : ''}`;
-      const act = /STARTING|ACTIVE/.test(c.status)
-        ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">■ Stop</button>`
-        : url ? `<button class="primary" data-act="play" data-url="${esc(url)}" data-title="${esc(title)}">▶ Play</button>` : '';
-      return `<tr><td>${esc(who)}</td><td>${esc(c.room)}</td><td>${started ? started.toLocaleTimeString() : ''}</td><td>${dur}</td><td>${stBadge}</td>
-      <td class="actions">${act}</td><td title="${esc(c.recording_id)}">${esc(c.error ?? '')}</td></tr>`;
+      const title = `${name || c.recording_id} · ${c.room}${started ? ' · ' + started.toLocaleString() : ''}`;
+      const play = url ? `<button class="primary" data-act="play" data-url="${esc(url)}" data-title="${esc(title + (live ? ' · live' : ''))}">${live ? '▶ Watch live' : '▶ Play'}</button>` : '';
+      const stop = /STARTING|ACTIVE/.test(c.status) ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">■ Stop</button>` : '';
+      return `<tr><td>${esc(name)}</td><td>${esc(c.room)}</td><td>${started ? started.toLocaleTimeString() : ''}</td><td>${dur}</td><td>${stBadge}</td>
+      <td class="actions">${play} ${stop}</td><td title="${esc(c.recording_id)}">${esc(c.error ?? '')}</td></tr>`;
     });
-    body.innerHTML = `<h3>All recordings</h3>${this.coordErr ? `<p class="muted">${esc(this.coordErr)}</p>` : table(['Participant', 'Room', 'Started', 'Duration', 'Status', '', 'Error'], coordRows)}
+    const running = this.coord.filter((c) => /STARTING|ACTIVE|ENDING/.test(c.status)).length;
+    const listNote = this.coordTotal > this.coord.length
+      ? `<p class="muted more">Listing every recording in progress and the newest ${this.coord.length - running} ended of ${this.coordTotal}; the admin API lists the rest.</p>` : '';
+    const coordHtml = this.coordErr ? `<p class="error">Could not list recordings: ${esc(this.coordErr)}</p>`
+      : !this.loaded ? '<p class="muted">Loading…</p>'
+      : table(['Participant', 'Room', 'Started', 'Duration', 'Status', '', 'Error'], coordRows, q ? 'No recording matches the filter.' : 'No recordings yet.') + listNote;
+    render(body, `<h3>All recordings${running ? ` <span class="badge warn">${running} in progress</span>` : ''}</h3>${coordHtml}
       <h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats: recording is disabled or the metrics listener is off.</p>'}</div>
-      <h3>Active tracks</h3>${table(['Recording', 'Room', 'Track', 'Codec', 'Duration', 'Segments', 'Backlog', 'Lost', 'Last RTP', 'State'], activeRows)}
-      <h3>Finished on this worker</h3>${table(['Participant', 'Room', 'Ended', 'Duration', 'Status', 'Watch', 'Error'], finRows)}`;
+      <h3>Active tracks</h3>${table(['Recording', 'Room', 'Track', 'Codec', 'Duration', 'Segments', 'Backlog', 'Lost', 'Last RTP', 'State'], activeRows, 'No track is being recorded.')}
+      <h3>Finished on this worker</h3>${table(['Participant', 'Room', 'Ended', 'Duration', 'Status', 'Watch', 'Error'], finRows)}`);
   }
 
   destroy(): void {
@@ -129,3 +152,7 @@ export class Recordings implements View {
   }
 }
 
+/** Who a recording is of: the participant asked for, else the one in its outputs, else its track. */
+function who(c: CoordRecording): string {
+  return c.request?.participant?.identity ?? c.outputs?.find((o) => o.participant_identity)?.participant_identity ?? (c.request?.track ? `track ${c.request.track.track_sid}` : '');
+}
