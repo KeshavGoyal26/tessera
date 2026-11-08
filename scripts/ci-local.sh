@@ -75,7 +75,13 @@ for job in "${JOBS[@]}"; do
   if ! declare -F "$fn" > /dev/null; then echo "unknown job: $job" >&2; exit 2; fi
   echo "=== $job"
   start=$SECONDS
-  if "$fn"; then echo "=== $job ok ($((SECONDS - start))s)"; else echo "=== $job FAILED"; failed+=("$job"); fi
+  # A subshell outside any `if`/`||`: bash ignores `set -e` in a function run as a condition,
+  # which would let only the job's last command decide.
+  set +e
+  (set -e; "$fn")
+  rc=$?
+  set -e
+  if [ $rc -eq 0 ]; then echo "=== $job ok ($((SECONDS - start))s)"; else echo "=== $job FAILED"; failed+=("$job"); fi
 done
 if [ ${#failed[@]} -gt 0 ]; then echo "failed: ${failed[*]}"; exit 1; fi
 echo "all jobs passed: ${JOBS[*]}"
