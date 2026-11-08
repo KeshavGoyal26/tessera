@@ -22,6 +22,7 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	cfg.RTC.UDPPort = 0
 	cfg.RTC.TCPPort = 0
 	cfg.RTC.IPs = []string{"127.0.0.1"}
+	isolateRecording(t, cfg)
 
 	httpLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	metricsLn, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -101,6 +102,7 @@ func TestDevTokenEndpoint(t *testing.T) {
 		cfg.RTC.UDPPort, cfg.RTC.TCPPort = 0, 0
 		cfg.RTC.IPs = []string{"127.0.0.1"}
 		cfg.Metrics.Addr = "" // do not collide with a server already on :6789
+		isolateRecording(t, cfg)
 		httpLn, _ := net.Listen("tcp", "127.0.0.1:0")
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -134,4 +136,13 @@ func TestDevTokenEndpoint(t *testing.T) {
 			t.Errorf("server exited with %v", err)
 		}
 	}
+}
+
+// isolateRecording keeps the test server's recordings and crash journal in the test's
+// directories: the default temp dir is shared by every Tessera on the machine, and a
+// server that finds another one's journal entries closes those recordings into its own
+// storage.
+func isolateRecording(t *testing.T, cfg *config.Config) {
+	cfg.Recording.TempDir = t.TempDir()
+	cfg.Recording.Storage.LocalRoot = t.TempDir()
 }
