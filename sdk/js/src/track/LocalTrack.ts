@@ -1,17 +1,13 @@
 import type { LocalEngine } from "../room/engine.js";
-import type { VideoPreset } from "../rtc/simulcast.js";
+import type { VideoPreset } from "../rtc/video.js";
 import { Track, TrackSource } from "./Track.js";
 
 /** Options for publishing a local track. */
 export interface TrackPublishOptions {
   /** Track name visible to other participants. */
   name?: string;
-  /** Publish simulcast layers (video only). Default `true` for the camera. */
-  simulcast?: boolean;
-  /** Encoder limits of the top layer (video only). */
+  /** Encoder limits (video only). One stream per track: no simulcast. */
   videoPreset?: VideoPreset;
-  /** Preferred codec, e.g. `"video/H264"`; the room's preference wins when unset. */
-  videoCodec?: string;
   /** Disable Opus DTX (audio only). */
   dtx?: boolean;
   /** Send Opus as RED (redundant audio) where the browser supports it (audio only). Default true. */

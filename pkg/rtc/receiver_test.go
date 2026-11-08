@@ -11,7 +11,6 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 type closeCountingDown struct {
@@ -22,25 +21,23 @@ type closeCountingDown struct {
 func (d *closeCountingDown) Bind(webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
 	return webrtc.RTPCodecParameters{}, nil
 }
-func (d *closeCountingDown) Unbind(webrtc.TrackLocalContext) error   { return nil }
-func (d *closeCountingDown) ID() string                              { return "TR_x" }
-func (d *closeCountingDown) RID() string                             { return "" }
-func (d *closeCountingDown) StreamID() string                        { return "PA_x" }
-func (d *closeCountingDown) Kind() webrtc.RTPCodecType               { return webrtc.RTPCodecTypeVideo }
-func (d *closeCountingDown) SubscriberID() string                    { return d.id }
-func (d *closeCountingDown) WriteRTP(*buffer.ExtPacket, int32) error { return nil }
-func (d *closeCountingDown) SetMaxLayer(types.VideoLayer)            {}
-func (d *closeCountingDown) SetTargetLayer(types.VideoLayer)         {}
-func (d *closeCountingDown) CurrentLayer() types.VideoLayer          { return types.VideoLayer{} }
-func (d *closeCountingDown) Mute(bool)                               {}
-func (d *closeCountingDown) HandleRTCP([]rtcp.Packet)                {}
-func (d *closeCountingDown) Close()                                  { d.closed.Store(true) }
+func (d *closeCountingDown) Unbind(webrtc.TrackLocalContext) error { return nil }
+func (d *closeCountingDown) ID() string                            { return "TR_x" }
+func (d *closeCountingDown) RID() string                           { return "" }
+func (d *closeCountingDown) StreamID() string                      { return "PA_x" }
+func (d *closeCountingDown) Kind() webrtc.RTPCodecType             { return webrtc.RTPCodecTypeVideo }
+func (d *closeCountingDown) SubscriberID() string                  { return d.id }
+func (d *closeCountingDown) WriteRTP(*buffer.ExtPacket) error      { return nil }
+func (d *closeCountingDown) SetDisabled(bool)                      {}
+func (d *closeCountingDown) Mute(bool)                             {}
+func (d *closeCountingDown) HandleRTCP([]rtcp.Packet)              {}
+func (d *closeCountingDown) Close()                                { d.closed.Store(true) }
 
 // A Close that runs between AddDownTrack's fast check and taking dtMu must
 // still close the DownTrack (regression: the check only ran outside dtMu).
 func TestReceiverCloseDuringAddDownTrack(t *testing.T) {
 	r := NewReceiver(ReceiverParams{TrackID: "TR_x", StreamID: "PA_x", Kind: webrtc.RTPCodecTypeVideo,
-		Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}}})
+		Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}}})
 	testHookAddDownTrack = r.Close
 	t.Cleanup(func() { testHookAddDownTrack = func() {} })
 	d := &closeCountingDown{id: "a"}
@@ -54,7 +51,7 @@ func TestReceiverCloseDuringAddDownTrack(t *testing.T) {
 func TestReceiverCloseClosesConcurrentlyAddedDownTracks(t *testing.T) {
 	for range 200 {
 		r := NewReceiver(ReceiverParams{TrackID: "TR_x", StreamID: "PA_x", Kind: webrtc.RTPCodecTypeVideo,
-			Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}}})
+			Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}}})
 		var accepted []*closeCountingDown
 		var mu sync.Mutex
 		var wg sync.WaitGroup
@@ -84,7 +81,6 @@ type blockingSource struct{ done chan struct{} }
 
 func (s blockingSource) Read([]byte) (int, error) { <-s.done; return 0, io.EOF }
 func (blockingSource) SSRC() uint32               { return 42 }
-func (blockingSource) RID() string                { return "" }
 
 type lossyDown struct {
 	closeCountingDown
@@ -100,7 +96,7 @@ func TestAudioReceiverReportCarriesSubscriberLoss(t *testing.T) {
 		mime string
 		kind webrtc.RTPCodecType
 		want uint8
-	}{{webrtc.MimeTypeOpus, webrtc.RTPCodecTypeAudio, 64}, {webrtc.MimeTypeVP8, webrtc.RTPCodecTypeVideo, 0}} {
+	}{{webrtc.MimeTypeOpus, webrtc.RTPCodecTypeAudio, 64}, {webrtc.MimeTypeH264, webrtc.RTPCodecTypeVideo, 0}} {
 		clock := uint32(48000)
 		if tc.kind == webrtc.RTPCodecTypeVideo {
 			clock = 90000
@@ -116,7 +112,7 @@ func TestAudioReceiverReportCarriesSubscriberLoss(t *testing.T) {
 			}
 		}
 		src := blockingSource{done: make(chan struct{})}
-		if err := r.AddLayer(0, src, buf); err != nil {
+		if err := r.Start(src, buf); err != nil {
 			t.Fatal(err)
 		}
 		if err := r.AddDownTrack(&lossyDown{closeCountingDown: closeCountingDown{id: "a"}, frac: 64}); err != nil {

@@ -14,7 +14,6 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
@@ -30,19 +29,18 @@ type ReceiverParams struct {
 	// AudioLevelExtID of the publisher PC (0 = none).
 	AudioLevelExtID uint8
 	WriteRTCP       FeedbackWriter
-	// PLIThrottle is the minimum interval between PLIs per layer.
+	// PLIThrottle is the minimum interval between PLIs.
 	PLIThrottle time.Duration
 	// BufferSlots overrides the ring size.
 	BufferSlots int
 	Logger      *slog.Logger
 }
 
-type layer struct {
-	spatial int32
+// stream is the track's incoming RTP stream (one per track: no simulcast).
+type stream struct {
 	src     RTPSource
 	buf     *buffer.Buffer
 	ssrc    uint32
-	rid     string
 	meter   stats.Meter
 	lastPLI atomic.Int64
 	plis    stats.Counter
@@ -57,16 +55,13 @@ type layer struct {
 
 // ReceiverImpl is the Receiver implementation.
 type ReceiverImpl struct {
-	p      ReceiverParams
-	isVP8  bool
-	layers [types.MaxSpatialLayers]atomic.Pointer[layer]
-	maxL   atomic.Int32
+	p  ReceiverParams
+	st atomic.Pointer[stream]
 
 	dtMu      sync.Mutex
 	downs     atomic.Pointer[[]DownTrack]
 	closed    atomic.Bool
 	wg        sync.WaitGroup
-	onMaxSub  func(int32)
 	onClosed  func()
 	audio     audioLevel
 	closeOnce sync.Once
@@ -80,8 +75,7 @@ func NewReceiver(p ReceiverParams) *ReceiverImpl {
 	if p.Logger == nil {
 		p.Logger = slog.Default()
 	}
-	r := &ReceiverImpl{p: p, isVP8: strings.EqualFold(p.Codec.MimeType, webrtc.MimeTypeVP8)}
-	r.maxL.Store(-1)
+	r := &ReceiverImpl{p: p}
 	empty := []DownTrack{}
 	r.downs.Store(&empty)
 	return r
@@ -99,55 +93,38 @@ func (r *ReceiverImpl) Kind() webrtc.RTPCodecType { return r.p.Kind }
 // Codec implements Receiver.
 func (r *ReceiverImpl) Codec() webrtc.RTPCodecParameters { return r.p.Codec }
 
-// MaxSpatial returns the highest layer added so far (-1 none).
-func (r *ReceiverImpl) MaxSpatial() int32 { return r.maxL.Load() }
-
-// AddLayer implements Receiver. buf may be nil (a buffer is created).
-func (r *ReceiverImpl) AddLayer(spatial int32, src RTPSource, buf *buffer.Buffer) error {
-	if spatial < 0 || spatial >= types.MaxSpatialLayers {
-		return errs.New(errs.CodeInvalidArgument, "bad spatial layer %d", spatial)
-	}
+// Start implements Receiver: it attaches the track's stream and starts its
+// forwarding goroutine. buf may be nil (a buffer is created).
+func (r *ReceiverImpl) Start(src RTPSource, buf *buffer.Buffer) error {
 	if buf == nil {
 		slots := r.p.BufferSlots
-		clock := r.p.Codec.ClockRate
 		if slots == 0 {
 			slots = 500
 			if r.p.Kind == webrtc.RTPCodecTypeAudio {
 				slots = 100
 			}
 		}
-		buf = buffer.New(buffer.Config{Slots: slots, ClockRate: clock, MimeType: r.p.Codec.MimeType, AudioLevelExtID: r.p.AudioLevelExtID, Spatial: spatial})
+		buf = buffer.New(buffer.Config{Slots: slots, ClockRate: r.p.Codec.ClockRate, MimeType: r.p.Codec.MimeType, AudioLevelExtID: r.p.AudioLevelExtID})
 	}
-	l := &layer{spatial: spatial, src: src, buf: buf, ssrc: src.SSRC(), rid: src.RID()}
-	if !r.layers[spatial].CompareAndSwap(nil, l) {
-		return errs.New(errs.CodeAlreadyExists, "layer %d exists", spatial)
-	}
-	for {
-		m := r.maxL.Load()
-		if spatial <= m || r.maxL.CompareAndSwap(m, spatial) {
-			break
-		}
-	}
-	for _, dt := range *r.downs.Load() {
-		if d, ok := dt.(*DownTrackImpl); ok {
-			d.fwd.SetAvailableLayers(r.maxL.Load())
-		}
+	st := &stream{src: src, buf: buf, ssrc: src.SSRC()}
+	if !r.st.CompareAndSwap(nil, st) {
+		return errs.New(errs.CodeAlreadyExists, "track %s already has a stream", r.p.TrackID)
 	}
 	r.wg.Add(1)
-	go r.readLoop(l)
+	go r.readLoop(st)
 	return nil
 }
 
-// readLoop is the per-layer forwarding goroutine (ARCHITECTURE.md 4.1).
-func (r *ReceiverImpl) readLoop(l *layer) {
+// readLoop is the forwarding goroutine (ARCHITECTURE.md 4.1).
+func (r *ReceiverImpl) readLoop(st *stream) {
 	defer r.wg.Done()
 	scratch := make([]byte, buffer.MaxPacketSize)
 	nackBuf := make([]uint16, 0, 64)
-	nackPkt := &rtcp.TransportLayerNack{MediaSSRC: l.ssrc}
+	nackPkt := &rtcp.TransportLayerNack{MediaSSRC: st.ssrc}
 	nackPkts := []rtcp.Packet{nackPkt}
 	var lastNack int64
 	for {
-		n, err := l.src.Read(scratch)
+		n, err := st.src.Read(scratch)
 		if err != nil {
 			if errors.Is(err, io.EOF) || r.closed.Load() {
 				break
@@ -158,22 +135,22 @@ func (r *ReceiverImpl) readLoop(l *layer) {
 			break
 		}
 		now := Now()
-		ext, err := l.buf.Write(scratch[:n], now)
+		ext, err := st.buf.Write(scratch[:n], now)
 		if err != nil {
 			continue
 		}
-		l.meter.Add(n)
+		st.meter.Add(n)
 		if ext.HasAudioLevel {
 			r.audio.observe(ext.AudioLevel, ext.VoiceActivity)
 		}
-		r.fanout(ext, l.spatial)
+		r.fanout(ext)
 		if now-lastNack >= 20e6 {
 			lastNack = now
-			nackBuf = l.buf.MissingSequenceNumbers(nackBuf[:0], now)
+			nackBuf = st.buf.MissingSequenceNumbers(nackBuf[:0], now)
 			if len(nackBuf) > 0 && r.p.WriteRTCP != nil {
 				nackPkt.Nacks = rtcp.NackPairsFromSequenceNumbers(nackBuf)
 				if r.p.WriteRTCP(nackPkts) == nil {
-					l.nacks.Inc()
+					st.nacks.Inc()
 					stats.NACKsSent.Inc()
 				}
 			}
@@ -184,9 +161,9 @@ func (r *ReceiverImpl) readLoop(l *layer) {
 
 // fanout forwards one packet to every DownTrack inline, preserving
 // per-downtrack order.
-func (r *ReceiverImpl) fanout(ext *buffer.ExtPacket, spatial int32) {
+func (r *ReceiverImpl) fanout(ext *buffer.ExtPacket) {
 	for _, dt := range *r.downs.Load() {
-		_ = dt.WriteRTP(ext, spatial)
+		_ = dt.WriteRTP(ext)
 	}
 }
 
@@ -206,9 +183,6 @@ func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	if r.closed.Load() {
 		return errs.New(errs.CodeNotFound, "receiver closed")
 	}
-	if d, ok := dt.(*DownTrackImpl); ok {
-		d.fwd.SetAvailableLayers(r.maxL.Load())
-	}
 	testHookAddDownTrack()
 	r.dtMu.Lock()
 	defer r.dtMu.Unlock()
@@ -226,11 +200,6 @@ func (r *ReceiverImpl) AddDownTrack(dt DownTrack) error {
 	}
 	next = append(next, dt)
 	r.downs.Store(&next)
-	// Again under dtMu: AddLayer may have raised maxL and walked the old list
-	// between the read above and this insert, leaving dt on a stale layer cap.
-	if d, ok := dt.(*DownTrackImpl); ok {
-		d.fwd.SetAvailableLayers(r.maxL.Load())
-	}
 	return nil
 }
 
@@ -252,88 +221,69 @@ func (r *ReceiverImpl) RemoveDownTrack(subscriberID string) {
 func (r *ReceiverImpl) DownTracks() []DownTrack { return *r.downs.Load() }
 
 // SendPLI implements Receiver.
-func (r *ReceiverImpl) SendPLI(spatial int32, force bool) {
-	if spatial < 0 || spatial >= types.MaxSpatialLayers || r.p.WriteRTCP == nil {
-		return
-	}
-	l := r.layers[spatial].Load()
-	if l == nil {
+func (r *ReceiverImpl) SendPLI(force bool) {
+	st := r.st.Load()
+	if st == nil || r.p.WriteRTCP == nil {
 		return
 	}
 	now := Now()
-	last := l.lastPLI.Load()
+	last := st.lastPLI.Load()
 	if !force && now-last < int64(r.p.PLIThrottle) {
 		return
 	}
-	if !l.lastPLI.CompareAndSwap(last, now) {
+	if !st.lastPLI.CompareAndSwap(last, now) {
 		return
 	}
-	if r.p.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: l.ssrc}}) == nil {
-		l.plis.Inc()
+	if r.p.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: st.ssrc}}) == nil {
+		st.plis.Inc()
 		stats.PLIsSent.Inc()
 	}
 }
 
 // ReadPacket implements Receiver.
-func (r *ReceiverImpl) ReadPacket(dst []byte, spatial int32, sn uint16) (int, error) {
-	if spatial < 0 || spatial >= types.MaxSpatialLayers {
+func (r *ReceiverImpl) ReadPacket(dst []byte, sn uint16) (int, error) {
+	st := r.st.Load()
+	if st == nil {
 		return 0, errs.ErrNotFound
 	}
-	l := r.layers[spatial].Load()
-	if l == nil {
-		return 0, errs.ErrNotFound
-	}
-	return l.buf.GetPacket(dst, sn)
+	return st.buf.GetPacket(dst, sn)
 }
 
-// SetRTT passes the publisher round-trip time to every layer's buffer.
+// SetRTT passes the publisher round-trip time to the buffer (NACK pacing).
 func (r *ReceiverImpl) SetRTT(d time.Duration) {
-	for i := range r.layers {
-		if l := r.layers[i].Load(); l != nil {
-			l.buf.SetRTT(d)
-		}
+	if st := r.st.Load(); st != nil {
+		st.buf.SetRTT(d)
 	}
 }
 
-// Buffer returns the buffer of a layer (nil if absent).
-func (r *ReceiverImpl) Buffer(spatial int32) *buffer.Buffer {
-	if l := r.layers[spatial].Load(); l != nil {
-		return l.buf
+// Buffer returns the stream's buffer (nil before Start).
+func (r *ReceiverImpl) Buffer() *buffer.Buffer {
+	if st := r.st.Load(); st != nil {
+		return st.buf
 	}
 	return nil
 }
 
-// Bitrates implements Receiver (temporal layers are not split: every
-// temporal entry holds the spatial layer's bitrate).
-func (r *ReceiverImpl) Bitrates() types.Bitrates {
-	var b types.Bitrates
-	now := time.Now()
-	for s := range types.MaxSpatialLayers {
-		if l := r.layers[s].Load(); l != nil {
-			_, bps := l.meter.Rates(now)
-			for t := range types.MaxTemporalLayers {
-				b[s][t] = int64(bps)
-			}
-		}
+// Bitrate implements Receiver: the measured incoming bitrate in bits per second.
+func (r *ReceiverImpl) Bitrate() int64 {
+	st := r.st.Load()
+	if st == nil {
+		return 0
 	}
-	return b
+	_, bps := st.meter.Rates(time.Now())
+	return int64(bps)
 }
-
-// OnMaxSubscribedLayerChanged implements Receiver.
-func (r *ReceiverImpl) OnMaxSubscribedLayerChanged(f func(spatial int32)) { r.onMaxSub = f }
 
 // OnClosed registers a callback invoked once when the receiver closes
 // (publisher track ended).
 func (r *ReceiverImpl) OnClosed(f func()) { r.onClosed = f }
 
-// HandleSenderReport records a publisher SR for a layer SSRC.
+// HandleSenderReport records a publisher SR.
 func (r *ReceiverImpl) HandleSenderReport(sr *rtcp.SenderReport) {
-	for s := range types.MaxSpatialLayers {
-		if l := r.layers[s].Load(); l != nil && l.ssrc == sr.SSRC {
-			l.srNTP.Store(sr.NTPTime)
-			l.srRTP.Store(sr.RTPTime)
-			l.srArrival.Store(Now())
-		}
+	if st := r.st.Load(); st != nil && st.ssrc == sr.SSRC {
+		st.srNTP.Store(sr.NTPTime)
+		st.srRTP.Store(sr.RTPTime)
+		st.srArrival.Store(Now())
 	}
 }
 
@@ -359,11 +309,9 @@ func (r *ReceiverImpl) Close() {
 // the observation window (speaker.LevelSource).
 func (r *ReceiverImpl) ReadLevel() (level, activeRatio float64) { return r.audio.read() }
 
-// LayerStats is per-layer receive statistics.
-type LayerStats struct {
-	Spatial    int32
+// StreamStats is receive statistics of the track's stream.
+type StreamStats struct {
 	SSRC       uint32
-	RID        string
 	BitrateBps float64
 	PPS        float64
 	Buffer     buffer.Stats
@@ -371,18 +319,14 @@ type LayerStats struct {
 	NACKs      uint64
 }
 
-// LayerStats returns statistics for all present layers.
-func (r *ReceiverImpl) LayerStats(now time.Time) []LayerStats {
-	var out []LayerStats
-	for s := range types.MaxSpatialLayers {
-		l := r.layers[s].Load()
-		if l == nil {
-			continue
-		}
-		pps, bps := l.meter.Rates(now)
-		out = append(out, LayerStats{Spatial: int32(s), SSRC: l.ssrc, RID: l.rid, BitrateBps: bps, PPS: pps, Buffer: l.buf.Stats(), PLIs: l.plis.Load(), NACKs: l.nacks.Load()})
+// StreamStats returns statistics of the stream; ok is false before Start.
+func (r *ReceiverImpl) StreamStats(now time.Time) (StreamStats, bool) {
+	st := r.st.Load()
+	if st == nil {
+		return StreamStats{}, false
 	}
-	return out
+	pps, bps := st.meter.Rates(now)
+	return StreamStats{SSRC: st.ssrc, BitrateBps: bps, PPS: pps, Buffer: st.buf.Stats(), PLIs: st.plis.Load(), NACKs: st.nacks.Load()}, true
 }
 
 // audioLevel is a lock-free accumulator of RFC 6464 levels.
@@ -427,9 +371,6 @@ func (s TrackRemoteSource) Read(b []byte) (int, error) {
 // SSRC implements RTPSource.
 func (s TrackRemoteSource) SSRC() uint32 { return uint32(s.T.SSRC()) }
 
-// RID implements RTPSource.
-func (s TrackRemoteSource) RID() string { return s.T.RID() }
-
 func (r *ReceiverImpl) isAudio() bool {
 	return strings.HasPrefix(strings.ToLower(r.p.Codec.MimeType), "audio/")
 }
@@ -447,43 +388,38 @@ func (r *ReceiverImpl) maxSubscriberLoss() uint8 {
 	return worst
 }
 
-// ReceptionReports builds RTCP reception reports for every layer (RR towards
-// the publisher). It must be called from a single goroutine (the RTCP ticker).
+// ReceptionReports builds the RTCP reception report towards the publisher. It
+// must be called from a single goroutine (the RTCP ticker).
 func (r *ReceiverImpl) ReceptionReports() []rtcp.ReceptionReport {
-	var out []rtcp.ReceptionReport
-	now := Now()
-	for s := range types.MaxSpatialLayers {
-		l := r.layers[s].Load()
-		if l == nil {
-			continue
-		}
-		st := l.buf.Stats()
-		if st.PacketsReceived == 0 {
-			continue
-		}
-		expInt := st.Expected - l.rrExpected
-		recvInt := st.PacketsReceived - l.rrReceived
-		l.rrExpected, l.rrReceived = st.Expected, st.PacketsReceived
-		var frac uint8
-		if expInt > recvInt && expInt > 0 {
-			frac = uint8((expInt - recvInt) * 256 / expInt)
-		}
-		if r.isAudio() {
-			// Opus sizes its in-band FEC from the loss its receiver reports. Here
-			// that receiver is this server, which sees only the publisher's own
-			// link; listeners behind lossy downlinks would get no FEC. Report the
-			// worst loss any subscriber sees (as a direct call would).
-			frac = max(frac, r.maxSubscriberLoss())
-		}
-		rr := rtcp.ReceptionReport{
-			SSRC: l.ssrc, FractionLost: frac, TotalLost: uint32(min(st.PacketsLost, 0x7fffff)),
-			LastSequenceNumber: uint32(st.HighestExtSN - 1<<16), Jitter: uint32(st.Jitter),
-		}
-		if at := l.srArrival.Load(); at != 0 {
-			rr.LastSenderReport = uint32(l.srNTP.Load() >> 16)
-			rr.Delay = uint32((now - at) * 65536 / 1e9)
-		}
-		out = append(out, rr)
+	st := r.st.Load()
+	if st == nil {
+		return nil
 	}
-	return out
+	bs := st.buf.Stats()
+	if bs.PacketsReceived == 0 {
+		return nil
+	}
+	expInt := bs.Expected - st.rrExpected
+	recvInt := bs.PacketsReceived - st.rrReceived
+	st.rrExpected, st.rrReceived = bs.Expected, bs.PacketsReceived
+	var frac uint8
+	if expInt > recvInt && expInt > 0 {
+		frac = uint8((expInt - recvInt) * 256 / expInt)
+	}
+	if r.isAudio() {
+		// Opus sizes its in-band FEC from the loss its receiver reports. Here
+		// that receiver is this server, which sees only the publisher's own
+		// link; listeners behind lossy downlinks would get no FEC. Report the
+		// worst loss any subscriber sees (as a direct call would).
+		frac = max(frac, r.maxSubscriberLoss())
+	}
+	rr := rtcp.ReceptionReport{
+		SSRC: st.ssrc, FractionLost: frac, TotalLost: uint32(min(bs.PacketsLost, 0x7fffff)),
+		LastSequenceNumber: uint32(bs.HighestExtSN - 1<<16), Jitter: uint32(bs.Jitter),
+	}
+	if at := st.srArrival.Load(); at != 0 {
+		rr.LastSenderReport = uint32(st.srNTP.Load() >> 16)
+		rr.Delay = uint32((Now() - at) * 65536 / 1e9)
+	}
+	return []rtcp.ReceptionReport{rr}
 }

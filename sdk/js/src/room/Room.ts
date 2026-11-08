@@ -1,5 +1,4 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import type { MessageInitShape } from "@bufbuild/protobuf";
 import { ConnectionError, TesseraError } from "../errors.js";
 import { EventEmitter, RoomEvent } from "../events.js";
 import type { ConnectionQuality } from "../gen/tessera/v1/models_pb.js";
@@ -7,9 +6,8 @@ import {
   DisconnectReason,
   ParticipantInfo_State,
   TrackType,
-  VideoQuality,
 } from "../gen/tessera/v1/models_pb.js";
-import type { ParticipantInfo, TrackInfo, VideoLayerSchema } from "../gen/tessera/v1/models_pb.js";
+import type { ParticipantInfo, TrackInfo } from "../gen/tessera/v1/models_pb.js";
 import {
   DataPacketSchema,
   DataPacket_Kind,
@@ -21,11 +19,10 @@ import type {
   ClientConfiguration,
   JoinResponse,
   SignalResponse,
-  SubscribedQualityUpdate,
 } from "../gen/tessera/v1/signal_pb.js";
 import { PCTransport } from "../rtc/PCTransport.js";
-import { VideoPresets, computeSimulcastEncodings } from "../rtc/simulcast.js";
-import type { VideoPreset } from "../rtc/simulcast.js";
+import { VideoPresets } from "../rtc/video.js";
+import type { VideoPreset } from "../rtc/video.js";
 import { msidForMid } from "../rtc/sdp.js";
 import { StatsSampler } from "../rtc/stats.js";
 import type { StatsSummary } from "../rtc/stats.js";
@@ -55,17 +52,8 @@ export enum ConnectionState {
 export interface RoomOptions {
   /** Subscribe to every published track automatically. Default `true`. */
   autoSubscribe?: boolean;
-  /**
-   * Subscribe to the layer matching each attached element's size and pause tracks whose
-   * elements are hidden. Default `true`.
-   */
-  adaptiveStream?: boolean;
-  /** Stop encoding simulcast layers nobody subscribes to. Default `true`. */
-  dynacast?: boolean;
-  /** Default capture preset for the camera. Default `VideoPresets.h720`. */
+  /** Default capture preset for the camera (one stream, H.264). Default `VideoPresets.h360`. */
   videoPreset?: VideoPreset;
-  /** Preferred video codec (`"video/H264"`, `"video/VP8"`). H.264 is preferred while the room records. */
-  videoCodec?: string;
   /** Maximum reconnect attempts before giving up. Default `10`. */
   maxReconnectAttempts?: number;
 }
@@ -155,7 +143,6 @@ interface PendingTrack {
   streamId: string;
 }
 
-const RID_QUALITY: Record<string, VideoQuality> = { q: VideoQuality.LOW, h: VideoQuality.MEDIUM, f: VideoQuality.HIGH };
 
 /**
  * A connection to one Tessera room.
@@ -228,7 +215,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   }
 
   get videoPreset(): VideoPreset {
-    return this.options.videoPreset ?? VideoPresets.h720;
+    return this.options.videoPreset ?? VideoPresets.h360;
   }
 
   /**
@@ -290,21 +277,11 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     const settings = mst.getSettings();
     const width = settings.width ?? preset.width;
     const height = settings.height ?? preset.height;
-    const simulcast = isVideo && (options.simulcast ?? source === TrackSource.Camera);
+    // One stream per track (no simulcast): scale a larger capture down to the preset.
+    const scale = Math.max(1, Math.min(width / preset.width, height / preset.height));
     const encodings: RTCRtpEncodingParameters[] | undefined = isVideo
-      ? simulcast
-        ? computeSimulcastEncodings(width, height, preset)
-        : [{ maxBitrate: preset.maxBitrate, maxFramerate: preset.maxFramerate }]
+      ? [{ maxBitrate: preset.maxBitrate, maxFramerate: preset.maxFramerate, scaleResolutionDownBy: scale }]
       : undefined;
-    const layers: MessageInitShape<typeof VideoLayerSchema>[] = simulcast
-      ? (encodings ?? []).map((e) => ({
-          rid: e.rid ?? "",
-          quality: RID_QUALITY[e.rid ?? "f"] ?? VideoQuality.HIGH,
-          width: Math.round(width / (e.scaleResolutionDownBy ?? 1)),
-          height: Math.round(height / (e.scaleResolutionDownBy ?? 1)),
-          bitrate: e.maxBitrate ?? 0,
-        }))
-      : [];
     const cid = mst.id;
     const stream = new MediaStream([mst]);
     const entry: LocalEntry = { track, options, cid, sid: "", stream, transceiver: undefined, info: undefined };
@@ -313,13 +290,12 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       cid,
       name: options.name ?? source,
       type: isVideo ? TrackType.VIDEO : TrackType.AUDIO,
-      width: isVideo ? width : 0,
-      height: isVideo ? height : 0,
+      width: isVideo ? Math.round(width / scale) : 0,
+      height: isVideo ? Math.round(height / scale) : 0,
       muted: track.isMuted,
       disableDtx: options.dtx === false,
       red: !isVideo && (options.red ?? true),
       source: trackSourceToProto(source),
-      layers,
       stream: stream.id,
     });
     const info = await published;
@@ -331,8 +307,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       ...(encodings ? { sendEncodings: encodings } : {}),
     });
     entry.transceiver = transceiver;
-    if (isVideo) this.#preferCodec(transceiver, options.videoCodec);
-    else if (options.red ?? true) this.#preferRed(transceiver);
+    if (!isVideo && (options.red ?? true)) this.#preferRed(transceiver);
     this.#local.set(track, entry);
     track.sid = info.sid;
     track.engine = this;
@@ -568,9 +543,6 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
           }
         }
         return;
-      case "subscribedQualityUpdate":
-        if (this.options.dynacast !== false) void this.#applyDynacast(m.value);
-        return;
       case "subscriptionResponse":
         this.emit(RoomEvent.TrackSubscriptionFailed, m.value.trackSid, String(m.value.err));
         return;
@@ -734,12 +706,6 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       rt.setMuted(pub.isMuted);
       pub.setTrack(rt);
       this.#subscribed.add(sid);
-      if (this.options.adaptiveStream !== false && rt.kind === "video") {
-        rt.enableAdaptiveStream((s) => {
-          if (pub.hasManualSettings) return;
-          this.sendTrackSettings({ trackSids: [sid], disabled: s.disabled, width: s.width, height: s.height });
-        });
-      }
       this.emit(RoomEvent.TrackSubscribed, rt, pub, p);
     }
   }
@@ -749,7 +715,6 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     this.#pendingTracks.delete(pub.trackSid);
     this.#subscribed.delete(pub.trackSid);
     if (!t) return;
-    t.disableAdaptiveStream();
     pub.setTrack(undefined);
     this.emit(RoomEvent.TrackUnsubscribed, t, pub, p);
   }
@@ -798,45 +763,6 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     } catch {
       /* the browser rejects the list: keep its default */
     }
-  }
-
-  #preferCodec(tr: RTCRtpTransceiver, requested: string | undefined): void {
-    const want =
-      requested ??
-      this.options.videoCodec ??
-      (this.isRecording ? "video/H264" : undefined) ??
-      this.#join?.enabledPublishCodecs.find((c) => c.mime.toLowerCase().startsWith("video/"))?.mime;
-    if (!want || typeof RTCRtpSender === "undefined" || !tr.setCodecPreferences) return;
-    const caps = RTCRtpSender.getCapabilities("video");
-    if (!caps) return;
-    const w = want.toLowerCase();
-    const sorted = [...caps.codecs].sort((a, b) => Number(b.mimeType.toLowerCase() === w) - Number(a.mimeType.toLowerCase() === w));
-    try {
-      tr.setCodecPreferences(sorted);
-    } catch {
-      /* the browser rejects the list: keep its default */
-    }
-  }
-
-  async #applyDynacast(update: SubscribedQualityUpdate): Promise<void> {
-    const entry = [...this.#local.values()].find((e) => e.sid === update.trackSid);
-    const sender = entry?.transceiver?.sender;
-    if (!sender) return;
-    const enabled = new Map<string, boolean>();
-    for (const q of update.subscribedQualities) {
-      const rid = q.quality === VideoQuality.LOW ? "q" : q.quality === VideoQuality.MEDIUM ? "h" : "f";
-      enabled.set(rid, q.enabled);
-    }
-    const params = sender.getParameters();
-    let changed = false;
-    for (const enc of params.encodings) {
-      const on = enabled.get(enc.rid ?? "f");
-      if (on !== undefined && enc.active !== on) {
-        enc.active = on;
-        changed = true;
-      }
-    }
-    if (changed) await sender.setParameters(params).catch(() => undefined);
   }
 
   async #ensureDataChannels(): Promise<{ reliable: RTCDataChannel; lossy: RTCDataChannel }> {

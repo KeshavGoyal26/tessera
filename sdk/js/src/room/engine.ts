@@ -1,7 +1,7 @@
 import type { LocalTrack, TrackPublishOptions } from "../track/LocalTrack.js";
 import type { LocalTrackPublication } from "../track/TrackPublication.js";
 import type { TrackSettingsInit } from "../signal/SignalClient.js";
-import type { VideoPreset } from "../rtc/simulcast.js";
+import type { VideoPreset } from "../rtc/video.js";
 import type { DataPublishOptions } from "./LocalParticipant.js";
 
 /** @internal What a {@link LocalParticipant} needs from its room. */

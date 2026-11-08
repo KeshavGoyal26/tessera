@@ -1,4 +1,4 @@
-import { ConnectionQuality, ConnectionState, Room, RoomEvent, TrackSource, VideoQuality } from "@tessera/client";
+import { ConnectionQuality, ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { Participant, RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 
 function el<T extends HTMLElement>(id: string): T {
@@ -21,7 +21,6 @@ const screenButton = el<HTMLButtonElement>("screen");
 const leaveButton = el<HTMLButtonElement>("leave");
 const joinButton = el<HTMLButtonElement>("join-button");
 const inviteButton = el<HTMLButtonElement>("invite");
-const qualitySelect = el<HTMLSelectElement>("quality");
 const statsToggle = el<HTMLButtonElement>("stats-toggle");
 const statsEl = el<HTMLElement>("stats");
 const advanced = el<HTMLDetailsElement>("advanced");
@@ -65,7 +64,7 @@ function setStatus(state: ConnectionState): void {
   statusEl.textContent = state;
   statusEl.dataset.state = state;
   const connected = state === ConnectionState.Connected;
-  for (const b of [micButton, camButton, screenButton, leaveButton, qualitySelect]) b.disabled = !connected;
+  for (const b of [micButton, camButton, screenButton, leaveButton]) b.disabled = !connected;
   joinButton.disabled = state !== ConnectionState.Disconnected;
 }
 
@@ -248,7 +247,7 @@ async function join(): Promise<void> {
     /* storage blocked */
   }
   setStatus(ConnectionState.Connecting);
-  const r = new Room({ adaptiveStream: true, dynacast: true });
+  const r = new Room();
   wire(r);
   try {
     const { url, token } = await resolveConnection(roomName, name);
@@ -324,18 +323,6 @@ screenButton.addEventListener("click", async () => {
   } catch (err) {
     toast(err instanceof Error ? err.message : String(err));
   }
-});
-
-qualitySelect.addEventListener("change", () => {
-  if (!room) return;
-  const map = { low: VideoQuality.LOW, medium: VideoQuality.MEDIUM, high: VideoQuality.HIGH } as const;
-  const q = map[qualitySelect.value as keyof typeof map];
-  for (const p of room.remoteParticipants.values()) {
-    for (const pub of p.trackPublications.values()) {
-      if (pub.kind === "video" && pub.isSubscribed && q !== undefined) pub.setVideoQuality(q);
-    }
-  }
-  toast(`Receiving ${qualitySelect.value === "auto" ? "adaptive quality" : qualitySelect.value + " layer"}`);
 });
 
 function stopStats(): void {

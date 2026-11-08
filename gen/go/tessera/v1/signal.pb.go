@@ -1266,14 +1266,16 @@ func (x *SimulcastCodec) GetCid() string {
 type AddTrackRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Client-side track id (MediaStreamTrack.id); matched with the SDP msid.
-	Cid             string            `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
-	Name            string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Type            TrackType         `protobuf:"varint,3,opt,name=type,proto3,enum=tessera.v1.TrackType" json:"type,omitempty"`
-	Width           uint32            `protobuf:"varint,4,opt,name=width,proto3" json:"width,omitempty"`
-	Height          uint32            `protobuf:"varint,5,opt,name=height,proto3" json:"height,omitempty"`
-	Muted           bool              `protobuf:"varint,6,opt,name=muted,proto3" json:"muted,omitempty"`
-	DisableDtx      bool              `protobuf:"varint,7,opt,name=disable_dtx,json=disableDtx,proto3" json:"disable_dtx,omitempty"`
-	Source          TrackSource       `protobuf:"varint,8,opt,name=source,proto3,enum=tessera.v1.TrackSource" json:"source,omitempty"`
+	Cid        string      `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
+	Name       string      `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Type       TrackType   `protobuf:"varint,3,opt,name=type,proto3,enum=tessera.v1.TrackType" json:"type,omitempty"`
+	Width      uint32      `protobuf:"varint,4,opt,name=width,proto3" json:"width,omitempty"`
+	Height     uint32      `protobuf:"varint,5,opt,name=height,proto3" json:"height,omitempty"`
+	Muted      bool        `protobuf:"varint,6,opt,name=muted,proto3" json:"muted,omitempty"`
+	DisableDtx bool        `protobuf:"varint,7,opt,name=disable_dtx,json=disableDtx,proto3" json:"disable_dtx,omitempty"`
+	Source     TrackSource `protobuf:"varint,8,opt,name=source,proto3,enum=tessera.v1.TrackSource" json:"source,omitempty"`
+	// Deprecated: one stream per track (ADR-0012). More than one layer, or any
+	// simulcast_codecs, is rejected.
 	Layers          []*VideoLayer     `protobuf:"bytes,9,rep,name=layers,proto3" json:"layers,omitempty"`
 	SimulcastCodecs []*SimulcastCodec `protobuf:"bytes,10,rep,name=simulcast_codecs,json=simulcastCodecs,proto3" json:"simulcast_codecs,omitempty"`
 	Stereo          bool              `protobuf:"varint,11,opt,name=stereo,proto3" json:"stereo,omitempty"`
@@ -1722,13 +1724,12 @@ type UpdateTrackSettings struct {
 	TrackSids []string               `protobuf:"bytes,1,rep,name=track_sids,json=trackSids,proto3" json:"track_sids,omitempty"`
 	// Pause the track without unsubscribing (e.g. element not visible).
 	Disabled bool `protobuf:"varint,2,opt,name=disabled,proto3" json:"disabled,omitempty"`
-	// Maximum desired quality. Ignored when width/height are set.
+	// Deprecated (one stream per track, ADR-0012): quality, width, height and fps are
+	// ignored, except quality OFF, which pauses the track like disabled.
 	Quality VideoQuality `protobuf:"varint,3,opt,name=quality,proto3,enum=tessera.v1.VideoQuality" json:"quality,omitempty"`
-	// Rendered size in device pixels; the server picks the closest layer.
-	Width  uint32 `protobuf:"varint,4,opt,name=width,proto3" json:"width,omitempty"`
-	Height uint32 `protobuf:"varint,5,opt,name=height,proto3" json:"height,omitempty"`
-	// Maximum desired frame rate (temporal layer selection).
-	Fps uint32 `protobuf:"varint,6,opt,name=fps,proto3" json:"fps,omitempty"`
+	Width   uint32       `protobuf:"varint,4,opt,name=width,proto3" json:"width,omitempty"`
+	Height  uint32       `protobuf:"varint,5,opt,name=height,proto3" json:"height,omitempty"`
+	Fps     uint32       `protobuf:"varint,6,opt,name=fps,proto3" json:"fps,omitempty"`
 	// Higher priority tracks get bandwidth first. 0 = default.
 	Priority      uint32 `protobuf:"varint,7,opt,name=priority,proto3" json:"priority,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1815,6 +1816,7 @@ func (x *UpdateTrackSettings) GetPriority() uint32 {
 }
 
 // UpdateVideoLayers updates the advertised layers of a published track.
+// Deprecated: ignored (one stream per track, ADR-0012).
 type UpdateVideoLayers struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TrackSid      string                 `protobuf:"bytes,1,opt,name=track_sid,json=trackSid,proto3" json:"track_sid,omitempty"`
@@ -2869,6 +2871,7 @@ func (x *SubscribedCodec) GetQualities() []*SubscribedQuality {
 }
 
 // SubscribedQualityUpdate (dynacast) tells a publisher which layers are needed.
+// Deprecated: no longer sent (one stream per track, ADR-0012).
 type SubscribedQualityUpdate struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	TrackSid            string                 `protobuf:"bytes,1,opt,name=track_sid,json=trackSid,proto3" json:"track_sid,omitempty"`

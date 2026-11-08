@@ -43,7 +43,7 @@ func TestPaddingNotInsertedAfterLateMarker(t *testing.T) {
 	buf := buffer.New(buffer.Config{Slots: 64, ClockRate: 90000, MimeType: webrtc.MimeTypeH264})
 	src := blockingSource{done: make(chan struct{})}
 	defer close(src.done)
-	if err := r.AddLayer(0, src, buf); err != nil {
+	if err := r.Start(src, buf); err != nil {
 		t.Fatal(err)
 	}
 	dt := NewDownTrack(DownTrackParams{SubscriberID: "PA_s", Receiver: r, TrackID: "TR_v", StreamID: "PA_p",
@@ -59,7 +59,7 @@ func TestPaddingNotInsertedAfterLateMarker(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := dt.WriteRTP(e, 0); err != nil {
+		if err := dt.WriteRTP(e); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -60,7 +60,6 @@ type Callbacks struct {
 	OnParticipantUpdate func(p []*tesserav1.ParticipantInfo)
 	OnSpeakersChanged   func(s []*tesserav1.SpeakerInfo)
 	OnStreamStateUpdate func(u *tesserav1.StreamStateUpdate)
-	OnSubscribedQuality func(u *tesserav1.SubscribedQualityUpdate)
 	OnConnectionQuality func(u *tesserav1.ConnectionQualityUpdate)
 	OnDataPacket        func(p *tesserav1.DataPacket)
 	OnReconnecting      func()
@@ -78,8 +77,6 @@ type Client interface {
 
 	// PublishTrack publishes a single-layer track.
 	PublishTrack(ctx context.Context, track webrtc.TrackLocal, opts PublishOptions) (*tesserav1.TrackInfo, error)
-	// PublishSimulcastTrack publishes one track with layers (each TrackLocal has RID q, h or f).
-	PublishSimulcastTrack(ctx context.Context, layers []webrtc.TrackLocal, opts PublishOptions) (*tesserav1.TrackInfo, error)
 	UnpublishTrack(ctx context.Context, trackSID string) error
 	SetTrackMuted(ctx context.Context, trackSID string, muted bool) error
 

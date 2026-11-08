@@ -3,8 +3,8 @@
 Tessera is a WebRTC SFU (Selective Forwarding Unit) media server written from scratch in Go. It
 records to HLS and comes with a Java server SDK and a TypeScript browser SDK.
 
-> **Status:** the SFU core (signaling, rooms, simulcast forwarding, NACK/PLI, RTCP, TWCC
-> bandwidth estimation, dynacast, speakers, ICE-TCP, embedded TURN), HLS recording, admin API,
+> **Status:** the SFU core (signaling, rooms, forwarding, NACK/PLI, RTCP, TWCC bandwidth
+> estimation, speakers, ICE-TCP, embedded TURN), HLS recording, admin API,
 > SDKs and dashboard are implemented; see [docs/PROGRESS.md](docs/PROGRESS.md) for the detailed
 > status and known gaps.
 
@@ -13,11 +13,13 @@ records to HLS and comes with a Java server SDK and a TypeScript browser SDK.
 - **SFU for many feeds per room**: many publishers and subscribers per room, two PeerConnections
   per participant, no glare.
 - **Browsers**: Chrome, Edge, Firefox and Safari (latest two versions).
-- **Codecs**: Opus (DTX, in-band FEC, optional RED), VP8 and H.264, with simulcast for both.
-- **Adaptive forwarding**: simulcast layer switching with RTP sequence-number, timestamp and
-  VP8 picture-id rewriting; NACK from per-track ring buffers; PLI/FIR throttling; RTCP SR/RR;
-  TWCC send-side bandwidth estimation driving per-subscriber layer allocation; dynacast;
-  active speaker detection.
+- **Codecs**: Opus (DTX, in-band FEC, optional RED) and H.264, one stream per track (no
+  simulcast, no VP8: [ADR-0012](docs/adr/0012-edge-tier-and-private-media-servers.md); the
+  `single-node` branch keeps both).
+- **Forwarding**: RTP sequence-number and timestamp rewriting across pauses; NACK from
+  per-track ring buffers; PLI/FIR throttling; RTCP SR/RR; TWCC send-side bandwidth estimation
+  pausing video that does not fit a subscriber (probing and trial resume to recover); active
+  speaker detection.
 - **Networking**: one UDP port for all media, ICE-TCP fallback, NAT 1:1, embedded TURN
   (UDP/TCP/TLS).
 - **Recording**: built into the server. Recorded tracks are read straight from the receive
@@ -64,7 +66,7 @@ With the compose stack running:
 ```bash
 # A join token for the dev key (the compose stack uses TESSERA_DEV_SECRET from deploy/.env)
 go run ./cmd/tessera create-token --room demo --identity alice
-# Synthetic load: 2 rooms x 4 publishers with 3-layer simulcast
+# Synthetic load: 2 rooms x 4 publishers, one 450 kbit/s H.264 stream each
 go run ./cmd/tessera-loadtest --url ws://localhost:7880 --secret devsecret-devsecret-devsecret-0000 \
   --rooms 2 --publishers 4 --duration 30s
 ```
@@ -91,7 +93,7 @@ See [sdk/java/README.md](sdk/java/README.md) for the exact API.
 |------|----------|-------|
 | `cmd/tessera` | SFU server binary | WP1 |
 | `cmd/tessera-loadtest` | Load generator | WP5 |
-| `pkg/rtc/...` | SFU engine: transports, receivers, downtracks, buffer, simulcast, bwe, speaker, turn | WP1 |
+| `pkg/rtc/...` | SFU engine: transports, receivers, downtracks, buffer, forward, bwe, speaker, turn | WP1 |
 | `pkg/room`, `pkg/signal`, `pkg/auth`, `pkg/config`, `pkg/client` | Rooms, WebSocket signaling, tokens, config, Go client | WP1 |
 | `pkg/admin`, `pkg/webhook` | Twirp admin API, webhooks | WP3 |
 | `pkg/hls`, `pkg/recorder`, `pkg/storage` | fMP4/HLS muxer, recording coordinator and worker, storage | WP4 |

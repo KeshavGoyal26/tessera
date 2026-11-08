@@ -122,73 +122,7 @@ const (
 	errShort   = parseError("rtp: packet too short")
 	errVersion = parseError("rtp: bad version")
 	errPadding = parseError("rtp: bad padding")
-	errVP8     = parseError("vp8: bad descriptor")
 )
-
-// ParseVP8 parses the VP8 payload descriptor (RFC 7741) of payload into d.
-func ParseVP8(payload []byte, d *VP8Descriptor) error {
-	*d = VP8Descriptor{}
-	if len(payload) < 1 {
-		return errVP8
-	}
-	d.FirstByte = payload[0]
-	x := payload[0]&0x80 != 0
-	s := payload[0]&0x10 != 0
-	pid := payload[0] & 0x07
-	i := 1
-	if x {
-		if len(payload) < 2 {
-			return errVP8
-		}
-		ext := payload[1]
-		i = 2
-		if ext&0x80 != 0 { // I
-			if len(payload) < i+1 {
-				return errVP8
-			}
-			d.PictureIDPresent = true
-			if payload[i]&0x80 != 0 {
-				if len(payload) < i+2 {
-					return errVP8
-				}
-				d.MBit = true
-				d.PictureID = uint16(payload[i]&0x7f)<<8 | uint16(payload[i+1])
-				i += 2
-			} else {
-				d.PictureID = uint16(payload[i])
-				i++
-			}
-		}
-		if ext&0x40 != 0 { // L
-			if len(payload) < i+1 {
-				return errVP8
-			}
-			d.TL0PICIDXPresent = true
-			d.TL0PICIDX = payload[i]
-			i++
-		}
-		if ext&0x20 != 0 || ext&0x10 != 0 { // T or K
-			if len(payload) < i+1 {
-				return errVP8
-			}
-			if ext&0x20 != 0 {
-				d.TIDPresent = true
-				d.TID = payload[i] >> 6
-				d.Y = payload[i]&0x20 != 0
-			}
-			if ext&0x10 != 0 {
-				d.KEYIDXPresent = true
-				d.KEYIDX = payload[i] & 0x1f
-			}
-			i++
-		}
-	}
-	d.HeaderSize = i
-	if s && pid == 0 && len(payload) > i {
-		d.IsKeyFrame = payload[i]&0x01 == 0
-	}
-	return nil
-}
 
 // IsH264KeyFrame reports whether an H.264 RTP payload (RFC 6184) starts or
 // contains a keyframe: an SPS (7), or an IDR slice (5) in a single NAL unit,

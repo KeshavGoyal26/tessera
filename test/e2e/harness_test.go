@@ -106,14 +106,14 @@ type synth struct {
 	stopped chan struct{}
 }
 
-// payload layout: [VP8 descriptor 1B][VP8 header byte][counter 4B][pattern 32B]
+// payload layout: [H.264 NAL header 1B, video only][counter 4B][pattern 32B]
 var pattern = []byte("tessera-e2e-payload-integrity-ok")
 
 func newSynth(t *testing.T, kind string, id string) *synth {
 	t.Helper()
 	cap := webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}
 	if kind == "video" {
-		cap = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}
+		cap = h264Cap
 	}
 	tr, err := webrtc.NewTrackLocalStaticRTP(cap, id, "stream-"+id)
 	if err != nil {
@@ -128,11 +128,11 @@ func (s *synth) packet() *rtp.Packet {
 	s.sn++
 	body := make([]byte, 0, 64)
 	if s.video {
-		hdr := byte(0x01)
+		nal := byte(0x41) // non-IDR slice
 		if s.n%30 == 1 {
-			hdr = 0x00 // keyframe
+			nal = 0x65 // IDR slice: a keyframe (no in-band SPS in this stream)
 		}
-		body = append(body, 0x10, hdr)
+		body = append(body, nal)
 		s.ts += 3000
 	} else {
 		s.ts += 960
@@ -168,7 +168,7 @@ func (s *synth) Stop() {
 func checkPayload(t *testing.T, video bool, payload []byte) (uint32, bool) {
 	off := 0
 	if video {
-		off = 2
+		off = 1
 	}
 	if len(payload) != off+4+len(pattern) || string(payload[off+4:]) != string(pattern) {
 		return 0, false

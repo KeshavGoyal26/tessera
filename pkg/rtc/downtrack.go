@@ -13,8 +13,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/bwe"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/simulcast"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc/forward"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
@@ -44,23 +43,25 @@ type TWCCSender struct {
 type DownTrackImpl struct {
 	p      DownTrackParams
 	r      *ReceiverImpl
-	fwd    *simulcast.Forwarder
-	isVP8  bool
+	fwd    *forward.Forwarder
 	mime   string
 	kind   webrtc.RTPCodecType
 	bound  atomic.Bool
 	closed atomic.Bool
 
-	mu     sync.Mutex // serialises writes from several layer goroutines
+	mu     sync.Mutex // serialises media writes with retransmissions and padding
 	writer webrtc.TrackLocalWriter
 	ssrc   uint32
 	pt     uint8
 	hdr    rtp.Header
-	pay    []byte
 	rtx    []byte
 	twccID uint8
 	twccB  [2]byte
 	prio   atomic.Uint32
+	// Forwarding stops while the subscriber disabled the track or the bandwidth
+	// allocator paused it (guarded by pauseMu).
+	pauseMu               sync.Mutex
+	disabled, allocPaused bool
 	// lastMarker: the last forwarded packet ended a frame, so padding can be
 	// inserted without splitting a frame (guarded by mu).
 	lastMarker bool
@@ -83,15 +84,13 @@ type DownTrackImpl struct {
 func NewDownTrack(p DownTrackParams) *DownTrackImpl {
 	c := p.Receiver.Codec()
 	d := &DownTrackImpl{
-		p: p, r: p.Receiver, fwd: simulcast.NewForwarder(c.MimeType),
-		isVP8: strings.EqualFold(c.MimeType, webrtc.MimeTypeVP8), mime: c.MimeType, kind: p.Receiver.Kind(),
-		pay: make([]byte, buffer.MaxPacketSize+8), rtx: make([]byte, buffer.MaxPacketSize),
+		p: p, r: p.Receiver, fwd: forward.NewForwarder(c.MimeType),
+		mime: c.MimeType, kind: p.Receiver.Kind(), rtx: make([]byte, buffer.MaxPacketSize),
 	}
 	if c.ClockRate != 0 {
 		d.fwd.SetClockRate(c.ClockRate)
 	}
 	d.prio.Store(p.Priority)
-	d.fwd.SetAvailableLayers(p.Receiver.MaxSpatial())
 	return d
 }
 
@@ -140,7 +139,7 @@ func (d *DownTrackImpl) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParam
 	d.mu.Unlock()
 	d.bound.Store(true)
 	if d.kind == webrtc.RTPCodecTypeVideo {
-		d.r.SendPLI(d.fwd.TargetLayer().Spatial, true)
+		d.r.SendPLI(true)
 	}
 	if d.onBind != nil {
 		go d.onBind()
@@ -188,29 +187,22 @@ func (d *DownTrackImpl) OnFirstPacket(f func()) { d.onFirst = f }
 func (d *DownTrackImpl) OnBind(f func()) { d.onBind = f }
 
 // WriteRTP implements DownTrack.
-func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket, layer int32) error {
+func (d *DownTrackImpl) WriteRTP(pkt *buffer.ExtPacket) error {
 	if !d.bound.Load() || d.closed.Load() {
 		return nil
 	}
-	tp, err := d.fwd.GetTranslation(pkt, layer)
+	tp, err := d.fwd.GetTranslation(pkt)
 	if err != nil {
 		return err
 	}
 	if tp.Drop {
 		if tp.RequestKeyFrame {
-			d.r.SendPLI(tp.KeyFrameLayer, false)
+			d.r.SendPLI(false)
 		}
 		return nil
 	}
-	if tp.IsSwitch && d.kind == webrtc.RTPCodecTypeVideo {
-		stats.LayerSwitches.Inc()
-	}
 	d.mu.Lock()
 	payload := pkt.Payload
-	if tp.HasVP8 {
-		n := simulcast.RewriteVP8(d.pay, pkt.Payload, &pkt.VP8, &tp.VP8)
-		payload = d.pay[:n]
-	}
 	if d.redStrip {
 		p, ok := redPrimary(payload)
 		if !ok {
@@ -299,39 +291,52 @@ func (d *DownTrackImpl) Priority() uint32 { return d.prio.Load() }
 // SetPriority sets the allocation priority.
 func (d *DownTrackImpl) SetPriority(p uint32) { d.prio.Store(p) }
 
-// Bitrates returns the publisher's measured layer bitrates.
-func (d *DownTrackImpl) Bitrates() types.Bitrates { return d.r.Bitrates() }
+// Bitrate returns the publisher's measured bitrate (bits per second).
+func (d *DownTrackImpl) Bitrate() int64 { return d.r.Bitrate() }
 
-// SetMaxLayer implements DownTrack.
-func (d *DownTrackImpl) SetMaxLayer(l types.VideoLayer) {
-	d.fwd.SetMaxLayer(l)
-	if d.bound.Load() && d.kind == webrtc.RTPCodecTypeVideo {
-		if t := d.fwd.TargetLayer(); t.IsValid() && t != d.fwd.CurrentLayer() {
-			d.r.SendPLI(t.Spatial, false)
-		}
+// SetDisabled implements DownTrack: the subscriber stops or resumes the track.
+func (d *DownTrackImpl) SetDisabled(disabled bool) {
+	d.pauseMu.Lock()
+	d.disabled = disabled
+	d.applyPausedLocked()
+	d.pauseMu.Unlock()
+}
+
+// Wanted reports whether the subscriber wants the track (the allocator only
+// spends bandwidth on wanted tracks).
+func (d *DownTrackImpl) Wanted() bool {
+	d.pauseMu.Lock()
+	defer d.pauseMu.Unlock()
+	return !d.disabled
+}
+
+// SetAllocPaused applies the bandwidth allocator's decision.
+func (d *DownTrackImpl) SetAllocPaused(paused bool) {
+	d.pauseMu.Lock()
+	d.allocPaused = paused
+	d.applyPausedLocked()
+	d.pauseMu.Unlock()
+}
+
+func (d *DownTrackImpl) applyPausedLocked() {
+	paused := d.disabled || d.allocPaused
+	if d.fwd.Paused() == paused {
+		return
+	}
+	d.fwd.SetPaused(paused)
+	if !paused && d.bound.Load() && d.kind == webrtc.RTPCodecTypeVideo {
+		d.r.SendPLI(false) // video resumes on a keyframe
 	}
 }
 
-// MaxLayer returns the subscriber preference.
-func (d *DownTrackImpl) MaxLayer() types.VideoLayer { return d.fwd.MaxLayer() }
-
-// SetTargetLayer implements DownTrack.
-func (d *DownTrackImpl) SetTargetLayer(l types.VideoLayer) { d.fwd.SetTargetLayer(l) }
-
-// TargetLayer returns the effective target layer.
-func (d *DownTrackImpl) TargetLayer() types.VideoLayer { return d.fwd.TargetLayer() }
-
-// CurrentLayer implements DownTrack.
-func (d *DownTrackImpl) CurrentLayer() types.VideoLayer { return d.fwd.CurrentLayer() }
-
-// Forwarder exposes the forwarder (tests, allocator).
-func (d *DownTrackImpl) Forwarder() *simulcast.Forwarder { return d.fwd }
+// Forwarder exposes the forwarder (tests).
+func (d *DownTrackImpl) Forwarder() *forward.Forwarder { return d.fwd }
 
 // Mute implements DownTrack.
 func (d *DownTrackImpl) Mute(muted bool) {
 	d.fwd.Mute(muted)
 	if !muted && d.kind == webrtc.RTPCodecTypeVideo {
-		d.r.SendPLI(d.fwd.TargetLayer().Spatial, true)
+		d.r.SendPLI(true)
 	}
 }
 
@@ -342,8 +347,8 @@ func (d *DownTrackImpl) HandleRTCP(pkts []rtcp.Packet) {
 		case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
 			d.plis.Inc()
 			stats.PLIsReceived.Inc()
-			if l := d.fwd.CurrentLayer(); l.IsValid() {
-				d.r.SendPLI(l.Spatial, false)
+			if d.fwd.Forwarding() {
+				d.r.SendPLI(false)
 			}
 		case *rtcp.TransportLayerNack:
 			d.nacks.Inc()
@@ -384,7 +389,7 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 	if !ok {
 		return
 	}
-	buf := d.r.Buffer(info.Layer)
+	buf := d.r.Buffer()
 	if buf == nil {
 		return
 	}
@@ -399,10 +404,6 @@ func (d *DownTrackImpl) retransmit(sn uint16) {
 		return
 	}
 	payload := e.Payload
-	if d.isVP8 && e.VP8.PictureIDPresent {
-		m := simulcast.RewriteVP8(d.pay, e.Payload, &e.VP8, &info.VP8)
-		payload = d.pay[:m]
-	}
 	if d.redStrip { // same as WriteRTP: a non-RED subscriber gets the primary Opus frame
 		p, ok := redPrimary(payload)
 		if !ok {
@@ -455,21 +456,13 @@ func redPrimary(b []byte) (primary []byte, ok bool) {
 func (d *DownTrackImpl) ReportedFractionLost() uint8 { return uint8(d.rrFraction.Load()) }
 
 // SenderReport returns an RTCP SR for this DownTrack derived from the
-// publisher's last SR of the current layer, translated through the
+// publisher's last SR, translated through the
 // timestamp offset. Called by the subscriber's RTCP ticker.
 func (d *DownTrackImpl) SenderReport() *rtcp.SenderReport {
 	if !d.bound.Load() {
 		return nil
 	}
-	l := d.fwd.CurrentLayer()
-	spatial := l.Spatial
-	if d.kind == webrtc.RTPCodecTypeAudio {
-		spatial = 0
-	}
-	if spatial < 0 {
-		return nil
-	}
-	ly := d.r.layers[spatial].Load()
+	ly := d.r.st.Load()
 	if ly == nil || ly.srArrival.Load() == 0 {
 		return nil
 	}
@@ -494,16 +487,17 @@ func (d *DownTrackImpl) SenderReport() *rtcp.SenderReport {
 
 // DownTrackStats are DownTrack statistics.
 type DownTrackStats struct {
-	BitrateBps                float64
-	Packets                   uint64
-	PacketsLost               uint64
-	FractionLost              float64
-	JitterMs                  float64
-	RTTMs                     float64
-	NACKs, PLIs, Retransmits  uint64
-	LayerSwitches             uint64
-	Current, Target, MaxLayer types.VideoLayer
-	Muted                     bool
+	BitrateBps               float64
+	Packets                  uint64
+	PacketsLost              uint64
+	FractionLost             float64
+	JitterMs                 float64
+	RTTMs                    float64
+	NACKs, PLIs, Retransmits uint64
+	// Restarts counts video (re)starts on a keyframe (start, resume, unmute).
+	Restarts uint64
+	Paused   bool
+	Muted    bool
 }
 
 // Stats returns DownTrack statistics.
@@ -517,7 +511,7 @@ func (d *DownTrackImpl) Stats(now time.Time) DownTrackStats {
 		BitrateBps: bps, Packets: d.meter.Packets(), PacketsLost: uint64(d.rrLost.Load()),
 		FractionLost: float64(d.rrFraction.Load()) * 100 / 256, JitterMs: float64(d.rrJitter.Load()) * 1000 / clock,
 		RTTMs: float64(d.rttMs.Load()), NACKs: d.nacks.Load(), PLIs: d.plis.Load(), Retransmits: d.retx.Load(),
-		LayerSwitches: d.fwd.Switches(), Current: d.fwd.CurrentLayer(), Target: d.fwd.TargetLayer(), MaxLayer: d.fwd.MaxLayer(),
+		Restarts: d.fwd.Restarts(), Paused: d.fwd.Paused(),
 		Muted: d.fwd.Muted(),
 	}
 }

@@ -1018,16 +1018,18 @@ func (x *VideoLayer) GetRid() string {
 type TrackInfo struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Server-assigned unique id, prefixed "TR_".
-	Sid        string        `protobuf:"bytes,1,opt,name=sid,proto3" json:"sid,omitempty"`
-	Type       TrackType     `protobuf:"varint,2,opt,name=type,proto3,enum=tessera.v1.TrackType" json:"type,omitempty"`
-	Name       string        `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Muted      bool          `protobuf:"varint,4,opt,name=muted,proto3" json:"muted,omitempty"`
-	Width      uint32        `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
-	Height     uint32        `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
-	Simulcast  bool          `protobuf:"varint,7,opt,name=simulcast,proto3" json:"simulcast,omitempty"`
-	DisableDtx bool          `protobuf:"varint,8,opt,name=disable_dtx,json=disableDtx,proto3" json:"disable_dtx,omitempty"`
-	Source     TrackSource   `protobuf:"varint,9,opt,name=source,proto3,enum=tessera.v1.TrackSource" json:"source,omitempty"`
-	Layers     []*VideoLayer `protobuf:"bytes,10,rep,name=layers,proto3" json:"layers,omitempty"`
+	Sid    string    `protobuf:"bytes,1,opt,name=sid,proto3" json:"sid,omitempty"`
+	Type   TrackType `protobuf:"varint,2,opt,name=type,proto3,enum=tessera.v1.TrackType" json:"type,omitempty"`
+	Name   string    `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Muted  bool      `protobuf:"varint,4,opt,name=muted,proto3" json:"muted,omitempty"`
+	Width  uint32    `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
+	Height uint32    `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
+	// Deprecated: always false (one stream per track, ADR-0012).
+	Simulcast  bool        `protobuf:"varint,7,opt,name=simulcast,proto3" json:"simulcast,omitempty"`
+	DisableDtx bool        `protobuf:"varint,8,opt,name=disable_dtx,json=disableDtx,proto3" json:"disable_dtx,omitempty"`
+	Source     TrackSource `protobuf:"varint,9,opt,name=source,proto3,enum=tessera.v1.TrackSource" json:"source,omitempty"`
+	// Deprecated: always empty (one stream per track, ADR-0012).
+	Layers []*VideoLayer `protobuf:"bytes,10,rep,name=layers,proto3" json:"layers,omitempty"`
 	// Negotiated codec MIME type, e.g. "video/H264".
 	MimeType string `protobuf:"bytes,11,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
 	// Transceiver mid on the publisher PeerConnection.

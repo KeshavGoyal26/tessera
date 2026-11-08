@@ -30,7 +30,7 @@ type dropperFactory struct{ d *dropper }
 func (f dropperFactory) NewInterceptor(string) (interceptor.Interceptor, error) { return f.d, nil }
 
 func (d *dropper) BindRemoteStream(info *interceptor.StreamInfo, r interceptor.RTPReader) interceptor.RTPReader {
-	if info.MimeType != "video/VP8" {
+	if info.MimeType != "video/H264" {
 		return r
 	}
 	return interceptor.RTPReaderFunc(func(b []byte, a interceptor.Attributes) (int, interceptor.Attributes, error) {

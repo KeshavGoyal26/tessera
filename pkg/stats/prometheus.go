@@ -1,8 +1,6 @@
 package stats
 
 import (
-	"strconv"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -16,7 +14,6 @@ var (
 	PLIsSent         Counter // PLIs sent to publishers
 	FIRsSent         Counter // FIRs sent to publishers
 	Retransmits      Counter // packets retransmitted to subscribers
-	LayerSwitches    Counter // simulcast layer switches
 	PaddingPackets   Counter // padding-only probe packets sent to subscribers
 	ProbesStarted    Counter // bandwidth probes started
 	ProbesSucceeded  Counter // bandwidth probes that raised the estimate
@@ -27,7 +24,7 @@ var (
 const ns = "tessera"
 
 // Collector exports a Provider's snapshots as Prometheus metrics. Labels are
-// restricted to small closed sets (kind, codec, quality, layer, direction,
+// restricted to small closed sets (kind, codec, quality, direction,
 // candidate type), never room, participant or track identifiers, so the
 // series count stays bounded regardless of load.
 type Collector struct {
@@ -36,7 +33,7 @@ type Collector struct {
 	cpu, rss, heap, goroutines, gcPause, gcCPU, pcs        *prometheus.Desc
 	udpPkts, udpBytes                                      *prometheus.Desc
 	rooms, participants, published, subscribed             *prometheus.Desc
-	pubBitrate, subBitrate, layerDist, paused, dynPaused   *prometheus.Desc
+	pubBitrate, subBitrate, paused                         *prometheus.Desc
 	quality, candidates, rtt, iceSetup, dtlsSetup, speaker *prometheus.Desc
 	counters                                               []counterDesc
 }
@@ -68,9 +65,7 @@ func NewCollector(p Provider) *Collector {
 		subscribed:   d("subscribed_tracks", "Subscribed tracks (DownTracks) by kind.", "kind"),
 		pubBitrate:   d("published_bitrate_bps", "Sum of ingress bitrate by kind.", "kind"),
 		subBitrate:   d("subscribed_bitrate_bps", "Sum of egress bitrate by kind.", "kind"),
-		layerDist:    d("subscribed_video_layer", "Video DownTracks by current spatial layer (none = paused/off).", "layer"),
-		paused:       d("subscribed_paused_tracks", "DownTracks paused by the bandwidth allocator."),
-		dynPaused:    d("subscribed_dynacast_paused_tracks", "DownTracks whose layer is disabled at the publisher."),
+		paused:       d("subscribed_paused_tracks", "DownTracks paused by the bandwidth allocator or the subscriber."),
 		quality:      d("connection_quality_participants", "Participants by connection quality.", "quality"),
 		candidates:   d("ice_candidate_participants", "Participants by selected ICE candidate type.", "type"),
 		rtt:          d("participant_rtt_ms_avg", "Average participant RTT."),
@@ -88,7 +83,6 @@ func NewCollector(p Provider) *Collector {
 		{"pli_sent_total", "PLIs sent to publishers.", &PLIsSent},
 		{"fir_sent_total", "FIRs sent to publishers.", &FIRsSent},
 		{"retransmits_total", "Packets retransmitted to subscribers.", &Retransmits},
-		{"layer_switches_total", "Simulcast layer switches.", &LayerSwitches},
 		{"padding_packets_total", "Padding-only probe packets sent to subscribers.", &PaddingPackets},
 		{"probes_started_total", "Bandwidth probes started.", &ProbesStarted},
 		{"probes_succeeded_total", "Bandwidth probes that raised the estimate.", &ProbesSucceeded},
@@ -131,10 +125,9 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	subs := map[string]float64{"audio": 0, "video": 0}
 	pubBR := map[string]float64{"audio": 0, "video": 0}
 	subBR := map[string]float64{"audio": 0, "video": 0}
-	layers := map[string]float64{"none": 0, "0": 0, "1": 0, "2": 0}
 	qual := map[string]float64{}
 	cands := map[string]float64{}
-	var paused, dyn, speakers float64
+	var paused, speakers float64
 	var rttSum, iceSum, dtlsSum, rttN, setupN float64
 	for i := range s.Rooms {
 		r := &s.Rooms[i]
@@ -167,16 +160,6 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				if t.Paused {
 					paused++
 				}
-				if t.DynacastPaused {
-					dyn++
-				}
-				if t.Kind == "video" {
-					if t.CurrentSpatial < 0 || t.CurrentSpatial > 2 {
-						layers["none"]++
-					} else {
-						layers[strconv.Itoa(int(t.CurrentSpatial))]++
-					}
-				}
 			}
 		}
 	}
@@ -195,9 +178,6 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	for k, v := range subBR {
 		g(c.subBitrate, v, k)
 	}
-	for k, v := range layers {
-		g(c.layerDist, v, k)
-	}
 	for k, v := range qual {
 		g(c.quality, v, k)
 	}
@@ -205,7 +185,6 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		g(c.candidates, v, k)
 	}
 	g(c.paused, paused)
-	g(c.dynPaused, dyn)
 	g(c.speaker, speakers)
 	g(c.rtt, avg(rttSum, rttN))
 	g(c.iceSetup, avg(iceSum, setupN))

@@ -56,7 +56,7 @@ export class LocalParticipant extends Participant {
     return this.#engine;
   }
 
-  /** Publishes a local track, with simulcast for camera video unless disabled. */
+  /** Publishes a local track (one stream per track). */
   publishTrack(track: LocalTrackType, options?: TrackPublishOptions): Promise<LocalTrackPublication> {
     return this.#need().publishTrack(track, options);
   }
@@ -127,7 +127,7 @@ export class LocalParticipant extends Participant {
     const track = new LocalTrack(v, TrackSource.ScreenShare);
     // The browser's "stop sharing" button ends the track.
     v.addEventListener("ended", () => void this.unpublishTrack(track, false).catch(() => undefined));
-    const pub = await engine.publishTrack(track, { simulcast: false, name: "screen" });
+    const pub = await engine.publishTrack(track, { name: "screen" });
     const a = stream.getAudioTracks()[0];
     if (a) {
       const at = new LocalTrack(a, TrackSource.ScreenShareAudio);

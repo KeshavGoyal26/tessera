@@ -148,15 +148,19 @@ type PublishedTrackStats struct {
 	// Kind: audio or video.
 	Kind string `json:"kind"`
 	// Source: camera, microphone, screen_share, screen_share_audio.
-	Source    string `json:"source"`
-	Codec     string `json:"codec"`
-	Muted     bool   `json:"muted"`
-	Simulcast bool   `json:"simulcast"`
-	// Layers: one entry for audio and single-layer video.
-	Layers      []LayerStats `json:"layers"`
-	BitrateBps  float64      `json:"bitrate_bps"`
-	PacketsRecv uint64       `json:"packets_recv"`
-	PacketsLost uint64       `json:"packets_lost"`
+	Source string `json:"source"`
+	Codec  string `json:"codec"`
+	Muted  bool   `json:"muted"`
+	// SSRC of the track's stream (one per track, no simulcast); 0 before media.
+	SSRC uint32 `json:"ssrc"`
+	// Width/Height announced by the publisher (video).
+	Width  uint32 `json:"width,omitempty"`
+	Height uint32 `json:"height,omitempty"`
+	// Active is false when no packet arrived in the last window.
+	Active      bool    `json:"active"`
+	BitrateBps  float64 `json:"bitrate_bps"`
+	PacketsRecv uint64  `json:"packets_recv"`
+	PacketsLost uint64  `json:"packets_lost"`
 	// LossPercent over the last window.
 	LossPercent float64 `json:"loss_percent"`
 	JitterMs    float64 `json:"jitter_ms"`
@@ -170,51 +174,28 @@ type PublishedTrackStats struct {
 	AudioLevel float64 `json:"audio_level,omitempty"`
 }
 
-// LayerStats describe one simulcast layer (spatial index 0..2).
-type LayerStats struct {
-	Spatial int32 `json:"spatial"`
-	// Quality: low, medium, high.
-	Quality    string  `json:"quality"`
-	RID        string  `json:"rid,omitempty"`
-	SSRC       uint32  `json:"ssrc"`
-	Width      uint32  `json:"width"`
-	Height     uint32  `json:"height"`
-	FPS        float64 `json:"fps"`
-	BitrateBps float64 `json:"bitrate_bps"`
-	// Active is false when no packet arrived in the last window (dynacast off).
-	Active bool `json:"active"`
-}
-
 // SubscribedTrackStats describe one DownTrack.
 type SubscribedTrackStats struct {
 	TrackSID     string `json:"track_sid"`
 	PublisherSID string `json:"publisher_sid"`
 	Kind         string `json:"kind"`
 	Codec        string `json:"codec"`
-	// CurrentSpatial/TargetSpatial: -1 = none (paused or not yet started).
-	CurrentSpatial  int32 `json:"current_spatial"`
-	CurrentTemporal int32 `json:"current_temporal"`
-	TargetSpatial   int32 `json:"target_spatial"`
-	TargetTemporal  int32 `json:"target_temporal"`
-	// MaxSpatial is the subscriber preference cap.
-	MaxSpatial int32 `json:"max_spatial"`
 	// BandwidthEstimateBps of the subscriber connection (same for all tracks).
 	BandwidthEstimateBps int64   `json:"bandwidth_estimate_bps"`
 	BitrateBps           float64 `json:"bitrate_bps"`
 	PacketsSent          uint64  `json:"packets_sent"`
 	// PacketsLost as reported by the subscriber's receiver reports.
-	PacketsLost   uint64  `json:"packets_lost"`
-	LossPercent   float64 `json:"loss_percent"`
-	JitterMs      float64 `json:"jitter_ms"`
-	RTTMs         float64 `json:"rtt_ms"`
-	LayerSwitches uint64  `json:"layer_switches"`
+	PacketsLost uint64  `json:"packets_lost"`
+	LossPercent float64 `json:"loss_percent"`
+	JitterMs    float64 `json:"jitter_ms"`
+	RTTMs       float64 `json:"rtt_ms"`
+	// Restarts counts video (re)starts on a keyframe (start, resume, unmute).
+	Restarts uint64 `json:"restarts"`
 	// NACKs/PLIs received from the subscriber; Retransmits sent in answer.
 	NACKs       uint64 `json:"nacks"`
 	PLIs        uint64 `json:"plis"`
 	Retransmits uint64 `json:"retransmits"`
-	// Paused by the allocator (bandwidth), DynacastPaused when the publisher
-	// layer is off, Muted by publisher or subscriber.
-	Paused         bool `json:"paused"`
-	DynacastPaused bool `json:"dynacast_paused"`
-	Muted          bool `json:"muted"`
+	// Paused by the allocator (bandwidth) or the subscriber; Muted by the publisher.
+	Paused bool `json:"paused"`
+	Muted  bool `json:"muted"`
 }

@@ -116,6 +116,8 @@ message AddTrackRequest {
   bool muted = 6;
   bool disable_dtx = 7;
   TrackSource source = 8;
+  // Deprecated: one stream per track (ADR-0012). More than one layer, or any
+  // simulcast_codecs, is rejected.
   repeated VideoLayer layers = 9;
   repeated SimulcastCodec simulcast_codecs = 10;
   bool stereo = 11;
@@ -165,18 +167,18 @@ message UpdateTrackSettings {
   repeated string track_sids = 1;
   // Pause the track without unsubscribing (e.g. element not visible).
   bool disabled = 2;
-  // Maximum desired quality. Ignored when width/height are set.
+  // Deprecated (one stream per track, ADR-0012): quality, width, height and fps are
+  // ignored, except quality OFF, which pauses the track like disabled.
   VideoQuality quality = 3;
-  // Rendered size in device pixels; the server picks the closest layer.
   uint32 width = 4;
   uint32 height = 5;
-  // Maximum desired frame rate (temporal layer selection).
   uint32 fps = 6;
   // Higher priority tracks get bandwidth first. 0 = default.
   uint32 priority = 7;
 }
 
 // UpdateVideoLayers updates the advertised layers of a published track.
+// Deprecated: ignored (one stream per track, ADR-0012).
 message UpdateVideoLayers {
   string track_sid = 1;
   repeated VideoLayer layers = 2;
@@ -331,6 +333,7 @@ message SubscribedCodec {
 }
 
 // SubscribedQualityUpdate (dynacast) tells a publisher which layers are needed.
+// Deprecated: no longer sent (one stream per track, ADR-0012).
 message SubscribedQualityUpdate {
   string track_sid = 1;
   repeated SubscribedQuality subscribed_qualities = 2;

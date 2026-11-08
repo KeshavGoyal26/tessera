@@ -209,7 +209,7 @@ func Default() *Config {
 			SocketBufferSize:  25 << 20,
 			PLIThrottle:       500 * time.Millisecond,
 			CongestionControl: CongestionControlConfig{Enabled: true, AllowPause: true, Probe: true},
-			EnabledCodecs:     []string{"audio/opus", "audio/red", "video/VP8", "video/H264"},
+			EnabledCodecs:     []string{"audio/opus", "audio/red", "video/H264"},
 		},
 		TURN: TURNConfig{UDPPort: 3478, TCPPort: 3478, CredentialTTL: 24 * time.Hour},
 		Room: RoomConfig{AutoCreate: true, EmptyTimeout: 5 * time.Minute, DepartureTimeout: 20 * time.Second},

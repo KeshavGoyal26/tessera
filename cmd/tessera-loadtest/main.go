@@ -3,11 +3,11 @@
 // loss, forwarding latency and throughput (ARCHITECTURE.md 9).
 //
 //	tessera-loadtest --url ws://localhost:7880 --api-key devkey --secret ... \
-//	  --rooms 10 --publishers 10 --subscribers 0 --duration 2m --video-layers 3
+//	  --rooms 10 --publishers 10 --subscribers 0 --duration 2m --video-kbps 450
 //
-// Every publisher sends Opus (20 ms, ~32 kbit/s) and, unless --audio-only,
-// one VP8 track with --video-layers simulcast layers (~150/500/1200 kbit/s,
-// keyframe every 2 s). Each payload carries the send time, so receivers
+// Every publisher sends Opus (20 ms, ~32 kbit/s) and, unless --audio-only, one
+// H.264 video stream of --video-kbps (default 450, about 360p; no simulcast,
+// ADR-0012) with an IDR frame every 2 s. Each payload carries the send time, so receivers
 // measure one-way latency (meaningful when the load tester and server share
 // a clock, e.g. the same host). Publishers subscribe to each other (meeting);
 // --subscribers adds listen-only participants (webinar).
@@ -25,8 +25,6 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,7 +36,6 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
 )
 
 // Params of a load test run.
@@ -50,7 +47,6 @@ type Params struct {
 	Publishers   int
 	Subscribers  int
 	AudioOnly    bool
-	VideoLayers  int
 	Duration     time.Duration
 	RampUp       time.Duration
 	ReportPeriod time.Duration
@@ -59,9 +55,8 @@ type Params struct {
 	// PublishOnly makes publishers not subscribe to anyone (publisher
 	// tokens get can_subscribe=false), so only listen-only participants receive.
 	PublishOnly bool
-	// VideoKbps overrides the synthetic per-layer video bitrates (low to high,
-	// comma separated, e.g. "150,600,2000"); empty keeps the built-in sizes.
-	VideoKbps string
+	// VideoKbps is the synthetic video bitrate.
+	VideoKbps int
 }
 
 func main() {
@@ -73,14 +68,13 @@ func main() {
 	flag.IntVar(&p.Publishers, "publishers", 1, "publishers per room")
 	flag.IntVar(&p.Subscribers, "subscribers", 0, "listen-only subscribers per room")
 	flag.BoolVar(&p.AudioOnly, "audio-only", false, "publish audio only")
-	flag.IntVar(&p.VideoLayers, "video-layers", 3, "simulcast layers per video track (1-3)")
 	flag.DurationVar(&p.Duration, "duration", time.Minute, "test duration after ramp-up")
 	flag.DurationVar(&p.RampUp, "ramp-up", 10*time.Second, "time to connect all clients")
 	flag.DurationVar(&p.ReportPeriod, "report", 5*time.Second, "stats report period")
 	flag.StringVar(&p.JSON, "json", "", "write the final report as JSON to this file")
 	flag.BoolVar(&p.Loopback, "loopback", false, "restrict ICE to 127.0.0.1 (server with rtc.ips: [127.0.0.1])")
 	flag.BoolVar(&p.PublishOnly, "publish-only", false, "publishers do not subscribe (only --subscribers receive media)")
-	flag.StringVar(&p.VideoKbps, "video-kbps", "", "per-layer video bitrate in kbit/s, low to high (e.g. 150,600,2000); default ~90/290/530")
+	flag.IntVar(&p.VideoKbps, "video-kbps", 450, "video bitrate in kbit/s (one H.264 stream)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -139,8 +133,8 @@ func run(ctx context.Context, p Params) error {
 	if p.Secret == "" {
 		return errs.New(errs.CodeInvalidArgument, "--secret is required")
 	}
-	if p.VideoLayers < 1 || p.VideoLayers > 3 {
-		return errs.New(errs.CodeInvalidArgument, "--video-layers must be 1..3")
+	if p.VideoKbps <= 0 {
+		return errs.New(errs.CodeInvalidArgument, "--video-kbps must be positive")
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	col := &collector{}
@@ -297,44 +291,17 @@ func publish(runCtx, ctx context.Context, c client.Client, id string, p Params) 
 	if p.AudioOnly {
 		return nil
 	}
-	rids := []string{"q", "h", "f"}[3-p.VideoLayers:]
-	sizes := []int{180, 600, 1100}[3-p.VideoLayers:]
-	pkts := []int{2, 2, 2}[3-p.VideoLayers:]
-	if p.VideoKbps != "" {
-		kb := strings.Split(p.VideoKbps, ",")
-		if len(kb) != p.VideoLayers {
-			return fmt.Errorf("--video-kbps needs %d values", p.VideoLayers)
-		}
-		for i, v := range kb {
-			rate, err := strconv.Atoi(strings.TrimSpace(v))
-			if err != nil || rate <= 0 {
-				return fmt.Errorf("bad --video-kbps value %q", v)
-			}
-			frame := rate * 1000 / 8 / 30 // bytes per frame at 30 fps
-			pkts[i] = (frame + 1099) / 1100
-			sizes[i] = frame / pkts[i]
-		}
-	}
-	var tracks []*webrtc.TrackLocalStaticRTP
-	var locals []webrtc.TrackLocal
-	for _, rid := range rids {
-		var opt []func(*webrtc.TrackLocalStaticRTP)
-		if p.VideoLayers > 1 {
-			opt = append(opt, webrtc.WithRTPStreamID(rid))
-		}
-		t, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, id+"-cam", id, opt...)
-		if err != nil {
-			return err
-		}
-		tracks = append(tracks, t)
-		locals = append(locals, t)
-	}
-	if _, err := c.PublishSimulcastTrack(ctx, locals, client.PublishOptions{Name: "cam", Width: 1280, Height: 720}); err != nil {
+	frame := p.VideoKbps * 1000 / 8 / 30 // bytes per frame at 30 fps
+	pkts := (frame + 1099) / 1100
+	cam, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000,
+		SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"}, id+"-cam", id)
+	if err != nil {
 		return err
 	}
-	for i, t := range tracks {
-		go sendVideo(runCtx, t, sizes[i], pkts[i])
+	if _, err := c.PublishTrack(ctx, cam, client.PublishOptions{Name: "cam", Width: 640, Height: 360}); err != nil {
+		return err
 	}
+	go sendVideo(runCtx, cam, max(frame/pkts, 12), pkts)
 	return nil
 }
 
@@ -360,14 +327,13 @@ func sendAudio(ctx context.Context, t *webrtc.TrackLocalStaticRTP) {
 	}
 }
 
-// sendVideo sends 30 fps VP8 frames of perFrame packets of size bytes, with a
-// 15-bit picture id, TL0PICIDX and a keyframe every 2 s.
+// sendVideo sends 30 fps H.264 frames of perFrame single-NAL packets of size bytes,
+// with an IDR frame every 2 s. The payload is synthetic: only the NAL header is real.
 func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size, perFrame int) {
 	tk := time.NewTicker(33 * time.Millisecond)
 	defer tk.Stop()
-	var sn, pid uint16
+	var sn uint16
 	var ts uint32
-	var tl0 uint8
 	frame := 0
 	payload := make([]byte, size)
 	for {
@@ -375,25 +341,17 @@ func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size, perFram
 		case <-ctx.Done():
 			return
 		case <-tk.C:
-			key := frame%60 == 0
 			for i := range perFrame {
-				s := byte(0)
-				if i == 0 {
-					s = 0x10
+				payload[0] = 0x41 // non-IDR slice
+				if frame%60 == 0 {
+					payload[0] = 0x65 // IDR slice
 				}
-				hdr := byte(0x01)
-				if key {
-					hdr = 0x00
-				}
-				copy(payload, []byte{0x80 | s, 0xC0, 0x80 | byte(pid>>8), byte(pid), tl0, hdr})
-				stamp(payload[6:])
+				stamp(payload[1:])
 				_ = t.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: sn, Timestamp: ts, Marker: i == perFrame-1}, Payload: payload})
 				sn++
 			}
 			frame++
 			ts += 3000
-			pid = (pid + 1) & 0x7fff
-			tl0++
 		}
 	}
 }
@@ -401,11 +359,10 @@ func sendVideo(ctx context.Context, t *webrtc.TrackLocalStaticRTP, size, perFram
 // receive reads a remote track, counting packets, SN-gap loss and latency.
 func receive(rt *client.RemoteTrack, col *collector, onFirst func()) {
 	buf := make([]byte, 1500)
-	video := rt.Codec().MimeType == webrtc.MimeTypeVP8
+	video := rt.Codec().MimeType == webrtc.MimeTypeH264
 	var last uint16
 	started := false
 	var p rtp.Packet
-	var d buffer.VP8Descriptor
 	for {
 		n, err := rt.Read(buf)
 		if err != nil {
@@ -429,10 +386,10 @@ func receive(rt *client.RemoteTrack, col *collector, onFirst func()) {
 		}
 		pl := p.Payload
 		if video {
-			if buffer.ParseVP8(pl, &d) != nil || len(pl) < d.HeaderSize+11 {
+			if len(pl) < 11 {
 				continue
 			}
-			pl = pl[d.HeaderSize+1:]
+			pl = pl[1:] // after the NAL header
 		}
 		if len(pl) >= 10 && pl[0] == magic[0] && pl[1] == magic[1] {
 			sent := int64(binary.BigEndian.Uint64(pl[2:]))

@@ -39,7 +39,7 @@ The page has two fields, your name (pre-filled with a random `Guest-NNNN`) and t
 - **Watch** opens the viewer: a live list of presenters (with camera, mic, screen and REC state) and
   a stage. The first presenter is shown straight away; click others in the list to add them, or
   **Watch all**. Each tile has its own mute and ✕. Presenters you are not watching cost no
-  bandwidth, and each tile gets the simulcast layer that fits its size.
+  bandwidth; every tile receives the presenter's one 360p stream (no simulcast, ADR-0012).
 
 Everyone lands in `room1` unless they type another room (or open `?room=<name>`).
 `?url=ws://host:7880` points the page at another server.
@@ -54,14 +54,15 @@ both presenters are in the list, A with a **REC** marker. Click B to add it besi
 **Watch all** to bring it back. Mute one tile. Press **Screen** in B: C gets a separate
 "(screen)" tile. Say: each presenter uploads once, the SFU sends each viewer only what they watch.
 
-**1:45 Quality (30 s).** Tiles start at 720p within a few seconds: the server probes for spare
-bandwidth before stepping a viewer up a simulcast layer, so there is no blurry warm-up.
+**1:45 Quality (30 s).** Every tile shows the presenter's 360p stream from the first frame. On a
+link too slow for all tiles the server pauses the lowest-priority ones instead of lowering
+quality, and resumes them when the link recovers.
 
 **2:15 Dashboard (90 s).** Switch to the dashboard tab.
 1. *Overview*: CPU, bandwidth, packets, and the room and participant counts.
 2. *Rooms*: expand `room1` → presenter → tracks.
-3. *Track quality*: select A's video. Per-layer bitrate, fps, resolution, loss, and each
-   subscriber's current and target layer.
+3. *Track quality*: select A's video. Bitrate, resolution, loss, and each subscriber's
+   bandwidth estimate and paused state.
 4. *Connectivity*: ICE candidate types, RTT.
 
 **3:45 Recording (45 s).** Press **End** in A. In the dashboard open *Recordings*: A's recording is

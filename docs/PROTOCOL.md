@@ -72,7 +72,7 @@ sequenceDiagram
   Note over C: create subscriber PC (and publisher PC if fast_publish)
   S-->>C: offer (target SUBSCRIBER), id=1  [only if there are tracks to subscribe, or data channels]
   C->>S: answer (SUBSCRIBER), id=1
-  C->>S: add_track(cid, type, layers...) request_id=7
+  C->>S: add_track(cid, type, width, height) request_id=7
   S-->>C: track_published(cid, TrackInfo{sid})
   C->>S: offer (PUBLISHER), id=1
   S-->>C: answer (PUBLISHER), id=1
@@ -90,8 +90,11 @@ Rules:
    track. The server matches the SDP `msid` track id with `cid`. Unmatched tracks in an
    offer are rejected (`RequestResponse{REASON_INVALID}`) and their transceivers set
    inactive in the answer.
-3. Simulcast layers are described by `AddTrackRequest.layers` (`rid` q/h/f with expected
-   resolutions). The server confirms in `TrackInfo.layers` once SSRCs are known.
+3. One stream per track: video is H.264, audio Opus (or RED around Opus). Simulcast is not
+   supported (ADR-0012): `add_track` with more than one entry in `layers` (or with
+   `simulcast_codecs`) is rejected with `REASON_INVALID`, and the server negotiates no RID
+   header extensions, so a browser publishes a single stream. `TrackInfo.layers` and
+   `TrackInfo.simulcast` stay empty.
 4. `SessionDescription.id` is a per-PC counter set by the offerer; answers echo it. A stale
    answer (id lower than the latest offer) is ignored.
 5. Candidates may be trickled before the remote description is set; both sides queue them.
@@ -109,13 +112,15 @@ Rules:
 
 - With `auto_subscribe=1`, the server subscribes the participant to every track it is allowed
   to see. Otherwise the client uses `subscription{track_sids, subscribe=true}`.
-- `track_setting` carries the subscriber's preferences per track: `disabled` (pause without
-  unsubscribing), `quality` or `width`/`height` (the server picks the smallest layer whose
-  size is ≥ the requested size), `fps` (temporal layer cap) and `priority`.
-- The server may pause video when bandwidth is insufficient and tells the subscriber with
-  `stream_state_update{PAUSED}`; it resumes with `ACTIVE`.
-- Dynacast: the server sends the **publisher** `subscribed_quality_update` listing which
-  layers anyone needs; the publisher should set `encodings[i].active` accordingly.
+- `track_setting` carries the subscriber's preferences per track: `disabled` (or `quality`
+  OFF) pauses the track without unsubscribing, and `priority` orders bandwidth allocation.
+  `quality` (other than OFF), `width`/`height` and `fps` are ignored: each track has one
+  stream.
+- The server pauses video that does not fit the subscriber's bandwidth, in priority order,
+  and tells the subscriber with `stream_state_update{PAUSED}`; it resumes with `ACTIVE`.
+  When every wanted video is paused, it resumes one on trial after a back-off (5 s,
+  doubling to 60 s) so its own traffic measures the link.
+- `subscribed_quality_update` (dynacast) and `update_layers` are no longer sent or handled.
 - `subscription_response` reports failures (`TRACK_NOT_FOUND`, `PERMISSION_DENIED`,
   `CODEC_UNSUPPORTED`).
 
@@ -127,7 +132,6 @@ Rules:
 | `mute` | S→C | Admin muted one of the client's tracks; client must mute locally. |
 | `unpublish_track` | C→S | Remove a published track; the client also removes the transceiver in its next offer. |
 | `track_unpublished` | S→C | Server (admin) unpublished one of the client's tracks. |
-| `update_layers` | C→S | Publisher changed simulcast layer configuration. |
 | `update_metadata` | C→S | Requires `can_update_own_metadata`. |
 | `speakers_changed` | S→C | Active speaker changes (only changed entries; `active=false` when someone stops). |
 | `connection_quality` | S→C | Every 5 s, changed entries only, for self and others. |

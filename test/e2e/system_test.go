@@ -25,10 +25,11 @@ import (
 )
 
 // TestFullSystem (WP5): one server, 3 publishers (one H.264 + Opus camera
-// that is recorded to HLS, two VP8 3-layer simulcast + Opus), 5 subscribers
-// of which one sits behind a 1.2 Mbit/s policed link. Asserts that every
-// subscriber receives every track, that the constrained subscriber is moved
-// off the top simulcast layer, and that the recording is valid HLS (ffprobe).
+// that is recorded to HLS, two synthetic ~880 kbit/s H.264 streams + Opus), 5
+// subscribers of which one sits behind a 1.2 Mbit/s policed link. Asserts that
+// every subscriber receives every track, that the constrained subscriber has a
+// video paused (one stream per track: no lower layer to fall back to), and that
+// the recording is valid HLS (ffprobe).
 func TestFullSystem(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full-system test")
@@ -116,16 +117,12 @@ func TestFullSystem(t *testing.T) {
 		}()
 	}
 
-	// Publishers 2 and 3: VP8 simulcast (~120k / ~390k / ~880k bit/s) + Opus.
+	// Publishers 2 and 3: one ~880 kbit/s H.264 stream + Opus each.
 	var simTracks []string
 	for i := range 2 {
 		c := connect(t, s, roomName, fmt.Sprintf("pub-sim%d", i))
-		layers := newSimLayers(t, fmt.Sprintf("cam%d", i))
-		for j, pad := range []int{140, 480, 1080} {
-			layers[j].pad = pad
-		}
-		info, err := c.PublishSimulcastTrack(ctx, []webrtc.TrackLocal{layers[0].track, layers[1].track, layers[2].track},
-			client.PublishOptions{Name: "cam", Width: 1280, Height: 720})
+		v := newVideoStream(t, fmt.Sprintf("cam%d", i), 1080)
+		info, err := c.PublishTrack(ctx, v.track, client.PublishOptions{Name: "cam", Width: 1280, Height: 720})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,9 +143,7 @@ func TestFullSystem(t *testing.T) {
 				case <-stop:
 					return
 				case <-tk.C:
-					for _, l := range layers {
-						l.writeFrame()
-					}
+					v.writeFrame()
 				}
 			}
 		}()
@@ -215,7 +210,7 @@ func TestFullSystem(t *testing.T) {
 		}
 	}
 
-	// The capped subscriber is moved off the top layer on at least one simulcast track.
+	// The capped subscriber cannot take both 880 kbit/s streams: one is paused.
 	deadline = time.Now().Add(20 * time.Second)
 	for {
 		var below int
@@ -225,7 +220,7 @@ func TestFullSystem(t *testing.T) {
 			}
 			for _, st := range p.Subscribed {
 				for _, sid := range simTracks {
-					if st.TrackSID == sid && st.CurrentSpatial >= 0 && st.CurrentSpatial < 2 {
+					if st.TrackSID == sid && st.Paused {
 						below++
 					}
 				}
@@ -235,7 +230,7 @@ func TestFullSystem(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("capped subscriber never downgraded")
+			t.Fatal("capped subscriber never paused a video it cannot carry")
 		}
 		time.Sleep(250 * time.Millisecond)
 	}

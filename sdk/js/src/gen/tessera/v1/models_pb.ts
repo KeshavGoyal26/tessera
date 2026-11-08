@@ -444,6 +444,8 @@ export type TrackInfo = Message<"tessera.v1.TrackInfo"> & {
   height: number;
 
   /**
+   * Deprecated: always false (one stream per track, ADR-0012).
+   *
    * @generated from field: bool simulcast = 7;
    */
   simulcast: boolean;
@@ -459,6 +461,8 @@ export type TrackInfo = Message<"tessera.v1.TrackInfo"> & {
   source: TrackSource;
 
   /**
+   * Deprecated: always empty (one stream per track, ADR-0012).
+   *
    * @generated from field: repeated tessera.v1.VideoLayer layers = 10;
    */
   layers: VideoLayer[];

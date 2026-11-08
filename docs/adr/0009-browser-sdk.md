@@ -1,5 +1,8 @@
 # ADR-0009: TypeScript browser SDK
 
+> **Amended 2026-11-08 (ADR-0012):** simulcast, dynacast and adaptive stream are removed from the
+> SDK on `main`: it publishes one H.264 stream per track (default 360p) and subscribes on demand.
+
 - Status: accepted
 - Date: 2026-11-04
 - Deciders: Tessera maintainers

@@ -11,8 +11,7 @@ and no second WebRTC session: about half the per-presenter CPU of the old design
    (`pkg/recorder`, status `STARTING`).
 2. The in-server worker claims the job from the Coordinator. `LocalConnector` attaches a
    DownTrack to each wanted track's receiver, bound to an in-memory queue instead of a
-   PeerConnection (layer selection, keyframe requests and RED stripping as for any
-   subscriber). The forwarding path never blocks on it: a full queue drops packets and the
+   PeerConnection (keyframe requests and RED stripping as for any subscriber). The forwarding path never blocks on it: a full queue drops packets and the
    recorder waits for the next keyframe.
 3. For every subscribed track that matches the target (`TrackRecordingTarget` or
    `ParticipantRecordingTarget`) a per-track pipeline runs:
@@ -62,11 +61,9 @@ after the target. Segments are always uploaded before the playlist that lists th
   that moves backwards starts a new segment marked `EXT-X-DISCONTINUITY`.
 - SPS/PPS change (resolution switch): the muxer cuts, writes `init_N.mp4` and marks a
   discontinuity.
-- Simulcast: the recorder records the highest layer the publisher is sending. When the
-  publisher pauses its top layer (short uplink, e.g. 720p dropped below ~1 Mbit/s) the
-  recorder moves down within about 2 s, and back up once the higher layer has arrived for 5 s.
-  Each move is a resolution change (above). Without this the video stopped until the top layer
-  returned (measured: 37% of a 22-minute throttled session recorded; now 96%).
+- One stream per track (no simulcast, ADR-0012): the recording is the stream viewers see.
+  When a short uplink makes the publisher's encoder lower its resolution, that is a resolution
+  change (above).
 - Assumes no B-frames (WebRTC H.264), so DTS = PTS and `ctts` offsets are 0.
 - Crash (kill -9, OOM, power loss): media up to the last uploaded segment is in storage, but the
   playlists are still live and there is no master. A crash journal in `temp_dir/journal` (last
@@ -82,11 +79,11 @@ after the target. Segments are always uploaded before the playlist that lists th
 | H.264 | H.264 | pure Go remux, **no FFmpeg** (asserted by `TestH264PathNeverSpawnsFFmpeg`) |
 | Opus | Opus (`Opus` + `dOps`) | pure Go remux, default |
 | Opus | AAC-LC 48 kHz stereo | `hls.audio_codec: aac` or `HLSOptions.audio_codec = AAC`; FFmpeg subprocess per track (Ogg Opus on stdin, ADTS on stdout) |
-| VP8 / other video | refused | not transcoded: the track is skipped and the recording fails with "recording needs H.264 video". Recorded participants are offered H.264 first, so SDKs publish it by default. |
+| other video | refused | not transcoded: the track is skipped and the recording fails with "recording needs H.264 video". The server negotiates only H.264 for video, so this happens only with a custom client. |
 
 AAC tracks reserve an extra capacity unit on the worker (remux: 0 beyond
 the job's own cost) so a worker does not over-admit CPU-heavy jobs. FFmpeg is needed only for
-AAC mode (on `PATH` or `ffmpeg_path`). VP9/AV1 are refused like VP8 (`track_errors` increases and
+AAC mode (on `PATH` or `ffmpeg_path`). VP8/VP9/AV1 are refused (`track_errors` increases and
 the recording fails with the reason).
 
 ## Browser and player compatibility (verified facts and open items)

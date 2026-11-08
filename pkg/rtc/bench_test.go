@@ -52,9 +52,8 @@ func (w *srtpWriter) Write(b []byte) (int, error) { return len(b), nil }
 
 func benchReceiver(tb testing.TB) (*ReceiverImpl, *buffer.Buffer) {
 	r := NewReceiver(ReceiverParams{TrackID: "TR_x", StreamID: "PA_x", Kind: webrtc.RTPCodecTypeVideo,
-		Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}}})
-	r.maxL.Store(0)
-	buf := buffer.New(buffer.Config{Slots: 500, ClockRate: 90000, MimeType: webrtc.MimeTypeVP8})
+		Codec: webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}}})
+	buf := buffer.New(buffer.Config{Slots: 500, ClockRate: 90000, MimeType: webrtc.MimeTypeH264})
 	tb.Cleanup(buf.Release)
 	return r, buf
 }
@@ -68,29 +67,30 @@ func boundDownTrack(tb testing.TB, r *ReceiverImpl, id string) *DownTrackImpl {
 	return d
 }
 
-// vp8Packet returns a ~1000 byte VP8 packet with a 15-bit picture id.
-func vp8Packet(sn uint16, key bool) []byte {
-	first := byte(0x01)
+// h264Packet returns a ~1000 byte H.264 packet: an IDR slice (a keyframe start for a
+// stream without in-band SPS) or a non-IDR slice.
+func h264Packet(sn uint16, key bool) []byte {
+	nal := byte(0x41)
 	if key {
-		first = 0x00
+		nal = 0x65
 	}
-	payload := append([]byte{0x90, 0x80, 0x80, byte(sn), first}, make([]byte, 1000)...)
-	p := rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 96, SequenceNumber: sn, Timestamp: uint32(sn) * 3000, SSRC: 1}, Payload: payload}
+	payload := append([]byte{nal}, make([]byte, 1000)...)
+	p := rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 102, SequenceNumber: sn, Timestamp: uint32(sn) * 3000, SSRC: 1}, Payload: payload}
 	b, _ := p.Marshal()
 	return b
 }
 
-// BenchmarkDownTrackWriteRTP measures munging + VP8 rewrite + header
+// BenchmarkDownTrackWriteRTP measures munging + header
 // marshal + SRTP encryption for one subscriber.
 func BenchmarkDownTrackWriteRTP(b *testing.B) {
 	r, buf := benchReceiver(b)
 	d := boundDownTrack(b, r, "s")
-	raw := vp8Packet(0, true)
+	raw := h264Packet(0, true)
 	ext, err := buf.Write(raw, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
-	if err := d.WriteRTP(ext, 0); err != nil {
+	if err := d.WriteRTP(ext); err != nil {
 		b.Fatal(err)
 	}
 	ext.KeyFrame = false
@@ -99,7 +99,7 @@ func BenchmarkDownTrackWriteRTP(b *testing.B) {
 	for b.Loop() {
 		ext.ExtSequenceNumber++
 		ext.ExtTimestamp += 3000
-		if err := d.WriteRTP(ext, 0); err != nil {
+		if err := d.WriteRTP(ext); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -126,7 +126,7 @@ func BenchmarkReceiverFanout(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			pkts := [2][]byte{vp8Packet(0, true), vp8Packet(0, false)}
+			pkts := [2][]byte{h264Packet(0, true), h264Packet(0, false)}
 			sn := uint16(0)
 			write := func(key bool) {
 				p := pkts[1]
@@ -139,7 +139,7 @@ func BenchmarkReceiverFanout(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				r.fanout(ext, 0)
+				r.fanout(ext)
 			}
 			write(true)
 			b.ReportAllocs()
@@ -162,9 +162,9 @@ func TestForwardingDoesNotAllocate(t *testing.T) {
 		}
 	}
 	sn := uint16(0)
-	ext, _ := buf.Write(vp8Packet(sn, true), 0)
-	r.fanout(ext, 0)
-	p := vp8Packet(0, false)
+	ext, _ := buf.Write(h264Packet(sn, true), 0)
+	r.fanout(ext)
+	p := h264Packet(0, false)
 	allocs := testing.AllocsPerRun(500, func() {
 		sn++
 		p[2], p[3] = byte(sn>>8), byte(sn)
@@ -172,7 +172,7 @@ func TestForwardingDoesNotAllocate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.fanout(e, 0)
+		r.fanout(e)
 	})
 	if allocs > 0 {
 		t.Fatalf("forwarding allocates %v per packet", allocs)

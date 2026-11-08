@@ -67,7 +67,7 @@ async function join(role: Role): Promise<void> {
   for (const b of buttons) b.disabled = true;
   // Nobody auto-subscribes: presenters cannot subscribe, viewers choose.
   // H.264: recordings are never transcoded, so a presenter recorded later (dashboard "Record") must send it.
-  const r = new Room({ adaptiveStream: true, dynacast: true, autoSubscribe: false, videoCodec: "video/H264" });
+  const r = new Room({ autoSubscribe: false });
   try {
     await r.connect(serverUrl, await fetchToken(name, role, field("record").checked));
     room = r;

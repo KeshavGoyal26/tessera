@@ -1,7 +1,7 @@
 // Package rtc is the SFU engine: PeerConnection transports, Receivers
 // (published tracks) and DownTracks (subscriptions), built on Pion's
-// low-level transports only (ADR-0001). Sub-packages: buffer, simulcast,
-// bwe, speaker, turn, types.
+// low-level transports only (ADR-0001). Sub-packages: buffer, forward, bwe,
+// speaker, turn. Publishers send one stream per track (no simulcast, ADR-0012).
 //
 // Ownership: WP1. Consumers: pkg/room (all interfaces here) and, for tests,
 // pkg/client.
@@ -16,7 +16,6 @@ import (
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/buffer"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 // Engine owns the shared Pion API (SettingEngine with UDP/TCP mux, NAT 1:1,
@@ -48,7 +47,7 @@ type TransportHandler interface {
 	OnICECandidate(c *webrtc.ICECandidateInit, target tesserav1.SignalTarget)
 	// OnOffer is called with a server-generated offer (subscriber side).
 	OnOffer(sd *tesserav1.SessionDescription)
-	// OnTrack is called for each incoming track or simulcast layer (publisher side).
+	// OnTrack is called for each incoming track (publisher side).
 	OnTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver)
 	OnDataPacket(kind tesserav1.DataPacket_Kind, data []byte)
 	OnConnectionStateChange(state webrtc.PeerConnectionState)
@@ -89,33 +88,30 @@ type Transport interface {
 	Close() error
 }
 
-// RTPSource is one incoming RTP stream (one simulcast layer). Today it is a
-// *webrtc.TrackRemote; later a relay from another node (ARCHITECTURE.md 8).
+// RTPSource is a track's incoming RTP stream. Today it is a *webrtc.TrackRemote;
+// later a relay from another node (ADR-0012).
 type RTPSource interface {
 	// Read reads one RTP packet into b (no allocation).
 	Read(b []byte) (n int, err error)
 	SSRC() uint32
-	RID() string
 }
 
-// Receiver is one published track with up to three simulcast layers.
+// Receiver is one published track.
 type Receiver interface {
 	TrackID() string
 	StreamID() string
 	Kind() webrtc.RTPCodecType
 	Codec() webrtc.RTPCodecParameters
-	// AddLayer attaches a layer source and starts its forwarding goroutine.
-	AddLayer(spatial int32, src RTPSource, buf *buffer.Buffer) error
+	// Start attaches the track's stream and starts its forwarding goroutine.
+	Start(src RTPSource, buf *buffer.Buffer) error
 	AddDownTrack(dt DownTrack) error
 	RemoveDownTrack(subscriberID string)
-	// SendPLI requests a keyframe on a layer, throttled unless force.
-	SendPLI(spatial int32, force bool)
-	// ReadPacket copies original packet sn of a layer into dst (NACK responder).
-	ReadPacket(dst []byte, spatial int32, sn uint16) (int, error)
-	// Bitrates returns measured layer bitrates.
-	Bitrates() types.Bitrates
-	// SetMaxSubscribedLayer is fed by dynacast aggregation.
-	OnMaxSubscribedLayerChanged(f func(spatial int32))
+	// SendPLI requests a keyframe, throttled unless force.
+	SendPLI(force bool)
+	// ReadPacket copies original packet sn into dst (NACK responder).
+	ReadPacket(dst []byte, sn uint16) (int, error)
+	// Bitrate returns the measured incoming bitrate in bits per second.
+	Bitrate() int64
 	Close()
 }
 
@@ -124,14 +120,11 @@ type Receiver interface {
 type DownTrack interface {
 	webrtc.TrackLocal
 	SubscriberID() string
-	// WriteRTP forwards one packet from spatial layer `layer`. Hot path:
-	// no allocation, no blocking except the socket write.
-	WriteRTP(pkt *buffer.ExtPacket, layer int32) error
-	// SetMaxLayer applies subscriber preferences.
-	SetMaxLayer(l types.VideoLayer)
-	// SetTargetLayer applies the allocator decision.
-	SetTargetLayer(l types.VideoLayer)
-	CurrentLayer() types.VideoLayer
+	// WriteRTP forwards one packet. Hot path: no allocation, no blocking
+	// except the socket write.
+	WriteRTP(pkt *buffer.ExtPacket) error
+	// SetDisabled stops (true) or resumes forwarding at the subscriber's request.
+	SetDisabled(disabled bool)
 	Mute(muted bool)
 	// HandleRTCP processes NACK/PLI/FIR/RR from the subscriber.
 	HandleRTCP(pkts []rtcp.Packet)

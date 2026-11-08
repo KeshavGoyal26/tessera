@@ -42,7 +42,7 @@ func mkPkt(t testing.TB, sn uint16, ts uint32, payload []byte, exts ...ext) []by
 }
 
 func TestWriteWrapAndGet(t *testing.T) {
-	b := New(Config{Slots: 16, ClockRate: 90000, MimeType: "video/VP8"})
+	b := New(Config{Slots: 16, ClockRate: 90000, MimeType: "video/H264"})
 	defer b.Release()
 	var lastExt uint64
 	for i := range 10 {
@@ -120,25 +120,6 @@ func TestAudioLevel(t *testing.T) {
 	}
 }
 
-func TestVP8Descriptor(t *testing.T) {
-	// X=1 S=1 PID=0; I L T K; M=1 picture id 0x1234; TL0PICIDX 7; TID 2 Y KEYIDX 3; then keyframe byte.
-	p := []byte{0x90, 0xF0, 0x80 | 0x12, 0x34, 7, 0x80 | 0x20 | 3, 0x00}
-	var d VP8Descriptor
-	if err := ParseVP8(p, &d); err != nil {
-		t.Fatal(err)
-	}
-	if !d.MBit || d.PictureID != 0x1234 || d.TL0PICIDX != 7 || d.TID != 2 || !d.Y || d.KEYIDX != 3 || d.HeaderSize != 6 || !d.IsKeyFrame {
-		t.Fatalf("%+v", d)
-	}
-	// 7-bit picture id, inter frame.
-	if err := ParseVP8([]byte{0x90, 0x80, 0x05, 0x01}, &d); err != nil || d.MBit || d.PictureID != 5 || d.IsKeyFrame {
-		t.Fatalf("%v %+v", err, d)
-	}
-	if ParseVP8([]byte{0x90, 0x80}, &d) == nil {
-		t.Fatal("truncated must fail")
-	}
-}
-
 func TestH264KeyFrame(t *testing.T) {
 	cases := []struct {
 		p    []byte
@@ -198,7 +179,7 @@ func TestH264KeyFrameStartsAtSPS(t *testing.T) {
 }
 
 func TestWriteDoesNotAllocate(t *testing.T) {
-	b := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/VP8"})
+	b := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/H264"})
 	defer b.Release()
 	pkt := mkPkt(t, 0, 0, []byte{0x90, 0x80, 0x05, 0x01, 2, 3, 4})
 	sn := uint16(0)
@@ -215,7 +196,7 @@ func TestWriteDoesNotAllocate(t *testing.T) {
 }
 
 func BenchmarkBufferWrite(b *testing.B) {
-	buf := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/VP8"})
+	buf := New(Config{Slots: 500, ClockRate: 90000, MimeType: "video/H264"})
 	defer buf.Release()
 	pkt := mkPkt(b, 0, 0, append([]byte{0x90, 0x80, 0x05, 0x01}, make([]byte, 1000)...))
 	b.ReportAllocs()
@@ -234,7 +215,7 @@ func FuzzBufferWrite(f *testing.F) {
 	f.Add([]byte{0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0x90, 0x80, 0x05})
 	f.Add([]byte{0x90, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0xBE, 0xDE, 0, 1, 0x10, 0x85, 0, 0, 0x7c, 0x85})
 	f.Fuzz(func(t *testing.T, data []byte) {
-		for _, mime := range []string{"video/VP8", "video/H264", "audio/opus"} {
+		for _, mime := range []string{"video/H264", "audio/opus"} {
 			b := New(Config{Slots: 8, MimeType: mime, AudioLevelExtID: 1})
 			_, _ = b.Write(data, 0)
 			dst := make([]byte, MaxPacketSize)

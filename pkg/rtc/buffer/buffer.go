@@ -19,25 +19,6 @@ import (
 // MaxPacketSize is the slot size of the ring (MTU-sized packets).
 const MaxPacketSize = 1500
 
-// VP8Descriptor is the parsed VP8 payload descriptor (RFC 7741).
-type VP8Descriptor struct {
-	FirstByte        byte
-	PictureIDPresent bool
-	// MBit: 15-bit picture id when true, 7-bit otherwise.
-	MBit             bool
-	PictureID        uint16
-	TL0PICIDXPresent bool
-	TL0PICIDX        uint8
-	TIDPresent       bool
-	TID              uint8
-	Y                bool
-	KEYIDXPresent    bool
-	KEYIDX           uint8
-	// HeaderSize is the descriptor length in bytes.
-	HeaderSize int
-	IsKeyFrame bool
-}
-
 // ExtPacket is a received RTP packet plus derived metadata. ExtPackets live
 // in the ring's slot array; pointers handed to DownTracks are valid only
 // during the fan-out call and must not be retained.
@@ -64,11 +45,8 @@ type ExtPacket struct {
 	HeaderSize int
 	Payload    []byte
 
-	// Spatial/Temporal layer of the packet (temporal from codec descriptor).
-	Spatial  int32
-	Temporal int32
+	// KeyFrame: the packet starts a keyframe (H.264: carries its SPS).
 	KeyFrame bool
-	VP8      VP8Descriptor
 
 	// Audio level (RFC 6464): 0 loudest .. 127 silence.
 	HasAudioLevel bool
@@ -82,12 +60,10 @@ type Config struct {
 	Slots int
 	// ClockRate of the codec (90000 video, 48000 Opus).
 	ClockRate uint32
-	// MimeType selects the descriptor parser (video/VP8, video/H264, audio/opus).
+	// MimeType selects the payload parser (video/H264, audio/opus).
 	MimeType string
 	// AudioLevelExtID is the negotiated RFC 6464 extension id (0 = none).
 	AudioLevelExtID uint8
-	// Spatial layer this SSRC carries.
-	Spatial int32
 }
 
 // Stats are receive statistics for RTCP RR and metrics.
@@ -111,7 +87,6 @@ type codecKind uint8
 
 const (
 	codecOther codecKind = iota
-	codecVP8
 	codecH264
 	codecOpus
 )
@@ -159,8 +134,6 @@ func New(cfg Config) *Buffer {
 	}
 	b := &Buffer{cfg: cfg}
 	switch m := strings.ToLower(cfg.MimeType); m {
-	case "video/vp8":
-		b.codec = codecVP8
 	case "video/h264":
 		b.codec = codecH264
 	case "audio/opus":
@@ -269,7 +242,6 @@ func (b *Buffer) Write(pkt []byte, arrival int64) (*ExtPacket, error) {
 		Raw:               raw,
 		HeaderSize:        h.HeaderSize,
 		Payload:           raw[h.HeaderSize : len(raw)-h.PaddingSize],
-		Spatial:           b.cfg.Spatial,
 	}
 	e.PaddingOnly = len(e.Payload) == 0
 	e.Late = !inOrder
@@ -296,13 +268,6 @@ func (b *Buffer) parsePayload(e *ExtPacket, raw []byte, h *Header) {
 		return
 	}
 	switch b.codec {
-	case codecVP8:
-		if ParseVP8(e.Payload, &e.VP8) == nil {
-			e.KeyFrame = e.VP8.IsKeyFrame
-			if e.VP8.TIDPresent {
-				e.Temporal = int32(e.VP8.TID)
-			}
-		}
 	case codecH264:
 		// A keyframe starts with its SPS: browsers send SPS and PPS before every IDR.
 		// When that packet is lost and comes back late, the IDR fragment after it must
@@ -380,7 +345,6 @@ func (b *Buffer) ParseExtPacket(raw []byte, e *ExtPacket) error {
 		Raw:            raw,
 		HeaderSize:     h.HeaderSize,
 		Payload:        raw[h.HeaderSize : len(raw)-h.PaddingSize],
-		Spatial:        b.cfg.Spatial,
 	}
 	e.PaddingOnly = len(e.Payload) == 0
 	b.parsePayload(e, raw, &h)

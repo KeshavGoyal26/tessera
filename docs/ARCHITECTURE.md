@@ -1,5 +1,10 @@
 # Tessera architecture
 
+> **Amended 2026-11-08 (ADR-0012):** on `main` publishers send one H.264 stream per track: no
+> simulcast, no VP8, no dynacast. Forwarding (`pkg/rtc/forward`) starts and resumes video on a
+> keyframe; the allocator pauses whole video tracks that do not fit a subscriber. Sections below
+> that describe layers apply to the `single-node` branch.
+
 Tessera is a WebRTC Selective Forwarding Unit (SFU) with HLS recording, a TypeScript browser
 SDK and a Java server SDK. This document describes the components, the process and goroutine
 model, the forwarding hot path, memory management, scaling and the performance targets every

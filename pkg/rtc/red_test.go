@@ -92,7 +92,7 @@ func TestDownTrackRedPassThroughAndStrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := dt.WriteRTP(e, 0); err != nil {
+		if err := dt.WriteRTP(e); err != nil {
 			t.Fatal(err)
 		}
 		if w.pt != tc.pt || !bytes.Equal(w.payload, tc.want) {

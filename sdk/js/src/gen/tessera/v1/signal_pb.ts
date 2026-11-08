@@ -424,6 +424,9 @@ export type AddTrackRequest = Message<"tessera.v1.AddTrackRequest"> & {
   source: TrackSource;
 
   /**
+   * Deprecated: one stream per track (ADR-0012). More than one layer, or any
+   * simulcast_codecs, is rejected.
+   *
    * @generated from field: repeated tessera.v1.VideoLayer layers = 9;
    */
   layers: VideoLayer[];
@@ -617,15 +620,14 @@ export type UpdateTrackSettings = Message<"tessera.v1.UpdateTrackSettings"> & {
   disabled: boolean;
 
   /**
-   * Maximum desired quality. Ignored when width/height are set.
+   * Deprecated (one stream per track, ADR-0012): quality, width, height and fps are
+   * ignored, except quality OFF, which pauses the track like disabled.
    *
    * @generated from field: tessera.v1.VideoQuality quality = 3;
    */
   quality: VideoQuality;
 
   /**
-   * Rendered size in device pixels; the server picks the closest layer.
-   *
    * @generated from field: uint32 width = 4;
    */
   width: number;
@@ -636,8 +638,6 @@ export type UpdateTrackSettings = Message<"tessera.v1.UpdateTrackSettings"> & {
   height: number;
 
   /**
-   * Maximum desired frame rate (temporal layer selection).
-   *
    * @generated from field: uint32 fps = 6;
    */
   fps: number;
@@ -659,6 +659,7 @@ export const UpdateTrackSettingsSchema: GenMessage<UpdateTrackSettings> = /*@__P
 
 /**
  * UpdateVideoLayers updates the advertised layers of a published track.
+ * Deprecated: ignored (one stream per track, ADR-0012).
  *
  * @generated from message tessera.v1.UpdateVideoLayers
  */
@@ -1224,6 +1225,7 @@ export const SubscribedCodecSchema: GenMessage<SubscribedCodec> = /*@__PURE__*/
 
 /**
  * SubscribedQualityUpdate (dynacast) tells a publisher which layers are needed.
+ * Deprecated: no longer sent (one stream per track, ADR-0012).
  *
  * @generated from message tessera.v1.SubscribedQualityUpdate
  */

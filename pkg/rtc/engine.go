@@ -25,8 +25,6 @@ import (
 // RTP header extension URIs (ADR-0006).
 const (
 	extMID          = "urn:ietf:params:rtp-hdrext:sdes:mid"
-	extRID          = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
-	extRRID         = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
 	extAudioLevel   = "urn:ietf:params:rtp-hdrext:ssrc-audio-level"
 	extTWCC         = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
 	audioLevelID    = 1 // fixed id used towards subscribers
@@ -52,8 +50,6 @@ var redCodec = webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapa
 func Codecs(enabled []string) []webrtc.RTPCodecParameters {
 	all := []webrtc.RTPCodecParameters{
 		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1"}, PayloadType: 111},
-		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, RTCPFeedback: videoFeedback}, PayloadType: 96},
-		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=96"}, PayloadType: 97},
 		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", RTCPFeedback: videoFeedback}, PayloadType: 102},
 		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX, ClockRate: 90000, SDPFmtpLine: "apt=102"}, PayloadType: 103},
 		{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f", RTCPFeedback: videoFeedback}, PayloadType: 104},
@@ -75,8 +71,9 @@ func Codecs(enabled []string) []webrtc.RTPCodecParameters {
 	return out
 }
 
-// NewMediaEngine registers codecs and header extensions. publisherSide
-// selects the extensions needed to receive simulcast.
+// NewMediaEngine registers codecs and header extensions. The RID extensions are
+// not registered: publishers send one stream per track (ADR-0012), and without
+// them a browser cannot negotiate simulcast.
 func NewMediaEngine(codecs []webrtc.RTPCodecParameters, publisherSide bool) (*webrtc.MediaEngine, error) {
 	m := &webrtc.MediaEngine{}
 	for _, c := range codecs {
@@ -98,14 +95,6 @@ func NewMediaEngine(codecs []webrtc.RTPCodecParameters, publisherSide bool) (*we
 				uri string
 				typ webrtc.RTPCodecType
 			}{extMID, webrtc.RTPCodecTypeVideo},
-			struct {
-				uri string
-				typ webrtc.RTPCodecType
-			}{extRID, webrtc.RTPCodecTypeVideo},
-			struct {
-				uri string
-				typ webrtc.RTPCodecType
-			}{extRRID, webrtc.RTPCodecTypeVideo},
 			struct {
 				uri string
 				typ webrtc.RTPCodecType

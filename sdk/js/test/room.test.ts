@@ -275,7 +275,7 @@ describe("publishing", () => {
     vi.stubGlobal("MediaStream", class { id = "stream-1"; constructor(public tracks: unknown[] = []) {} });
   });
 
-  it("announces simulcast layers with add_track, then negotiates", async () => {
+  it("publishes one stream scaled to the preset, then negotiates", async () => {
     const room = newRoom();
     await room.connect("ws://h", "t");
     const s = sig();
@@ -283,37 +283,19 @@ describe("publishing", () => {
     const p = room.localParticipant.publishTrack(track);
     const add = s.sent.find((x) => x?.case === "addTrack")!;
     if (add.case !== "addTrack") throw new Error();
-    const req = add.value as { cid: string; layers: { rid: string }[]; source: PTrackSource };
+    const req = add.value as { cid: string; layers: unknown[]; source: PTrackSource; width: number; height: number };
     expect(req.cid).toBe("cid-video");
-    expect(req.layers.map((l) => l.rid)).toEqual(["q", "h", "f"]);
+    expect(req.layers ?? []).toEqual([]);
+    expect([req.width, req.height]).toEqual([640, 360]); // 1280x720 capture, h360 preset
     expect(req.source).toBe(PTrackSource.CAMERA);
     s.emit({ case: "trackPublished", value: { cid: "cid-video", track: create(TrackInfoSchema, { sid: "TR_new", type: TrackType.VIDEO }) } });
     const pub = await p;
     expect(pub.trackSid).toBe("TR_new");
     const pubT = transports[0]!;
-    const enc = (pubT.pc.addTransceiver.mock.calls[0] as unknown[])[1] as { sendEncodings: { rid: string }[] };
-    expect(enc.sendEncodings.map((e) => e.rid)).toEqual(["q", "h", "f"]);
+    const enc = (pubT.pc.addTransceiver.mock.calls[0] as unknown[])[1] as { sendEncodings: RTCRtpEncodingParameters[] };
+    expect(enc.sendEncodings).toEqual([{ maxBitrate: 450_000, maxFramerate: 20, scaleResolutionDownBy: 2 }]);
     expect(pubT.negotiate).toHaveBeenCalled();
     expect(room.localParticipant.trackPublications.size).toBe(1);
-  });
-
-  it("prefers H.264 while the room records and VP8 otherwise", async () => {
-    const codecs = [{ mimeType: "video/VP8" }, { mimeType: "video/H264" }, { mimeType: "video/AV1" }];
-    vi.stubGlobal("RTCRtpSender", { getCapabilities: () => ({ codecs }) });
-    for (const [recording, first] of [[true, "video/H264"], [false, "video/VP8"]] as const) {
-      FakeSignal.all = [];
-      transports = [];
-      const room = newRoom();
-      await room.connect("ws://h", "t");
-      if (recording) sig().emit({ case: "roomUpdate", value: { room: { name: "demo", activeRecording: true } } });
-      const track = new LocalTrack(mst("video"), TrackSource.Camera);
-      const p = room.localParticipant.publishTrack(track);
-      sig().emit({ case: "trackPublished", value: { cid: "cid-video", track: create(TrackInfoSchema, { sid: "TR_x", type: TrackType.VIDEO }) } });
-      await p;
-      const tr = transports[0]!.pc.addTransceiver.mock.results[0]!.value as { setCodecPreferences: ReturnType<typeof vi.fn> };
-      const prefs = tr.setCodecPreferences.mock.calls[0]![0] as { mimeType: string }[];
-      expect(prefs[0]!.mimeType).toBe(first);
-    }
   });
 
   it("sends mute to the server", async () => {

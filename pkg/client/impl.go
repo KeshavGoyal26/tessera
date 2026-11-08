@@ -497,10 +497,6 @@ func (c *client) handle(msg *tesserav1.SignalResponse) {
 		if cb.OnStreamStateUpdate != nil {
 			cb.OnStreamStateUpdate(m.StreamStateUpdate)
 		}
-	case *tesserav1.SignalResponse_SubscribedQualityUpdate:
-		if cb.OnSubscribedQuality != nil {
-			cb.OnSubscribedQuality(m.SubscribedQualityUpdate)
-		}
 	case *tesserav1.SignalResponse_ConnectionQuality:
 		if cb.OnConnectionQuality != nil {
 			cb.OnConnectionQuality(m.ConnectionQuality)
@@ -652,55 +648,15 @@ func defaultSource(k webrtc.RTPCodecType, s tesserav1.TrackSource) tesserav1.Tra
 	return tesserav1.TrackSource_TRACK_SOURCE_CAMERA
 }
 
-// PublishTrack implements Client.
+// PublishTrack implements Client: one stream per track (no simulcast, ADR-0012).
 func (c *client) PublishTrack(ctx context.Context, track webrtc.TrackLocal, opts PublishOptions) (*tesserav1.TrackInfo, error) {
-	return c.PublishSimulcastTrack(ctx, []webrtc.TrackLocal{track}, opts)
-}
-
-// PublishSimulcastTrack implements Client.
-func (c *client) PublishSimulcastTrack(ctx context.Context, layers []webrtc.TrackLocal, opts PublishOptions) (*tesserav1.TrackInfo, error) {
-	if len(layers) == 0 {
-		return nil, errs.New(errs.CodeInvalidArgument, "no track")
-	}
-	first := layers[0]
-	req := &tesserav1.AddTrackRequest{Cid: first.ID(), Name: opts.Name, Type: trackType(first.Kind()), Width: opts.Width, Height: opts.Height,
-		Source: defaultSource(first.Kind(), opts.Source), DisableDtx: opts.DisableDTX, Stereo: opts.Stereo, Red: opts.RED, Stream: first.StreamID()}
-	if len(layers) > 1 {
-		for i, l := range layers {
-			q := tesserav1.VideoQuality(i + 1)
-			div := uint32(1) << (len(layers) - 1 - i)
-			req.Layers = append(req.Layers, &tesserav1.VideoLayer{Quality: q, Rid: l.RID(), Width: opts.Width / div, Height: opts.Height / div})
-		}
-	}
+	req := &tesserav1.AddTrackRequest{Cid: track.ID(), Name: opts.Name, Type: trackType(track.Kind()), Width: opts.Width, Height: opts.Height,
+		Source: defaultSource(track.Kind(), opts.Source), DisableDtx: opts.DisableDTX, Stereo: opts.Stereo, Red: opts.RED, Stream: track.StreamID()}
 	info, err := c.addTrack(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	if len(layers) > 1 {
-		wrapped := make([]*ridTrack, len(layers))
-		for i, l := range layers {
-			wrapped[i] = &ridTrack{TrackLocal: l}
-		}
-		tr, err := c.pub.AddTransceiverFromTrack(wrapped[0], webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range wrapped[1:] {
-			if err := tr.Sender().AddEncoding(l); err != nil {
-				return nil, err
-			}
-		}
-		c.startSenderRTCP(tr)
-		if err := c.negotiatePublisher(ctx); err != nil {
-			return nil, err
-		}
-		mid := tr.Mid()
-		for _, w := range wrapped {
-			w.mid.Store(&mid)
-		}
-		return info, nil
-	}
-	tr, err := c.pub.AddTransceiverFromTrack(first, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	tr, err := c.pub.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,7 @@
 import { action } from '../api';
 import { store } from '../store';
 import type { Participant, Room } from '../types';
-import { badge, esc, fmtBps, fmtNum, layerName, qualityBadge } from '../util';
+import { badge, esc, fmtBps, fmtNum, qualityBadge } from '../util';
 import type { View } from './view';
 
 export class Rooms implements View {
@@ -78,18 +78,17 @@ export class Rooms implements View {
 
   private tracksTables(r: Room, p: Participant): string {
     const pub = (p.published ?? []).map((t) => {
-      const top = (t.layers ?? []).filter((l) => l.active).sort((a, b) => b.spatial - a.spatial)[0];
       return `<tr><td><a href="#/quality/${encodeURIComponent(t.sid)}">${esc(t.sid)}</a></td><td>${esc(t.kind)}</td><td>${esc(t.source)}</td><td>${esc(t.codec)}</td>
-        <td>${top ? `${top.width}×${top.height}@${top.fps.toFixed(0)}` : ''}</td><td>${fmtBps(t.bitrate_bps)}</td><td>${t.loss_percent.toFixed(1)}%</td><td>${t.jitter_ms.toFixed(1)} ms</td><td>${t.subscribers}</td>
-        <td>${t.muted ? badge('muted', 'warn') : ''}${t.simulcast ? badge('simulcast') : ''}</td>
+        <td>${t.width ? `${t.width}×${t.height}` : ''}</td><td>${fmtBps(t.bitrate_bps)}</td><td>${t.loss_percent.toFixed(1)}%</td><td>${t.jitter_ms.toFixed(1)} ms</td><td>${t.subscribers}</td>
+        <td>${t.muted ? badge('muted', 'warn') : ''}</td>
         <td class="actions"><button data-act="mute-track" data-room="${esc(r.name)}" data-identity="${esc(p.identity)}" data-track="${esc(t.sid)}" data-muted="${!t.muted}">${t.muted ? 'Unmute' : 'Mute'}</button>
         <button data-act="start-recording" data-room="${esc(r.name)}" data-track="${esc(t.sid)}">Record</button></td></tr>`;
     });
-    const sub = (p.subscribed ?? []).map((t) => `<tr><td>${esc(t.track_sid)}</td><td>${esc(t.kind)}</td><td>${layerName(t.current_spatial)} → ${layerName(t.target_spatial)}</td>
-      <td>${fmtBps(t.bitrate_bps)}</td><td>${t.loss_percent.toFixed(1)}%</td><td>${t.rtt_ms.toFixed(0)} ms</td><td>${t.layer_switches}</td>
-      <td>${t.paused ? badge('paused', 'warn') : ''}${t.dynacast_paused ? badge('dynacast') : ''}</td></tr>`);
+    const sub = (p.subscribed ?? []).map((t) => `<tr><td>${esc(t.track_sid)}</td><td>${esc(t.kind)}</td>
+      <td>${fmtBps(t.bitrate_bps)}</td><td>${t.loss_percent.toFixed(1)}%</td><td>${t.rtt_ms.toFixed(0)} ms</td><td>${t.restarts}</td>
+      <td>${t.paused ? badge('paused', 'warn') : ''}${t.muted ? badge('muted') : ''}</td></tr>`);
     return `<h3>Published</h3>${table(['Track', 'Kind', 'Source', 'Codec', 'Video', 'Bitrate', 'Loss', 'Jitter', 'Subs', 'Flags', ''], pub)}
-      <h3>Subscribed</h3>${table(['Track', 'Kind', 'Layer', 'Bitrate', 'Loss', 'RTT', 'Switches', 'Flags'], sub)}`;
+      <h3>Subscribed</h3>${table(['Track', 'Kind', 'Bitrate', 'Loss', 'RTT', 'Restarts', 'Flags'], sub)}`;
   }
 
   destroy(): void { this.root.removeEventListener('click', this.onClick); this.root.innerHTML = ''; }

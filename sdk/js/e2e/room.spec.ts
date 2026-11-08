@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { dumpAll, expectVideoPlaying, hasGo, join } from "./helpers.js";
+import { expectVideoPlaying, hasGo, join } from "./helpers.js";
 
 test.skip(
   !hasGo() && process.env.TESSERA_E2E_URL === undefined,
@@ -57,59 +57,6 @@ test("a bad token is rejected with a visible error", async ({ page }) => {
   await expect(page.locator("#status")).toHaveText("disconnected");
 });
 
-test("subscriber layer selection changes the received resolution", async ({ browser, browserName }) => {
-  // Observed in CI (stats dump of run 73): Playwright's Linux WebKit build ignores
-  // scaleResolutionDownBy and maxBitrate in sendEncodings. It sends one 1280x720 stream on the
-  // first rid ("q", about 1 Mbit/s) and nothing on "h" and "f", so there is no lower layer to
-  // select. Media still flows (the server forwards that single layer); Safari on macOS and iOS
-  // has to be checked on real devices.
-  test.skip(browserName === "webkit", "Linux WebKit does not produce simulcast layers of different sizes");
-  const room = `e2e-layers-${Date.now()}`;
-  const ctxA = await browser.newContext();
-  const ctxB = await browser.newContext();
-  const a = await ctxA.newPage();
-  const b = await ctxB.newPage();
-  try {
-    await join(a, room, "alice");
-    await join(b, room, "bob");
-    await a.click("#cam");
-    await expectVideoPlaying(b, "alice");
-    const width = () => b.evaluate(() => document.querySelector<HTMLVideoElement>("#tile-alice video")?.videoWidth ?? 0);
-    // Layer sizes depend on the browser's fake camera, so only compare what Bob receives. Alice's
-    // own preview is not used (WebKit does not size a muted local preview).
-    const settled = async (): Promise<number> => {
-      let prev = -1;
-      let same = 0;
-      for (let i = 0; i < 40 && same < 4; i++) {
-        const w = await width();
-        same = w > 0 && w === prev ? same + 1 : 0;
-        prev = w;
-        await b.waitForTimeout(500);
-      }
-      return prev;
-    };
-    await b.selectOption("#quality", "high");
-    const high = await settled();
-    expect(high).toBeGreaterThan(0);
-    await b.selectOption("#quality", "low");
-    try {
-      await expect.poll(width, { timeout: 20_000 }).toBeLessThan(high);
-    } catch (err) {
-      console.log(`layer selection: high=${high} now=${await width()}`);
-      await dumpAll("after selecting low");
-      throw err;
-    }
-    const low = await settled();
-    await b.selectOption("#quality", "high");
-    await expect.poll(width, { timeout: 20_000 }).toBeGreaterThan(low);
-  } finally {
-    await ctxA.close();
-    await ctxB.close();
-  }
-});
-
-// The server drops data packets for a subscriber whose data channel is not open yet (no
-// buffering), so the sender repeats until the first packet arrives and the test then checks it.
 test("data packets are delivered between participants", async ({ browser }) => {
   const room = `e2e-data-${Date.now()}`;
   const ctxA = await browser.newContext();

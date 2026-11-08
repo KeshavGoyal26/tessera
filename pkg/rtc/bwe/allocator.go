@@ -6,14 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
 // allocTick is the allocator period.
 const allocTick = 500 * time.Millisecond
 
-// Probing: when a subscriber wants a higher layer than the estimate allows, the
+// Probing: when a subscriber wants a video track the estimate cannot carry, the
 // allocator sends padding for probeDuration so the path's capacity can be
 // measured (see estimator probe clusters). Failed probes back off exponentially.
 const (
@@ -21,19 +20,28 @@ const (
 	probeMinBackoff = 2 * time.Second
 	probeMaxBackoff = 30 * time.Second
 	probeTimeout    = probeDuration + 2*time.Second
-	// After a successful probe, upgrades skip UpgradeHold for this long.
-	probeBoost = 2 * time.Second
+)
+
+// Trial resume: when every wanted video track is paused, nothing forwards to carry
+// probe padding (and without audio, no feedback arrives at all), so the estimate
+// could never rise again. After a back-off the first paused track is resumed on
+// trial: its own traffic measures the path. It stays on if the estimate comes to
+// cover it within trialHold, otherwise it is paused again and the back-off doubles.
+const (
+	trialHold       = 10 * time.Second
+	trialMinBackoff = 5 * time.Second
+	trialMaxBackoff = 60 * time.Second
 )
 
 type trackState struct {
-	t       AllocatableTrack
-	applied types.VideoLayer
-	set     bool
-	paused  bool
-	upSince time.Time
-	prevMax int32
+	t      AllocatableTrack
+	set    bool // a decision was applied
+	paused bool // paused by the allocator (applied)
 }
 
+// allocator is the per-subscriber StreamAllocator. Publishers send one stream
+// per track (ADR-0012), so each video track is either forwarded or paused:
+// tracks are taken in priority order while the estimate covers their bitrate.
 type allocator struct {
 	cfg Config
 	est Estimator
@@ -45,28 +53,29 @@ type allocator struct {
 	once     sync.Once
 	now      func() time.Time
 
-	// probe state, used only from Allocate
 	probing    bool
 	probeStart time.Time
 	nextProbe  time.Time
 	backoff    time.Duration
-	boostUntil time.Time
-	probeNeed  int64         // total rate the running probe must prove for its upgrade
-	started    atomic.Uint64 // probes started
-	succeeded  atomic.Uint64 // probes that raised the estimate
+	probeNeed  int64 // total rate the running probe must prove
+
+	trialID      string    // track resumed on trial ("" = none)
+	trialUntil   time.Time // end of the trial
+	trialBackoff time.Duration
+	stalledSince time.Time // since when every wanted video track is paused
+
+	started   atomic.Uint64 // probes started
+	succeeded atomic.Uint64 // probes that raised the estimate enough
 }
 
-// NewAllocator returns the stream allocator for one subscriber connection.
+// NewAllocator creates a StreamAllocator.
 func NewAllocator(cfg Config, est Estimator) Allocator {
-	if cfg.UpgradeHold == 0 {
-		cfg.UpgradeHold = 3 * time.Second
-	}
 	return &allocator{cfg: cfg, est: est, tracks: map[string]*trackState{}, stop: make(chan struct{}), now: time.Now}
 }
 
 func (a *allocator) AddTrack(t AllocatableTrack) {
 	a.mu.Lock()
-	a.tracks[t.ID()] = &trackState{t: t, applied: types.InvalidVideoLayer, prevMax: t.MaxLayer().Spatial}
+	a.tracks[t.ID()] = &trackState{t: t}
 	a.mu.Unlock()
 }
 
@@ -76,6 +85,7 @@ func (a *allocator) RemoveTrack(id string) {
 	a.mu.Unlock()
 }
 
+// OnTrackChanged is a no-op: Allocate reads preferences on every tick.
 func (a *allocator) OnTrackChanged(string) {}
 
 func (a *allocator) OnPausedChanged(f func([]Allocation)) {
@@ -104,12 +114,11 @@ func (a *allocator) Start() {
 
 func (a *allocator) Stop() { a.once.Do(func() { close(a.stop) }) }
 
+// feedbackCounter is implemented by estimators that know whether TWCC feedback
+// has arrived (before it, the estimate is only the configured start value).
 type feedbackCounter interface{ Feedbacks() uint64 }
 
-// lowestFrom returns the lowest active spatial layer >= from and <= max.
-func layerRate(b types.Bitrates, s int32) int64 { return b[s][types.MaxTemporalLayers-1] }
-
-// Allocate runs one allocation round (exported for tests).
+// Allocate runs one allocation round and returns the decisions.
 func (a *allocator) Allocate() []Allocation {
 	if fc, ok := a.est.(feedbackCounter); ok && fc.Feedbacks() == 0 {
 		return nil // no bandwidth information yet: do not constrain
@@ -127,7 +136,7 @@ func (a *allocator) Allocate() []Allocation {
 	var videos []*trackState
 	for _, s := range states {
 		if !s.t.IsVideo() {
-			budget -= float64(layerRate(s.t.Bitrates(), 0))
+			budget -= float64(s.t.Bitrate()) // audio is never paused
 			continue
 		}
 		videos = append(videos, s)
@@ -138,93 +147,92 @@ func (a *allocator) Allocate() []Allocation {
 		}
 		return videos[i].t.ID() < videos[j].t.ID()
 	})
-	desired := make([]int32, len(videos))
-	rates := make([]types.Bitrates, len(videos))
+	on := make([]bool, len(videos))
 	for i, s := range videos {
-		rates[i] = s.t.Bitrates()
-		desired[i] = types.InvalidLayer
-		max := s.t.MaxLayer()
-		if !max.IsValid() {
-			continue
+		if !s.t.Wanted() {
+			continue // the subscriber disabled it: no bandwidth, not "paused"
 		}
-		for l := int32(0); l <= max.Spatial && l < types.MaxSpatialLayers; l++ {
-			if r := layerRate(rates[i], l); r > 0 {
-				if float64(r) <= budget || !a.cfg.AllowPause {
-					desired[i] = l
-					budget -= float64(r)
-				}
-				break
-			}
+		r := float64(s.t.Bitrate())
+		if r <= budget || !a.cfg.AllowPause {
+			on[i] = true
+			budget -= r
 		}
 	}
-	for upgraded := true; upgraded; {
-		upgraded = false
-		for i, s := range videos {
-			if desired[i] < 0 {
-				continue
-			}
-			cur := layerRate(rates[i], desired[i])
-			for l := desired[i] + 1; l <= s.t.MaxLayer().Spatial && l < types.MaxSpatialLayers; l++ {
-				r := layerRate(rates[i], l)
-				if r == 0 {
-					continue
-				}
-				if float64(r-cur) <= budget {
-					budget -= float64(r - cur)
-					desired[i] = l
-					upgraded = true
-				}
-				break
-			}
-		}
+	if a.cfg.AllowPause {
+		a.trialResume(now, videos, on)
 	}
 	var out, changed []Allocation
 	for i, s := range videos {
-		want := desired[i]
-		maxNow := s.t.MaxLayer().Spatial
-		prefRaised := maxNow > s.prevMax
-		s.prevMax = maxNow
-		// Hysteresis: bandwidth-driven upgrades must be sustained for
-		// UpgradeHold; upgrades requested by the subscriber are immediate.
-		if s.set && want > s.applied.Spatial && s.applied.Spatial >= 0 && !prefRaised && !now.Before(a.boostUntil) {
-			if s.upSince.IsZero() {
-				s.upSince = now
+		paused := s.t.Wanted() && !on[i]
+		if !s.set || paused != s.paused {
+			s.t.SetAllocPaused(paused)
+			if s.set || paused {
+				changed = append(changed, Allocation{TrackID: s.t.ID(), Paused: paused})
 			}
-			if now.Sub(s.upSince) < a.cfg.UpgradeHold {
-				want = s.applied.Spatial
-			}
-		} else {
-			s.upSince = time.Time{}
+			s.set, s.paused = true, paused
 		}
-		target := types.InvalidVideoLayer
-		if want >= 0 {
-			target = types.VideoLayer{Spatial: want, Temporal: types.MaxTemporalLayers - 1}
-		}
-		paused := want < 0 && s.t.MaxLayer().IsValid()
-		if !s.set || target != s.applied {
-			s.t.SetTargetLayer(target)
-			s.applied, s.set = target, true
-		}
-		al := Allocation{TrackID: s.t.ID(), Target: target, Paused: paused}
-		if want >= 0 {
-			al.Bitrate = layerRate(rates[i], want)
-		}
-		if paused != s.paused {
-			s.paused = paused
-			changed = append(changed, al)
+		al := Allocation{TrackID: s.t.ID(), Paused: paused}
+		if on[i] {
+			al.Bitrate = s.t.Bitrate()
 		}
 		out = append(out, al)
 	}
 	if len(changed) > 0 && cb != nil {
 		cb(changed)
 	}
-	a.maybeProbe(now, states, videos, desired, rates)
+	a.maybeProbe(now, states, videos, on)
 	return out
 }
 
-// maybeProbe starts a probe when the highest-priority video that wants more than
-// it gets could reach its next layer with more bandwidth, and tracks the outcome.
-func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired []int32, rates []types.Bitrates) {
+// trialResume runs the trial resume (see trialHold) and may force on[i].
+func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) {
+	idx := func(id string) int {
+		for i, s := range videos {
+			if s.t.ID() == id {
+				return i
+			}
+		}
+		return -1
+	}
+	if a.trialID != "" {
+		i := idx(a.trialID)
+		switch {
+		case i >= 0 && on[i]: // the estimate covers it now: success
+			a.trialID, a.trialBackoff, a.stalledSince = "", 0, time.Time{}
+		case i >= 0 && videos[i].t.Wanted() && now.Before(a.trialUntil):
+			on[i] = true
+			return
+		default: // failed (or the track went away)
+			a.trialID = ""
+			a.trialBackoff = min(2*max(a.trialBackoff, trialMinBackoff), trialMaxBackoff)
+			a.stalledSince = now
+		}
+	}
+	first := -1
+	for i, s := range videos {
+		if on[i] {
+			a.stalledSince = time.Time{} // something forwards: probing can work
+			return
+		}
+		if first < 0 && s.t.Wanted() {
+			first = i
+		}
+	}
+	if first < 0 {
+		a.stalledSince = time.Time{}
+		return
+	}
+	if a.stalledSince.IsZero() {
+		a.stalledSince = now
+	}
+	if now.Sub(a.stalledSince) >= max(a.trialBackoff, trialMinBackoff) && a.est.State() != StateOveruse {
+		a.trialID, a.trialUntil = videos[first].t.ID(), now.Add(trialHold)
+		on[first] = true
+	}
+}
+
+// maybeProbe probes for the first paused track's bitrate when nothing is probing.
+func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, on []bool) {
 	p, ok := a.est.(Prober)
 	if !ok || !a.cfg.Probe {
 		return
@@ -238,15 +246,14 @@ func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired
 			return
 		}
 		a.probing = false
-		// Success means the path carries the upgrade the probe was for. A lower
+		// Success means the path carries the track the probe was for. A lower
 		// result still informs the estimate, but probing again right away would
-		// only keep a capped link congested and the layer oscillating.
+		// only keep a capped link congested and the track flapping.
 		if done && res >= a.probeNeed {
 			a.succeeded.Add(1)
 			stats.ProbesSucceeded.Inc()
 			a.backoff = probeMinBackoff
-			a.nextProbe = now.Add(allocTick) // the next layer may need another step
-			a.boostUntil = now.Add(probeBoost)
+			a.nextProbe = now.Add(allocTick) // another paused track may need a step
 		} else {
 			a.backoff = min(a.backoff*2, probeMaxBackoff)
 			a.nextProbe = now.Add(a.backoff)
@@ -259,25 +266,11 @@ func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired
 	var step int64
 	var pad Padder
 	for i, s := range videos {
-		if pd, ok := s.t.(Padder); ok && pad == nil && s.applied.IsValid() {
+		if pd, ok := s.t.(Padder); ok && pad == nil && on[i] {
 			pad = pd // any track that is forwarding can carry the padding
 		}
-		if step != 0 {
-			continue
-		}
-		max := s.t.MaxLayer()
-		if !max.IsValid() {
-			continue
-		}
-		cur := int64(0)
-		if desired[i] >= 0 {
-			cur = layerRate(rates[i], desired[i])
-		}
-		for l := desired[i] + 1; l <= max.Spatial && l < types.MaxSpatialLayers; l++ {
-			if r := layerRate(rates[i], l); r > 0 {
-				step = r - cur
-				break
-			}
+		if step == 0 && s.t.Wanted() && !on[i] {
+			step = s.t.Bitrate()
 		}
 	}
 	if step <= 0 {
@@ -287,14 +280,12 @@ func (a *allocator) maybeProbe(now time.Time, all, videos []*trackState, desired
 	if pad == nil {
 		return
 	}
-	// Probe for 20% above what the upgrade needs, so the estimate that results
-	// (95% of the measured rate, then the allocator's own 95% budget) covers it.
+	// Probe for 20% above what resuming needs, so the estimate that results (95%
+	// of the measured rate, then the allocator's own 95% budget) covers it.
 	var cur int64
 	for _, s := range all {
-		if !s.t.IsVideo() {
-			cur += layerRate(s.t.Bitrates(), 0)
-		} else if s.applied.IsValid() {
-			cur += layerRate(s.t.Bitrates(), s.applied.Spatial)
+		if !s.t.IsVideo() || !s.paused && s.t.Wanted() {
+			cur += s.t.Bitrate()
 		}
 	}
 	padRate := (cur+step)*6/5 - cur

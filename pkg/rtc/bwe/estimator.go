@@ -105,8 +105,9 @@ type lossSample struct {
 
 // addLoss records one feedback's loss and refreshes the window and floor.
 // resumeFloor is how far the estimate may grow without acknowledged traffic to back it:
-// enough to resume the lowest simulcast layer after all video was paused.
-const resumeFloor = 300_000
+// enough to resume one video stream (360p, about 0.5 Mbit/s) plus audio after all video
+// was paused and nothing forwards to carry probe padding.
+const resumeFloor = 600_000
 
 func (e *estimator) addLoss(now time.Time, lost, total int) {
 	e.lossHead = (e.lossHead + 1) % lossRing
@@ -497,7 +498,7 @@ func (e *estimator) update(now time.Time) {
 		// estimate down to that would pause its video for good, because the
 		// acknowledged rate can then never rise again (no probing yet). The
 		// floor lets a subscriber whose video was paused (audio only acked, and
-		// nothing forwarding to carry probe padding) grow back to the lowest layer.
+		// nothing forwarding to carry probe padding) grow back to one video stream.
 		if limit := math.Max(1.5*e.ackRate+100_000, resumeFloor); e.ackRate > 0 && est > limit {
 			est = math.Max(e.estimate, limit)
 		}

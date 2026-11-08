@@ -17,7 +17,6 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/bwe"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/signal"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 	"github.com/KeshavGoyal26/tessera/pkg/version"
@@ -27,53 +26,6 @@ type pubTrack struct {
 	cid  string
 	info *tesserav1.TrackInfo
 	recv *rtc.ReceiverImpl
-	// Dynacast state (RTCP ticker goroutine only).
-	lastNeeded [types.MaxSpatialLayers]time.Time
-	enabled    int32 // highest enabled layer last signalled; -2 = never sent
-}
-
-// DynacastGrace is how long an unused layer stays enabled before the
-// publisher is told to stop sending it (ARCHITECTURE.md 4.3).
-var DynacastGrace = 10 * time.Second
-
-// dynacast computes the highest layer any subscriber wants and returns an
-// update for the publisher when the enabled set changes.
-func (t *pubTrack) dynacast(now time.Time) *tesserav1.SubscribedQualityUpdate {
-	if !t.info.GetSimulcast() || t.info.GetType() != tesserav1.TrackType_TRACK_TYPE_VIDEO {
-		return nil
-	}
-	maxNeeded := int32(-1)
-	for _, d := range t.recv.DownTracks() {
-		dt, ok := d.(*rtc.DownTrackImpl)
-		if !ok {
-			continue
-		}
-		if m := dt.MaxLayer(); m.IsValid() && m.Spatial > maxNeeded {
-			maxNeeded = m.Spatial
-		}
-	}
-	for s := int32(0); s <= maxNeeded && s < types.MaxSpatialLayers; s++ {
-		t.lastNeeded[s] = now
-	}
-	enabled := int32(-1)
-	for s := int32(0); s < types.MaxSpatialLayers; s++ {
-		if !t.lastNeeded[s].IsZero() && now.Sub(t.lastNeeded[s]) < DynacastGrace {
-			enabled = s
-		}
-	}
-	if t.enabled == -2 && enabled == types.MaxSpatialLayers-1 {
-		t.enabled = enabled // publisher starts with all layers on
-		return nil
-	}
-	if enabled == t.enabled {
-		return nil
-	}
-	t.enabled = enabled
-	upd := &tesserav1.SubscribedQualityUpdate{TrackSid: t.info.GetSid()}
-	for s := int32(0); s < types.MaxSpatialLayers; s++ {
-		upd.SubscribedQualities = append(upd.SubscribedQualities, &tesserav1.SubscribedQuality{Quality: types.QualityForSpatial(s), Enabled: s <= enabled})
-	}
-	return upd
 }
 
 type subscription struct {
@@ -348,12 +300,6 @@ func (p *Participant) rtcpLoop() {
 					p.twcc.Est.OnRTT(rtt)
 				}
 				p.mu.Unlock()
-			}
-		}
-		now := time.Now()
-		for _, tr := range ptracks {
-			if upd := tr.dynacast(now); upd != nil {
-				p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_SubscribedQualityUpdate{SubscribedQualityUpdate: upd}})
 			}
 		}
 		if sub != nil && len(dts) > 0 {
@@ -764,6 +710,12 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 		p.respond(reqID, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "publishing not allowed")
 		return
 	}
+	if len(req.GetLayers()) > 1 || len(req.GetSimulcastCodecs()) > 0 {
+		// One stream per track (ADR-0012): the server negotiates no RID extensions,
+		// so a browser could not send simulcast anyway.
+		p.respond(reqID, tesserav1.RequestResponse_REASON_INVALID, "simulcast is not supported: publish one stream")
+		return
+	}
 	p.mu.Lock()
 	t := p.pending[req.GetCid()]
 	if t == nil && len(p.pending) >= maxTracksPerParticipant {
@@ -774,11 +726,11 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 	if t == nil {
 		info := &tesserav1.TrackInfo{
 			Sid: newSID("TR_"), Type: req.GetType(), Name: req.GetName(), Muted: req.GetMuted(),
-			Width: req.GetWidth(), Height: req.GetHeight(), Simulcast: len(req.GetLayers()) > 1,
-			DisableDtx: req.GetDisableDtx(), Source: req.GetSource(), Layers: req.GetLayers(),
+			Width: req.GetWidth(), Height: req.GetHeight(),
+			DisableDtx: req.GetDisableDtx(), Source: req.GetSource(),
 			Stereo: req.GetStereo(), Red: req.GetRed(), Stream: req.GetStream(),
 		}
-		t = &pubTrack{cid: req.GetCid(), info: info, enabled: -2}
+		t = &pubTrack{cid: req.GetCid(), info: info}
 		p.pending[req.GetCid()] = t
 	}
 	info := proto.Clone(t.info).(*tesserav1.TrackInfo)
@@ -787,7 +739,7 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 		Cid: req.GetCid(), Track: info}}})
 }
 
-// onTrack attaches an incoming track (or simulcast layer) to its Receiver.
+// onTrack attaches an incoming track to its Receiver.
 func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 	p.room.m.logger.Debug("track received", "participant", p.identity, "codec", tr.Codec().MimeType,
 		"payload_type", tr.PayloadType(), "rid", tr.RID())
@@ -834,13 +786,7 @@ func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 		sid := t.info.Sid
 		recv.OnClosed(func() { p.onReceiverClosed(sid, recv) })
 	}
-	spatial := types.SpatialFromRID(tr.RID())
 	recv := t.recv
-	for _, l := range t.info.Layers {
-		if l.GetRid() == tr.RID() || (tr.RID() == "" && len(t.info.Layers) == 1) {
-			l.Ssrc = uint32(tr.SSRC())
-		}
-	}
 	if created {
 		p.tracks[t.info.Sid] = t
 		if t.info.Muted {
@@ -849,13 +795,11 @@ func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 		}
 	}
 	p.mu.Unlock()
-	if spatial < 0 {
-		spatial = 0
-	}
-	if err := recv.AddLayer(spatial, rtc.TrackRemoteSource{T: tr}, nil); err != nil {
+	if err := recv.Start(rtc.TrackRemoteSource{T: tr}, nil); err != nil {
+		p.room.m.logger.Warn("second stream for a track ignored (simulcast is not supported)", "participant", p.identity, "track", t.info.GetSid())
 		return
 	}
-	go p.readPublisherRTCP(rr, tr.RID(), recv)
+	go p.readPublisherRTCP(rr, recv)
 	if created {
 		stats.TrackPublishes.Inc()
 		p.room.onTrackPublished(p, t)
@@ -863,15 +807,9 @@ func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 	}
 }
 
-func (p *Participant) readPublisherRTCP(rr *webrtc.RTPReceiver, rid string, recv *rtc.ReceiverImpl) {
+func (p *Participant) readPublisherRTCP(rr *webrtc.RTPReceiver, recv *rtc.ReceiverImpl) {
 	for {
-		var pkts []rtcp.Packet
-		var err error
-		if rid != "" {
-			pkts, _, err = rr.ReadSimulcastRTCP(rid)
-		} else {
-			pkts, _, err = rr.ReadRTCP()
-		}
+		pkts, _, err := rr.ReadRTCP()
 		if err != nil {
 			return
 		}
@@ -963,8 +901,8 @@ func (p *Participant) applyMute(trackSID string) {
 		return
 	}
 	t := s.pub.getTrack(trackSID)
-	pubMuted := t != nil && s.pub.trackMuted(trackSID)
-	s.dt.Mute(pubMuted || s.disabled)
+	s.dt.Mute(t != nil && s.pub.trackMuted(trackSID))
+	s.dt.SetDisabled(s.disabled)
 }
 
 func (p *Participant) trackMuted(sid string) bool {
@@ -1078,12 +1016,17 @@ func (p *Participant) updateSubscription(u *tesserav1.UpdateSubscription) {
 	}
 }
 
+// updateTrackSettings applies a subscriber's per-track preferences: disabled
+// (or quality OFF) pauses the track without unsubscribing, priority orders
+// bandwidth allocation. Size, quality and fps are ignored: each track has one
+// stream (ADR-0012).
 func (p *Participant) updateTrackSettings(s *tesserav1.UpdateTrackSettings) {
+	disabled := s.GetDisabled() || s.GetQuality() == tesserav1.VideoQuality_VIDEO_QUALITY_OFF
 	for _, sid := range s.GetTrackSids() {
 		p.mu.Lock()
 		sub := p.subs[sid]
 		if sub != nil {
-			sub.disabled = s.GetDisabled()
+			sub.disabled = disabled
 		}
 		p.mu.Unlock()
 		if sub == nil {
@@ -1093,51 +1036,7 @@ func (p *Participant) updateTrackSettings(s *tesserav1.UpdateTrackSettings) {
 		if pr := s.GetPriority(); pr > 0 {
 			sub.dt.SetPriority(pr)
 		}
-		if sub.dt.Kind() != webrtc.RTPCodecTypeVideo {
-			continue
-		}
-		spatial := int32(types.MaxSpatialLayers - 1)
-		if q := s.GetQuality(); q != tesserav1.VideoQuality_VIDEO_QUALITY_UNSPECIFIED {
-			spatial = types.SpatialForQuality(q)
-		} else if s.GetWidth() > 0 || s.GetHeight() > 0 {
-			spatial = layerForSize(sub.pub.getTrack(sid), s.GetWidth(), s.GetHeight())
-		}
-		temporal := int32(types.MaxTemporalLayers - 1)
-		if fps := s.GetFps(); fps > 0 {
-			switch {
-			case fps <= 8:
-				temporal = 0
-			case fps <= 16:
-				temporal = 1
-			}
-		}
-		if spatial < 0 { // OFF
-			sub.dt.SetMaxLayer(types.InvalidVideoLayer)
-			continue
-		}
-		sub.dt.SetMaxLayer(types.VideoLayer{Spatial: spatial, Temporal: temporal})
 	}
-}
-
-// layerForSize picks the smallest layer whose size is >= the requested size.
-func layerForSize(t *pubTrack, w, h uint32) int32 {
-	if t == nil || len(t.info.GetLayers()) == 0 {
-		return types.MaxSpatialLayers - 1
-	}
-	best := int32(-1)
-	for _, l := range t.info.GetLayers() {
-		s := types.SpatialForQuality(l.GetQuality())
-		if s < 0 {
-			continue
-		}
-		if l.GetWidth() >= w && l.GetHeight() >= h && (best < 0 || s < best) {
-			best = s
-		}
-	}
-	if best < 0 {
-		return types.MaxSpatialLayers - 1
-	}
-	return best
 }
 
 func (p *Participant) update(req *tesserav1.UpdateParticipantRequest) {

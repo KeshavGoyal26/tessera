@@ -1,7 +1,7 @@
 import { history, stream } from './api';
 import type { Alert, Point, Update } from './types';
 
-export interface TrackPoint { t: number; bitrate: number; loss: number; jitter: number; fps: number; layers: number[]; rtt: number; bwe: number; spatial: number }
+export interface TrackPoint { t: number; bitrate: number; loss: number; jitter: number; rtt: number; bwe: number }
 
 const MAX_TRACK_POINTS = 900; // 15 minutes at 1 Hz, kept in the browser
 
@@ -34,14 +34,11 @@ class Store {
       for (const p of r.participants ?? []) {
         for (const tr of p.published ?? []) {
           const key = `pub:${tr.sid}`; seen.add(key);
-          const top = (tr.layers ?? []).find((l) => l.active && l.height > 0);
-          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, fps: top?.fps ?? 0,
-            layers: [0, 1, 2].map((i) => (tr.layers ?? []).find((l) => l.spatial === i)?.bitrate_bps ?? 0), rtt: 0, bwe: 0, spatial: -1 });
+          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, rtt: 0, bwe: 0 });
         }
         for (const tr of p.subscribed ?? []) {
           const key = `sub:${p.sid}:${tr.track_sid}`; seen.add(key);
-          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, fps: 0, layers: [], rtt: tr.rtt_ms,
-            bwe: tr.bandwidth_estimate_bps, spatial: tr.current_spatial });
+          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, rtt: tr.rtt_ms, bwe: tr.bandwidth_estimate_bps });
         }
       }
     }

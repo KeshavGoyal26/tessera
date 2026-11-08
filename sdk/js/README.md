@@ -1,7 +1,7 @@
 # @tessera/client
 
 Browser SDK for [Tessera](../../README.md): join a room, publish camera, microphone and screen
-share (simulcast, H.264 when the room records), subscribe with adaptive stream, and get active
+share (one H.264 stream per track), subscribe on demand, and get active
 speaker, connection quality and stats. Framework free; the only runtime dependency is
 `@bufbuild/protobuf`. About 38 kB gzipped including generated protobuf code (budget 60 kB,
 `npm run size`).
@@ -15,7 +15,7 @@ design: [ADR-0009](../../docs/adr/0009-browser-sdk.md).
 import { Room, RoomEvent } from "@tessera/client";
 
 // `token` comes from your backend (see sdk/java or `tessera create-token`); the SDK never mints tokens.
-const room = new Room({ adaptiveStream: true, dynacast: true });
+const room = new Room();
 room
   .on(RoomEvent.TrackSubscribed, (track) => document.body.append(track.attach()))
   .on(RoomEvent.TrackUnsubscribed, (track) => track.detach().forEach((el) => el.remove()))
@@ -34,7 +34,7 @@ A runnable app lives in [examples/web-demo](../../examples/web-demo).
 
 | Member | Description |
 |--------|-------------|
-| `new Room(options?)` / `Room.connect(url, token, options?)` | `options`: `autoSubscribe` (true), `adaptiveStream` (true), `dynacast` (true), `videoPreset` (`VideoPresets.h720`), `videoCodec`, `maxReconnectAttempts` (10) |
+| `new Room(options?)` / `Room.connect(url, token, options?)` | `options`: `autoSubscribe` (true), `videoPreset` (`VideoPresets.h360`), `maxReconnectAttempts` (10) |
 | `connect(url, token)` | Opens signaling and creates the publisher and subscriber PeerConnections. `ws(s)://` and `http(s)://` URLs work. Throws `ConnectionError` (`not_allowed`, `server_unreachable`, `unsupported_protocol`, `not_found`, `timeout`, ...) |
 | `disconnect()` | Sends leave, stops published tracks, releases everything |
 | `state` | `ConnectionState`: `disconnected`, `connecting`, `connected`, `reconnecting` |
@@ -56,29 +56,26 @@ resumed video for lack of bandwidth), `LocalTrackPublished`, `LocalTrackUnpublis
 ### `LocalParticipant`
 
 ```ts
-await lp.setCameraEnabled(true);          // capture + publish with 3 simulcast layers; false mutes
+await lp.setCameraEnabled(true);          // capture + publish one 360p H.264 stream; false mutes
 await lp.setMicrophoneEnabled(true);      // false mutes (the track stays published)
 await lp.setScreenShareEnabled(true);     // getDisplayMedia; the browser's "stop sharing" unpublishes
 await lp.switchActiveDevice("videoinput", deviceId);   // also "audioinput", "audiooutput"
-await lp.publishTrack(new LocalTrack(mediaStreamTrack, TrackSource.Camera), { videoCodec: "video/H264" });
+await lp.publishTrack(new LocalTrack(mediaStreamTrack, TrackSource.Camera), { videoPreset: VideoPresets.h360 });
 await lp.unpublishTrack(track);
 await lp.publishData(new TextEncoder().encode("hi"), { topic: "chat", reliable: true, destinationIdentities: ["bob"] });
 await lp.updateInfoOnServer({ name: "Alice", metadata: "{}" });   // needs the can_update_own_metadata grant
 ```
 
-Camera video is published as simulcast (`q`, `h`, `f` layers at 1/4, 1/2 and full resolution,
-layers below 160 px dropped). With `dynacast` the SDK switches layers off when nobody subscribes
-to them. H.264 is preferred while the room is recording; otherwise the first video codec the
-server lists.
+Video is published as one H.264 stream per track, scaled down to the preset (default
+`VideoPresets.h360`: 640x360, 20 fps, 450 kbit/s). There is no simulcast (ADR-0012): every
+subscriber receives that stream, and the server pauses it for a subscriber whose bandwidth
+cannot carry it.
 
 ### Subscribing
 
-Tracks arrive via `TrackSubscribed`; `track.attach(element?)` renders them. With `adaptiveStream`
-the SDK observes the attached elements (`ResizeObserver`, `IntersectionObserver`, page
-visibility) and asks the server for the layer matching the largest visible element, pausing
-tracks that are hidden. Manual control on a `RemoteTrackPublication`:
-`setVideoQuality(VideoQuality.LOW | MEDIUM | HIGH)`, `setVideoDimensions({ width, height })`,
-`setEnabled(false)`, `setSubscribed(false)` (with `autoSubscribe: false`).
+Tracks arrive via `TrackSubscribed`; `track.attach(element?)` renders them. Control on a
+`RemoteTrackPublication`: `setEnabled(false)` pauses a track without unsubscribing (for example a
+hidden tile), `setSubscribed(true | false)` subscribes on demand (with `autoSubscribe: false`).
 
 ### Reconnect
 
@@ -99,7 +96,7 @@ npm run e2e        # needs Go (starts `tessera --dev`) and Playwright browsers
 ```
 
 End-to-end tests (`e2e/`) build the demo, start `go run ./cmd/tessera --dev` and drive two
-browsers with fake media: video both ways, mute, stats, leave, subscriber layer selection and
+browsers with fake media: video both ways, mute, stats, leave and
 reconnect after `setOffline`. Chromium and Firefox projects exist; set `PW_CHROMIUM_PATH` to use a
 preinstalled Chromium and `TESSERA_E2E_URL` to target a running server. The data-packet test
 needs server support (`TESSERA_E2E_DATA=1`).

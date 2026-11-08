@@ -854,56 +854,6 @@
       }
     },
     {
-      "id": 18,
-      "type": "timeseries",
-      "title": "Subscribed video layer",
-      "description": "Number of subscriptions per current spatial layer (none = not forwarding).",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 38
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 15,
-            "stacking": {
-              "mode": "normal"
-            },
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by (layer) (tessera_subscribed_video_layer{instance=~\"$instance\"})",
-          "legendFormat": "layer {{layer}}"
-        }
-      ]
-    },
-    {
       "id": 19,
       "type": "timeseries",
       "title": "Paused subscriptions",
@@ -950,65 +900,6 @@
           },
           "expr": "tessera_subscribed_paused_tracks{instance=~\"$instance\"}",
           "legendFormat": "paused by allocator"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "tessera_subscribed_dynacast_paused_tracks{instance=~\"$instance\"}",
-          "legendFormat": "dynacast paused"
-        }
-      ]
-    },
-    {
-      "id": 20,
-      "type": "timeseries",
-      "title": "Layer switches / min",
-      "description": "",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 38
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "stacking": {
-              "mode": "none"
-            },
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "rate(tessera_layer_switches_total{instance=~\"$instance\"}[5m])*60",
-          "legendFormat": "switches"
         }
       ]
     },

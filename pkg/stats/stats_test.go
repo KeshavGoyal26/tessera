@@ -65,8 +65,8 @@ func sample() *Snapshot {
 			Name: "r1",
 			Participants: []ParticipantStats{{
 				Kind: "standard", ConnectionQuality: QualityGood, ICECandidateType: CandidateHost, RTTMs: 10,
-				Published:  []PublishedTrackStats{{Kind: "video", Codec: "video/VP8", BitrateBps: 1e6}},
-				Subscribed: []SubscribedTrackStats{{Kind: "video", CurrentSpatial: 1, Paused: false}},
+				Published:  []PublishedTrackStats{{Kind: "video", Codec: "video/H264", BitrateBps: 1e6}},
+				Subscribed: []SubscribedTrackStats{{Kind: "video", Paused: true}, {Kind: "video"}},
 			}},
 			ActiveSpeakers: []SpeakerStats{{ParticipantSID: "PA_1", Level: 0.5}},
 		}, {Name: "r2"}},
@@ -76,22 +76,19 @@ func sample() *Snapshot {
 func TestCollector(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(NewCollector(ProviderFunc(sample)))
-	LayerSwitches.Inc()
+	PLIsSent.Inc()
 	exp := `
-# HELP tessera_subscribed_video_layer Video DownTracks by current spatial layer (none = paused/off).
-# TYPE tessera_subscribed_video_layer gauge
-tessera_subscribed_video_layer{layer="0"} 0
-tessera_subscribed_video_layer{layer="1"} 1
-tessera_subscribed_video_layer{layer="2"} 0
-tessera_subscribed_video_layer{layer="none"} 0
+# HELP tessera_subscribed_paused_tracks DownTracks paused by the bandwidth allocator or the subscriber.
+# TYPE tessera_subscribed_paused_tracks gauge
+tessera_subscribed_paused_tracks 1
 # HELP tessera_rooms Active rooms.
 # TYPE tessera_rooms gauge
 tessera_rooms 2
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(exp), "tessera_subscribed_video_layer", "tessera_rooms"); err != nil {
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(exp), "tessera_subscribed_paused_tracks", "tessera_rooms"); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := testutil.GatherAndCount(reg, "tessera_layer_switches_total"); err != nil || n != 1 {
+	if n, err := testutil.GatherAndCount(reg, "tessera_pli_sent_total"); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
 }

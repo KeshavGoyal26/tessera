@@ -39,19 +39,17 @@ Snapshot
           rtt_ms, connection_quality (unknown|lost|poor|good|excellent), quality_score (1..5)
           bandwidth_estimate_bps                                           subscriber downlink BWE
           published[]: PublishedTrackStats
-              sid, kind (audio|video), source, codec (MIME), muted, simulcast, subscribers
+              sid, kind (audio|video), source, codec (MIME), muted, subscribers
+              ssrc, width, height (announced), active                      one stream per track
               bitrate_bps, packets_recv, packets_lost, loss_percent, jitter_ms
               nacks, plis, firs                                            sent to the publisher
               audio_level (0..1)
-              layers[]: { spatial (0..2), quality (low|medium|high), rid, ssrc,
-                          width, height, fps, bitrate_bps, active }
           subscribed[]: SubscribedTrackStats
               track_sid, publisher_sid, kind, codec
-              current_spatial, current_temporal, target_spatial, target_temporal, max_spatial   (-1 = none)
               bandwidth_estimate_bps, bitrate_bps, packets_sent
               packets_lost, loss_percent, jitter_ms, rtt_ms                from subscriber RRs
-              layer_switches, nacks, plis, retransmits
-              paused (allocator), dynacast_paused, muted
+              restarts (video starts on a keyframe), nacks, plis, retransmits
+              paused (allocator or subscriber), muted
 ```
 
 Field semantics are documented on the Go structs in `pkg/stats/stats.go`. Fields are only
@@ -73,21 +71,20 @@ with load (about 60 series plus Go/process collectors).
 | `published_tracks` | gauge | `kind`, `codec` (MIME) |
 | `subscribed_tracks` | gauge | `kind` |
 | `published_bitrate_bps`, `subscribed_bitrate_bps` | gauge | `kind` |
-| `subscribed_video_layer` | gauge | `layer` = 0, 1, 2, none |
-| `subscribed_paused_tracks`, `subscribed_dynacast_paused_tracks` | gauge | |
+| `subscribed_paused_tracks` | gauge | |
 | `connection_quality_participants` | gauge | `quality` |
 | `ice_candidate_participants` | gauge | `type` |
 | `participant_rtt_ms_avg`, `ice_setup_ms_avg`, `dtls_setup_ms_avg` | gauge | |
 | `active_speakers` | gauge | |
 | `nack_received_total`, `nack_sent_total`, `pli_received_total`, `pli_sent_total`, `fir_sent_total` | counter | |
-| `retransmits_total`, `layer_switches_total`, `participant_joins_total`, `track_publishes_total` | counter | |
+| `retransmits_total`, `participant_joins_total`, `track_publishes_total` | counter | |
 
 The gauges are computed from one snapshot per scrape (`stats.Collector`); the counters are
 process-global atomics that never decrease.
 
 ## Producing (engine side)
 
-- Per received packet: `Meter.Add(len)` on the layer meter; buffer statistics are atomics.
+- Per received packet: `Meter.Add(len)` on the stream meter; buffer statistics are atomics.
 - Per forwarded packet: `Meter.Add(len)` on the DownTrack meter.
 - Media sockets: `stats.UDPIn.Add` / `stats.UDPOut.Add` from the mux socket wrapper.
 - Events (NACK, PLI, switches): the per-track `Counter` plus the global counter.

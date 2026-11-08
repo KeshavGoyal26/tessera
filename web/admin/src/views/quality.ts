@@ -1,6 +1,6 @@
 import { store, type TrackPoint } from '../store';
 import type { Participant, Published, Room } from '../types';
-import { badge, esc, fmtBps, layerName } from '../util';
+import { badge, esc, fmtBps } from '../util';
 import { table } from './rooms';
 import { ChartGroup, type View } from './view';
 
@@ -19,10 +19,9 @@ export class Quality implements View {
       this.detail.innerHTML = '<div class="info"></div><div class="grid charts"></div><div class="tables"></div>';
       const g = (this.charts = new ChartGroup(this.detail.querySelector('.charts')!));
       const H = (): TrackPoint[] => store.tracks.get(`pub:${this.sid}`) ?? [];
-      g.add({ title: 'Bitrate per layer', series: [0, 1, 2].map((i) => ({ label: layerName(i), color: `--c${i + 1}`, get: (k: number) => H()[k]!.layers[i] ?? 0 })), fmt: fmtBps });
+      g.add({ title: 'Bitrate', series: [{ label: 'bitrate', color: '--c1', get: (k) => H()[k]!.bitrate, fill: true }], fmt: fmtBps });
       g.add({ title: 'Loss %', series: [{ label: 'loss', color: '--c6', get: (k) => H()[k]!.loss, fill: true }], fmt: (v) => v.toFixed(1) + '%' });
       g.add({ title: 'Jitter (ms)', series: [{ label: 'jitter', color: '--c4', get: (k) => H()[k]!.jitter }], fmt: (v) => v.toFixed(1) });
-      g.add({ title: 'Frame rate', series: [{ label: 'fps', color: '--c2', get: (k) => H()[k]!.fps }], fmt: (v) => v.toFixed(0) });
     }
     this.update();
   }
@@ -50,14 +49,14 @@ export class Quality implements View {
     if (!f) { info.innerHTML = `<p class="muted">Track ${esc(this.sid)} not found. <a href="#/quality">Back</a></p>`; tables.innerHTML = ''; return; }
     const { room, p, t } = f;
     info.innerHTML = `<p><a href="#/quality">All tracks</a> · <b>${esc(t.sid)}</b> ${esc(t.kind)} ${esc(t.codec)} from ${esc(p.identity)} in ${esc(room.name)}
-      ${t.muted ? badge('muted', 'warn') : ''}${t.simulcast ? badge('simulcast') : ''} · NACK ${t.nacks} · PLI ${t.plis} · FIR ${t.firs} · ${t.packets_lost}/${t.packets_recv} packets lost</p>`;
-    const layers = (t.layers ?? []).map((l) => `<tr><td>${esc(l.rid || layerName(l.spatial))}</td><td>${l.width ? `${l.width}×${l.height}` : '–'}</td><td>${l.fps.toFixed(1)}</td><td>${fmtBps(l.bitrate_bps)}</td><td>${l.active ? badge('active', 'ok') : badge('inactive')}</td></tr>`);
+      ${t.muted ? badge('muted', 'warn') : ''}· NACK ${t.nacks} · PLI ${t.plis} · FIR ${t.firs} · ${t.packets_lost}/${t.packets_recv} packets lost</p>`;
+    const stream = [`<tr><td>${t.ssrc || '–'}</td><td>${t.width ? `${t.width}×${t.height}` : '–'}</td><td>${fmtBps(t.bitrate_bps)}</td><td>${t.active ? badge('active', 'ok') : badge('inactive')}</td></tr>`];
     const subs: string[] = [];
     for (const rp of room.participants ?? []) for (const s of rp.subscribed ?? []) if (s.track_sid === t.sid)
-      subs.push(`<tr><td>${esc(rp.identity)}</td><td>${layerName(s.current_spatial)} → ${layerName(s.target_spatial)} (max ${layerName(s.max_spatial)})</td><td>${fmtBps(s.bandwidth_estimate_bps)}</td><td>${fmtBps(s.bitrate_bps)}</td>
-        <td>${s.loss_percent.toFixed(1)}%</td><td>${s.rtt_ms.toFixed(0)} ms</td><td>${s.layer_switches}</td><td>${s.nacks}/${s.plis}/${s.retransmits}</td><td>${s.paused ? badge('paused', 'warn') : ''}${s.dynacast_paused ? badge('dynacast paused') : ''}</td></tr>`);
-    tables.innerHTML = `<h3>Layers</h3>${table(['Layer', 'Resolution', 'FPS', 'Bitrate', 'State'], layers)}
-      <h3>Subscribers</h3>${table(['Subscriber', 'Layer', 'Bandwidth estimate', 'Bitrate', 'Loss', 'RTT', 'Switches', 'NACK/PLI/retx', 'Flags'], subs)}`;
+      subs.push(`<tr><td>${esc(rp.identity)}</td><td>${fmtBps(s.bandwidth_estimate_bps)}</td><td>${fmtBps(s.bitrate_bps)}</td>
+        <td>${s.loss_percent.toFixed(1)}%</td><td>${s.rtt_ms.toFixed(0)} ms</td><td>${s.restarts}</td><td>${s.nacks}/${s.plis}/${s.retransmits}</td><td>${s.paused ? badge('paused', 'warn') : ''}${s.muted ? badge('muted') : ''}</td></tr>`);
+    tables.innerHTML = `<h3>Stream</h3>${table(['SSRC', 'Resolution', 'Bitrate', 'State'], stream)}
+      <h3>Subscribers</h3>${table(['Subscriber', 'Bandwidth estimate', 'Bitrate', 'Loss', 'RTT', 'Restarts', 'NACK/PLI/retx', 'Flags'], subs)}`;
     const h = store.tracks.get(`pub:${this.sid}`) ?? [];
     this.charts?.update(h.map((x) => x.t / 1000), h.length);
   }

@@ -16,7 +16,7 @@ OUT=${BENCH_OUT:-bench-new.txt}
 COUNT=${BENCH_COUNT:-6}
 BENCHTIME=${BENCH_TIME:-300ms}
 MAX=${BENCH_MAX_REGRESSION:-40}
-PKGS=${BENCH_PKGS:-./pkg/rtc/ ./pkg/rtc/buffer/ ./pkg/rtc/simulcast/}
+PKGS=${BENCH_PKGS:-./pkg/rtc/ ./pkg/rtc/buffer/ ./pkg/rtc/forward/}
 PATTERN=${BENCH_PATTERN:-.}
 
 # shellcheck disable=SC2086

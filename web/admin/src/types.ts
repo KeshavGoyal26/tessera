@@ -1,16 +1,14 @@
 // Mirrors the JSON of pkg/stats (docs/STATS.md) and pkg/dashboard.
-export interface Layer { spatial: number; quality: string; rid?: string; ssrc: number; width: number; height: number; fps: number; bitrate_bps: number; active: boolean }
 export interface Published {
-  sid: string; kind: string; source: string; codec: string; muted: boolean; simulcast: boolean; layers: Layer[] | null
+  sid: string; kind: string; source: string; codec: string; muted: boolean; ssrc: number; width?: number; height?: number; active: boolean
   bitrate_bps: number; packets_recv: number; packets_lost: number; loss_percent: number; jitter_ms: number
   nacks: number; plis: number; firs: number; subscribers: number; audio_level?: number
 }
 export interface Subscribed {
   track_sid: string; publisher_sid: string; kind: string; codec: string
-  current_spatial: number; current_temporal: number; target_spatial: number; target_temporal: number; max_spatial: number
   bandwidth_estimate_bps: number; bitrate_bps: number; packets_sent: number; packets_lost: number; loss_percent: number
-  jitter_ms: number; rtt_ms: number; layer_switches: number; nacks: number; plis: number; retransmits: number
-  paused: boolean; dynacast_paused: boolean; muted: boolean
+  jitter_ms: number; rtt_ms: number; restarts: number; nacks: number; plis: number; retransmits: number
+  paused: boolean; muted: boolean
 }
 export interface Participant {
   sid: string; identity: string; name?: string; joined_at: string; state: string; kind: string; hidden?: boolean; client_sdk?: string

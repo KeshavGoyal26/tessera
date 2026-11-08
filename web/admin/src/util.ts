@@ -27,9 +27,6 @@ export function percentile(values: number[], p: number): number {
   return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)]!;
 }
 export const avg = (v: number[]): number => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0);
-export function layerName(i: number): string {
-  return i < 0 ? '–' : ['low', 'medium', 'high'][i] ?? String(i);
-}
 export function badge(text: string, kind: 'ok' | 'warn' | 'bad' | 'muted' = 'muted'): string {
   return `<span class="badge ${kind}">${esc(text)}</span>`;
 }

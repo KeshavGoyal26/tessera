@@ -8,7 +8,6 @@ import (
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc"
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
@@ -106,11 +105,9 @@ func (p *Participant) stats(now time.Time) stats.ParticipantStats {
 		st := s.dt.Stats(now)
 		ss := stats.SubscribedTrackStats{
 			TrackSID: sid, PublisherSID: s.pub.sid, Kind: kindName(s.dt.Kind()), Codec: s.dt.Receiver().Codec().MimeType,
-			CurrentSpatial: st.Current.Spatial, CurrentTemporal: st.Current.Temporal,
-			TargetSpatial: st.Target.Spatial, TargetTemporal: st.Target.Temporal, MaxSpatial: st.MaxLayer.Spatial,
 			BitrateBps: st.BitrateBps, PacketsSent: st.Packets, PacketsLost: st.PacketsLost, LossPercent: st.FractionLost,
-			JitterMs: st.JitterMs, RTTMs: st.RTTMs, LayerSwitches: st.LayerSwitches, NACKs: st.NACKs, PLIs: st.PLIs,
-			Retransmits: st.Retransmits, Muted: st.Muted, BandwidthEstimateBps: ps.BandwidthEstimateBps, Paused: s.dt.Kind() == webrtc.RTPCodecTypeVideo && !st.Target.IsValid() && !st.Muted,
+			JitterMs: st.JitterMs, RTTMs: st.RTTMs, Restarts: st.Restarts, NACKs: st.NACKs, PLIs: st.PLIs,
+			Retransmits: st.Retransmits, Muted: st.Muted, BandwidthEstimateBps: ps.BandwidthEstimateBps, Paused: st.Paused,
 		}
 		if st.RTTMs > 0 {
 			ps.RTTMs = st.RTTMs
@@ -127,32 +124,22 @@ func trackStats(t *pubTrack, now time.Time) stats.PublishedTrackStats {
 	ts := stats.PublishedTrackStats{
 		SID: info.GetSid(), Kind: strings.ToLower(strings.TrimPrefix(info.GetType().String(), "TRACK_TYPE_")),
 		Source: strings.ToLower(strings.TrimPrefix(info.GetSource().String(), "TRACK_SOURCE_")),
-		Codec:  info.GetMimeType(), Muted: info.GetMuted(), Simulcast: info.GetSimulcast(),
-		Subscribers: len(t.recv.DownTracks()), Layers: []stats.LayerStats{},
+		Codec:  info.GetMimeType(), Muted: info.GetMuted(), Width: info.GetWidth(), Height: info.GetHeight(),
+		Subscribers: len(t.recv.DownTracks()),
 	}
 	clock := float64(t.recv.Codec().ClockRate)
 	if clock == 0 {
 		clock = 90000
 	}
 	var expected, lost uint64
-	for _, l := range t.recv.LayerStats(now) {
-		ls := stats.LayerStats{Spatial: l.Spatial, Quality: qualityName(l.Spatial), RID: l.RID, SSRC: l.SSRC, BitrateBps: l.BitrateBps, Active: l.PPS > 0}
-		for _, vl := range info.GetLayers() {
-			if types.SpatialForQuality(vl.GetQuality()) == l.Spatial {
-				ls.Width, ls.Height = vl.GetWidth(), vl.GetHeight()
-			}
-		}
-		ts.Layers = append(ts.Layers, ls)
-		ts.BitrateBps += l.BitrateBps
-		ts.PacketsRecv += l.Buffer.PacketsReceived
-		ts.PacketsLost += l.Buffer.PacketsLost
-		expected += l.Buffer.Expected
-		lost += l.Buffer.PacketsLost
-		ts.NACKs += l.NACKs
-		ts.PLIs += l.PLIs
-		if j := l.Buffer.Jitter * 1000 / clock; j > ts.JitterMs {
-			ts.JitterMs = j
-		}
+	if l, ok := t.recv.StreamStats(now); ok {
+		ts.SSRC, ts.Active = l.SSRC, l.PPS > 0
+		ts.BitrateBps = l.BitrateBps
+		ts.PacketsRecv = l.Buffer.PacketsReceived
+		ts.PacketsLost = l.Buffer.PacketsLost
+		expected, lost = l.Buffer.Expected, l.Buffer.PacketsLost
+		ts.NACKs, ts.PLIs = l.NACKs, l.PLIs
+		ts.JitterMs = l.Buffer.Jitter * 1000 / clock
 	}
 	if expected > 0 {
 		ts.LossPercent = float64(lost) * 100 / float64(expected)
@@ -161,16 +148,6 @@ func trackStats(t *pubTrack, now time.Time) stats.PublishedTrackStats {
 		ts.Kind = "audio"
 	}
 	return ts
-}
-
-func qualityName(s int32) string {
-	switch s {
-	case 0:
-		return "low"
-	case 1:
-		return "medium"
-	}
-	return "high"
 }
 
 // qualityFrom derives a 1..5 score from loss and RTT.

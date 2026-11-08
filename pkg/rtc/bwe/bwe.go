@@ -1,14 +1,12 @@
 // Package bwe implements send-side bandwidth estimation from TWCC feedback
 // (delay-based trendline + loss-based bound, from scratch) and the
-// per-subscriber StreamAllocator that turns the estimate into target layers.
+// per-subscriber StreamAllocator that decides which video tracks fit.
 package bwe
 
 import (
 	"time"
 
 	"github.com/pion/rtcp"
-
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 // CongestionState of the estimator.
@@ -53,24 +51,23 @@ type Padder interface {
 // (255 bytes of padding plus RTP header and extension).
 const PaddingPacketBytes = 255 + 20
 
-// AllocatableTrack is the allocator's view of a DownTrack.
+// AllocatableTrack is the allocator's view of a DownTrack (one stream per track).
 type AllocatableTrack interface {
 	ID() string
 	IsVideo() bool
-	// Priority: higher first. Screen share defaults higher than camera.
+	// Priority: higher first.
 	Priority() uint32
-	// MaxLayer requested by the subscriber (preferences/adaptive stream).
-	MaxLayer() types.VideoLayer
-	// Bitrates measured on the publisher side for each layer.
-	Bitrates() types.Bitrates
-	// SetTargetLayer applies the allocation (InvalidVideoLayer = paused).
-	SetTargetLayer(l types.VideoLayer)
+	// Wanted is false when the subscriber disabled the track.
+	Wanted() bool
+	// Bitrate measured on the publisher side, bits per second.
+	Bitrate() int64
+	// SetAllocPaused applies the allocation.
+	SetAllocPaused(paused bool)
 }
 
 // Allocation is the allocator's decision for one track.
 type Allocation struct {
 	TrackID string
-	Target  types.VideoLayer
 	Paused  bool
 	Bitrate int64
 }
@@ -79,7 +76,7 @@ type Allocation struct {
 type Allocator interface {
 	AddTrack(t AllocatableTrack)
 	RemoveTrack(id string)
-	// OnTrackChanged is called when preferences or available layers change.
+	// OnTrackChanged is called when a track's preferences change.
 	OnTrackChanged(id string)
 	// OnPausedChanged is invoked with tracks paused/resumed by the allocator.
 	OnPausedChanged(func(changed []Allocation))
@@ -95,8 +92,6 @@ type Config struct {
 	// MinBitrate/MaxBitrate clamp the estimate.
 	MinBitrate int64
 	MaxBitrate int64
-	// UpgradeHold is how long an estimate must support a higher layer before upgrading.
-	UpgradeHold time.Duration
 	// StartBitrate is the initial estimate (default 1.5 Mbit/s).
 	StartBitrate int64
 }

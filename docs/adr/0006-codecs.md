@@ -1,5 +1,8 @@
 # ADR-0006: Codec set: Opus, VP8 and H.264 simulcast
 
+> **Amended 2026-11-08 (ADR-0012):** on `main`, VP8 and simulcast are removed: video is one
+> H.264 stream per track, audio Opus (or RED). The `single-node` branch keeps the codec set below.
+
 - Status: accepted
 - Date: 2026-11-04
 - Deciders: Tessera maintainers

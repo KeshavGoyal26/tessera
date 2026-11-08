@@ -373,18 +373,6 @@ summary {
   border-color: #6b2a33;
   color: #ffb4b4;
 }
-.quality {
-  align-items: center;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 0.7rem;
-  gap: 4px;
-  padding: 8px 10px;
-}
-.quality select {
-  padding: 3px 6px;
-}
 
 @media (max-width: 560px) {
   .topbar {

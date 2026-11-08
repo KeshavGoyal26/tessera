@@ -1,7 +1,7 @@
 # ADR-0012: Edge tier (SFU + TURN) in front of private media servers
 
 - Status: proposed
-- Date: 2026-11-08 (revised the same day: fixed roles, always-on media, single stream)
+- Date: 2026-11-08 (revised the same day: fixed roles, always-on media, single stream, H.264 only)
 - Deciders: Tessera maintainers
 
 ## Context
@@ -47,8 +47,10 @@ What this removes:
 - about two thirds of a presenter's upload, and of the media server's packets and buffer memory
   per presenter.
 
-Simulcast code stays in the codebase (the `single-node` branch uses it). It is not used in this
-deployment and may come back later as a separate step if field data calls for it.
+Simulcast and VP8 are **removed from `main`** (phase 0): every presenter is recorded and recording
+is H.264-only, so both would be dead code. They stay on the `single-node` branch and in history,
+and may come back as a separate step if field data calls for them. The server refuses a
+multi-layer (simulcast) publish and any codec other than H.264 and Opus.
 
 What it costs, accepted:
 - a viewer whose downlink cannot carry all its tiles gets some tiles **paused**, not lowered;
@@ -201,17 +203,19 @@ Each phase is tested before the next.
 
 | Phase | Content | Test gate | Effort |
 |---|---|---|---|
+| 0 | Remove simulcast and VP8 from `main` (layer switching, per-layer receiver state, layer allocation and dynacast, recorder layer-following, VP8 munging and temporal layers, SDK simulcast and adaptive stream); fixed presenter and viewer permissions; single-stream and codec checks; removed protocol fields reserved | unit, SDK and browser suites; local 5% uplink-loss run without freezes | 2-3 days |
 | 1 | Redis registry, `/rtc/route`, presenter placement, edge WebSocket proxy and TURN to private media servers, presenter permissions and single stream (viewers still on the media server) | presenters record through an edge; kill and drain drills | 3 days |
 | 2 | Relay session (edge subscribes from media servers), group presence on edges, viewers on edges with on-demand subscription | a viewer watches presenters on 3 media servers through one edge; switching among 10 of 100; e2e tests | 4-5 days |
 | 3 | Failure and drain handling, crash journal in Redis, group affinity | the drills in the table above | 2 days |
 | 4 | GCP: 2 edges, 3 media servers, Redis; soak, network scenarios, failure drills | same bars as the single-node soak | 2 days plus GCP cost (estimated before starting) |
 
-About **1.5-2 weeks** in total.
+About **2-2.5 weeks** in total.
 
-## Open questions
+## Settled parameters
 
-- Is 360p at 15-20 fps enough for recordings and for an enlarged view? The setting can change
-  without code.
+- **Video quality:** 360p at 15-20 fps (a server setting).
+- **Sessions:** last 3-4 hours, which bounds a media server's drain.
+- **Redis:** managed ElastiCache with a replica in production; a VM for testing.
 
 ## Alternatives considered
 

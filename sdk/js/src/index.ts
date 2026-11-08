@@ -22,11 +22,9 @@ export {
   TrackPublication,
 } from "./track/TrackPublication.js";
 
-export { MIN_SIMULCAST_LAYER_SIZE, VideoPresets, computeSimulcastEncodings } from "./rtc/simulcast.js";
-export type { VideoPreset } from "./rtc/simulcast.js";
+export { VideoPresets } from "./rtc/video.js";
+export type { VideoPreset } from "./rtc/video.js";
 export { PCTransport } from "./rtc/PCTransport.js";
-export { AdaptiveStream, computeAdaptiveSettings } from "./rtc/adaptive.js";
-export type { AdaptiveSettings, ElementState } from "./rtc/adaptive.js";
 export { StatsSampler } from "./rtc/stats.js";
 export type { MediaStatsSummary, StatsSummary } from "./rtc/stats.js";
 export {

@@ -152,9 +152,11 @@ message TrackInfo {
   bool muted = 4;
   uint32 width = 5;
   uint32 height = 6;
+  // Deprecated: always false (one stream per track, ADR-0012).
   bool simulcast = 7;
   bool disable_dtx = 8;
   TrackSource source = 9;
+  // Deprecated: always empty (one stream per track, ADR-0012).
   repeated VideoLayer layers = 10;
   // Negotiated codec MIME type, e.g. "video/H264".
   string mime_type = 11;

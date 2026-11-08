@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 type fakeEst struct{ bps int64 }
@@ -18,80 +16,66 @@ func (f *fakeEst) Estimate() int64                                       { retur
 func (f *fakeEst) State() CongestionState                                { return StateNormal }
 
 type fakeTrack struct {
-	id     string
-	video  bool
-	prio   uint32
-	max    types.VideoLayer
-	rates  types.Bitrates
-	target types.VideoLayer
+	id       string
+	video    bool
+	prio     uint32
+	disabled bool
+	rate     int64
+	paused   bool
 }
 
-func (t *fakeTrack) ID() string                        { return t.id }
-func (t *fakeTrack) IsVideo() bool                     { return t.video }
-func (t *fakeTrack) Priority() uint32                  { return t.prio }
-func (t *fakeTrack) MaxLayer() types.VideoLayer        { return t.max }
-func (t *fakeTrack) Bitrates() types.Bitrates          { return t.rates }
-func (t *fakeTrack) SetTargetLayer(l types.VideoLayer) { t.target = l }
+func (t *fakeTrack) ID() string                 { return t.id }
+func (t *fakeTrack) IsVideo() bool              { return t.video }
+func (t *fakeTrack) Priority() uint32           { return t.prio }
+func (t *fakeTrack) Wanted() bool               { return !t.disabled }
+func (t *fakeTrack) Bitrate() int64             { return t.rate }
+func (t *fakeTrack) SetAllocPaused(paused bool) { t.paused = paused }
 
-func video(id string, prio uint32, q, h, f int64) *fakeTrack {
-	t := &fakeTrack{id: id, video: true, prio: prio, max: types.VideoLayer{Spatial: 2, Temporal: 3}}
-	for i, r := range []int64{q, h, f} {
-		for tl := range types.MaxTemporalLayers {
-			t.rates[i][tl] = r
-		}
-	}
-	return t
+func video(id string, prio uint32, rate int64) *fakeTrack {
+	return &fakeTrack{id: id, video: true, prio: prio, rate: rate}
 }
 
 func TestAllocatorDecisions(t *testing.T) {
 	est := &fakeEst{bps: 3_000_000}
-	a := NewAllocator(Config{Enabled: true, AllowPause: true, UpgradeHold: 3 * time.Second}, est).(*allocator)
-	clock := time.Unix(1000, 0)
-	a.now = func() time.Time { return clock }
+	a := NewAllocator(Config{Enabled: true, AllowPause: true}, est).(*allocator)
 	var paused []Allocation
 	a.OnPausedChanged(func(c []Allocation) { paused = append(paused, c...) })
-	audio := &fakeTrack{id: "a", rates: types.Bitrates{{50_000, 50_000, 50_000, 50_000}}}
-	cam := video("cam", 1, 150_000, 500_000, 1_500_000)
-	screen := video("screen", 2, 200_000, 600_000, 1_200_000)
-	for _, tr := range []AllocatableTrack{audio, cam, screen} {
-		a.AddTrack(tr)
+	audio := &fakeTrack{id: "a", rate: 50_000}
+	cams := []*fakeTrack{video("cam1", 2, 500_000), video("cam2", 1, 500_000), video("cam3", 1, 500_000)}
+	a.AddTrack(audio)
+	for _, c := range cams {
+		a.AddTrack(c)
 	}
 	a.Allocate()
-	// 3M*0.95 - 50k = 2.8M: screen high (1.2M) + cam medium (500k) after low passes... check budget greedily.
-	if screen.target.Spatial != 2 || cam.target.Spatial < 1 {
-		t.Fatalf("plenty: screen %v cam %v", screen.target, cam.target)
+	if cams[0].paused || cams[1].paused || cams[2].paused || len(paused) != 0 {
+		t.Fatalf("plenty: %+v %+v %+v paused %+v", cams[0], cams[1], cams[2], paused)
 	}
-	// Congestion: immediate downgrade, lower priority suffers first.
-	est.bps = 900_000
+	// 1.2M*0.95 - 50k = 1.09M: two fit, the lowest priority (then highest id) pauses.
+	est.bps = 1_200_000
 	a.Allocate()
-	if screen.target.Spatial != 1 || cam.target.Spatial != 0 {
-		t.Fatalf("900k: screen %v cam %v", screen.target, cam.target)
+	if cams[0].paused || cams[1].paused || !cams[2].paused || len(paused) != 1 || paused[0].TrackID != "cam3" || !paused[0].Paused {
+		t.Fatalf("1.2M: %v %v %v paused %+v", cams[0].paused, cams[1].paused, cams[2].paused, paused)
 	}
-	// Not even both low layers fit: lowest priority video paused.
-	est.bps = 300_000
+	// A track the subscriber disabled uses no bandwidth and is not "paused".
+	cams[1].disabled = true
 	a.Allocate()
-	if screen.target.Spatial != 0 || cam.target.IsValid() || len(paused) != 1 || paused[0].TrackID != "cam" || !paused[0].Paused {
-		t.Fatalf("300k: screen %v cam %v paused %+v", screen.target, cam.target, paused)
+	if cams[1].paused || cams[2].paused || len(paused) != 2 || paused[1].TrackID != "cam3" || paused[1].Paused {
+		t.Fatalf("cam2 disabled: %v %v paused %+v", cams[1].paused, cams[2].paused, paused)
 	}
-	// Recovery is held for UpgradeHold.
+	// Recovery resumes everything and reports it.
+	cams[1].disabled = false
 	est.bps = 3_000_000
 	a.Allocate()
-	if screen.target.Spatial != 0 {
-		t.Fatalf("upgrade not held: %v", screen.target)
+	if cams[0].paused || cams[1].paused || cams[2].paused {
+		t.Fatalf("recovered: %v %v %v", cams[0].paused, cams[1].paused, cams[2].paused)
 	}
-	clock = clock.Add(4 * time.Second)
-	a.Allocate()
-	if screen.target.Spatial != 2 || !cam.target.IsValid() {
-		t.Fatalf("after hold: screen %v cam %v", screen.target, cam.target)
-	}
-	if paused[len(paused)-1].Paused {
-		t.Fatal("resume not reported")
-	}
-	// Subscriber preference caps the layer.
-	screen.max = types.VideoLayer{Spatial: 0, Temporal: 3}
-	a.Allocate()
-	if screen.target.Spatial != 0 {
-		t.Fatal(screen.target)
+	// Without AllowPause nothing is paused, however low the estimate.
+	b := NewAllocator(Config{Enabled: true}, &fakeEst{bps: 100_000}).(*allocator)
+	c := video("c", 1, 500_000)
+	b.AddTrack(c)
+	b.Allocate()
+	if c.paused {
+		t.Fatal("paused without AllowPause")
 	}
 }
 
@@ -253,5 +237,48 @@ func TestEstimatorBacksOffOnGrowingQueue(t *testing.T) {
 	feedDelay(e, time.Now(), 0, 40, func(int) time.Duration { return 5 * time.Millisecond }) // 25% over capacity
 	if got := e.Estimate(); got > start*8/10 {
 		t.Fatalf("estimate %d, want well below %d with a growing queue", got, start)
+	}
+}
+
+// With every wanted video paused nothing can carry probe padding: after a back-off
+// the first paused track is resumed on trial, kept if the estimate comes to cover
+// it, and paused again (with a longer back-off) if not.
+func TestAllocatorTrialResume(t *testing.T) {
+	est := &fakeEst{bps: 300_000}
+	a := NewAllocator(Config{Enabled: true, AllowPause: true}, est).(*allocator)
+	clock := time.Unix(1000, 0)
+	a.now = func() time.Time { return clock }
+	cam := video("cam", 1, 450_000)
+	a.AddTrack(cam)
+	step := func(d time.Duration) { clock = clock.Add(d); a.Allocate() }
+	step(0)
+	if !cam.paused {
+		t.Fatal("450k does not fit 300k: must pause")
+	}
+	step(4 * time.Second)
+	if !cam.paused {
+		t.Fatal("trial before the back-off")
+	}
+	step(time.Second) // 5 s stalled: trial
+	if cam.paused {
+		t.Fatal("no trial resume after 5 s")
+	}
+	step(trialHold) // the estimate never covered it: paused again, back-off 10 s
+	if !cam.paused {
+		t.Fatal("failed trial must pause again")
+	}
+	step(9 * time.Second)
+	if !cam.paused {
+		t.Fatal("trial again before the doubled back-off")
+	}
+	step(time.Second)
+	if cam.paused {
+		t.Fatal("no second trial after 10 s")
+	}
+	est.bps = 2_000_000 // the trial's traffic raised the estimate
+	step(allocTick)
+	step(trialHold + time.Second)
+	if cam.paused || a.trialID != "" || a.trialBackoff != 0 {
+		t.Fatalf("successful trial must keep the track on: paused=%v trial=%q backoff=%v", cam.paused, a.trialID, a.trialBackoff)
 	}
 }

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 // runProbe sends n packets of size bytes every sendGap as one probe cluster and
@@ -88,103 +86,99 @@ type padTrack struct {
 
 func (p *padTrack) WritePadding(n int) int { p.padded.Add(int64(n)); return n }
 
-func TestAllocatorProbesForNextLayer(t *testing.T) {
-	est := &probeEst{fakeEst: fakeEst{bps: 1_500_000}}
-	a := NewAllocator(Config{Enabled: true, AllowPause: true, Probe: true, UpgradeHold: 3 * time.Second}, est).(*allocator)
+// Two cameras of 450 kbit/s on a 900 kbit/s estimate: one is paused, and the other
+// carries probe padding for what resuming it needs.
+func newProbeSetup(t *testing.T, cfg Config) (*probeEst, *allocator, *padTrack, *padTrack, *time.Time) {
+	t.Helper()
+	est := &probeEst{fakeEst: fakeEst{bps: 900_000}}
+	a := NewAllocator(cfg, est).(*allocator)
 	clock := time.Unix(1000, 0)
 	a.now = func() time.Time { return clock }
-	defer a.Stop()
-	cam := &padTrack{fakeTrack: video("cam", 1, 150_000, 600_000, 2_000_000)}
-	a.AddTrack(&fakeTrack{id: "a", rates: types.Bitrates{{50_000, 50_000, 50_000, 50_000}}})
-	a.AddTrack(cam)
-
+	t.Cleanup(a.Stop)
+	cam1 := &padTrack{fakeTrack: video("cam1", 2, 450_000)}
+	cam2 := &padTrack{fakeTrack: video("cam2", 1, 450_000)}
+	a.AddTrack(&fakeTrack{id: "a", rate: 50_000})
+	a.AddTrack(cam1)
+	a.AddTrack(cam2)
 	a.Allocate()
-	if cam.target.Spatial != 1 {
-		t.Fatalf("1.5 Mbit/s should give the middle layer, got %v", cam.target)
+	if cam1.paused || !cam2.paused {
+		t.Fatalf("900 kbit/s should carry one camera: cam1 paused=%v cam2 paused=%v", cam1.paused, cam2.paused)
 	}
+	return est, a, cam1, cam2, &clock
+}
+
+func TestAllocatorProbesToResumePausedTrack(t *testing.T) {
+	est, a, cam1, cam2, clock := newProbeSetup(t, Config{Enabled: true, AllowPause: true, Probe: true})
 	if s, _ := est.counts(); s != 1 {
-		t.Fatalf("a starved track must start a probe, started=%d", s)
+		t.Fatalf("a paused track must start a probe, started=%d", s)
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for _, f := est.counts(); f == 0 && time.Now().Before(deadline); _, f = est.counts() {
 		time.Sleep(20 * time.Millisecond)
 	}
-	// Padding for 20% above the upgrade: (650k + 1.4M) * 1.2 - 650k = 1.81 Mbit/s for 0.5 s.
-	if p := cam.padded.Load(); p < 250 || p > 600 {
-		t.Fatalf("padded %d packets, want about %d", p, 1_810_000/2/8/PaddingPacketBytes)
+	// Padding for 20% above resuming: (500k + 450k) * 1.2 - 500k = 640 kbit/s for 0.5 s,
+	// on the forwarding camera.
+	if p := cam1.padded.Load(); p < 80 || p > 200 {
+		t.Fatalf("padded %d packets, want about %d", p, 640_000/2/8/PaddingPacketBytes)
 	}
-
-	// The probe succeeded: the estimate is high enough and the upgrade skips the hold.
+	if cam2.padded.Load() != 0 {
+		t.Fatal("padding went to the paused track")
+	}
 	est.mu.Lock()
-	est.done, est.result, est.bps = true, 3_000_000, 3_000_000
+	est.done, est.result, est.bps = true, 1_500_000, 1_500_000
 	est.mu.Unlock()
-	clock = clock.Add(allocTick)
+	*clock = clock.Add(allocTick)
 	a.Allocate() // registers the result
-	clock = clock.Add(allocTick)
+	*clock = clock.Add(allocTick)
 	a.Allocate()
-	if cam.target.Spatial != 2 {
-		t.Fatalf("after a successful probe the top layer should follow at once, got %v", cam.target)
+	if cam2.paused {
+		t.Fatal("after a successful probe the paused camera should resume")
 	}
 	if started, ok := a.ProbeStats(); started != 1 || ok != 1 {
 		t.Fatalf("probe stats %d/%d", started, ok)
 	}
-	// Nothing left to gain: no further probes.
-	clock = clock.Add(5 * time.Second)
+	*clock = clock.Add(5 * time.Second)
 	a.Allocate()
 	if s, _ := est.counts(); s != 1 {
-		t.Fatalf("no deficit must mean no probe, started=%d", s)
+		t.Fatalf("nothing paused must mean no probe, started=%d", s)
 	}
 }
 
 func TestAllocatorBacksOffAfterFailedProbe(t *testing.T) {
-	est := &probeEst{fakeEst: fakeEst{bps: 1_500_000}}
-	a := NewAllocator(Config{Enabled: true, AllowPause: true, Probe: true}, est).(*allocator)
-	clock := time.Unix(1000, 0)
-	a.now = func() time.Time { return clock }
-	defer a.Stop()
-	cam := &padTrack{fakeTrack: video("cam", 1, 150_000, 600_000, 2_000_000)}
-	a.AddTrack(cam)
-	a.Allocate()
+	est, a, _, cam2, clock := newProbeSetup(t, Config{Enabled: true, AllowPause: true, Probe: true})
 	est.mu.Lock()
 	est.done, est.result = true, 0 // failed
 	est.mu.Unlock()
-	clock = clock.Add(allocTick)
+	*clock = clock.Add(allocTick)
 	a.Allocate() // failure registered: back off 4 s
 	for range 6 {
-		clock = clock.Add(allocTick)
+		*clock = clock.Add(allocTick)
 		a.Allocate()
 	}
 	if s, _ := est.counts(); s != 1 {
 		t.Fatalf("probed again within the back-off, started=%d", s)
 	}
-	clock = clock.Add(2 * time.Second)
+	*clock = clock.Add(2 * time.Second)
 	a.Allocate()
 	if s, _ := est.counts(); s != 2 {
 		t.Fatalf("expected a retry after the back-off, started=%d", s)
 	}
-	if !cam.target.IsValid() || cam.target.Spatial != 1 {
-		t.Fatalf("a failed probe must not change the allocation, got %v", cam.target)
+	if !cam2.paused {
+		t.Fatal("a failed probe must not resume the track")
 	}
 }
 
-// A probe whose result falls short of the upgrade (a capped link) is not a success:
-// re-probing every tick kept such a link congested and the layer oscillating.
+// A probe whose result falls short of what resuming needs (a capped link) is not a
+// success: re-probing every tick kept such a link congested and the track flapping.
 func TestAllocatorBacksOffWhenProbeFallsShort(t *testing.T) {
-	est := &probeEst{fakeEst: fakeEst{bps: 1_500_000}}
-	a := NewAllocator(Config{Enabled: true, AllowPause: true, Probe: true}, est).(*allocator)
-	clock := time.Unix(1000, 0)
-	a.now = func() time.Time { return clock }
-	defer a.Stop()
-	cam := &padTrack{fakeTrack: video("cam", 1, 150_000, 600_000, 2_000_000)}
-	a.AddTrack(cam)
-	a.Allocate()
+	est, a, _, _, clock := newProbeSetup(t, Config{Enabled: true, AllowPause: true, Probe: true})
 	est.mu.Lock()
-	est.done, est.result = true, 1_600_000 // the path carried more, but not the 2 Mbit/s layer
+	est.done, est.result = true, 900_000 // more than now, but not the 950 kbit/s needed
 	est.mu.Unlock()
-	clock = clock.Add(allocTick)
+	*clock = clock.Add(allocTick)
 	a.Allocate()
 	for range 6 {
-		clock = clock.Add(allocTick)
+		*clock = clock.Add(allocTick)
 		a.Allocate()
 	}
 	if s, _ := est.counts(); s != 1 {

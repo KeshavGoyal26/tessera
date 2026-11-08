@@ -5,20 +5,18 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-
-	"github.com/KeshavGoyal26/tessera/pkg/rtc/types"
 )
 
 // After an outage, while only audio is acknowledged, the acked-rate cap used to pull
-// the estimate below the lowest layer: video paused, and with nothing forwarding to
-// carry probe padding it stayed paused for good. It must keep (or regain) layer 0.
+// the estimate below the video stream: video paused, and with nothing forwarding to
+// carry probe padding it stayed paused for good. It must regain the stream.
 func TestVideoNotStuckPausedAfterOutage(t *testing.T) {
 	e := NewEstimator(Config{}).(*estimator)
 	a := NewAllocator(Config{Enabled: true, AllowPause: true, Probe: true}, e).(*allocator)
 	clock := time.Now()
 	a.now = func() time.Time { return clock }
-	audio := &fakeTrack{id: "a", rates: types.Bitrates{{40_000, 40_000, 40_000, 40_000}}}
-	cam := video("cam", 1, 200_000, 600_000, 1_700_000)
+	audio := &fakeTrack{id: "a", rate: 40_000}
+	cam := video("cam", 1, 450_000) // 360p
 	a.AddTrack(audio)
 	a.AddTrack(cam)
 	clock = feedLoss(e, clock, 0, 60, func(int) bool { return false })
@@ -38,7 +36,7 @@ func TestVideoNotStuckPausedAfterOutage(t *testing.T) {
 		e.OnTransportFeedback(fb, clock)
 		a.Allocate()
 	}
-	if !cam.target.IsValid() {
+	if cam.paused {
 		t.Fatalf("video paused after 60 s of audio-only feedback, estimate %d", e.Estimate())
 	}
 }

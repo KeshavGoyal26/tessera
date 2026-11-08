@@ -18,7 +18,7 @@ TLS (reverse proxy) in production; with plain HTTP the cookie is not `Secure`.
 |------|---------|
 | Overview | CPU, memory, goroutines, GC, UDP packets and bandwidth, totals, one hour of charts, alerts |
 | Rooms | rooms → participants → tracks; end room, remove participant, mute/unmute track, start recording (participant or track) |
-| Track quality | per published track: bitrate per simulcast layer, loss, jitter, fps, resolution, NACK/PLI/FIR; per subscriber: current/target layer, bandwidth estimate, layer switches, pause/dynacast state. Time series for the selected track are collected in the browser (last 15 min) |
+| Track quality | per published track: bitrate, loss, jitter, resolution, NACK/PLI/FIR; per subscriber: bandwidth estimate, restarts, paused/muted state. Time series for the selected track are collected in the browser (last 15 min) |
 | Connectivity | ICE candidate types, TURN (relay) usage, ICE/DTLS setup avg/p95/max, connection quality, RTT history |
 | Recordings | recorder workers (capacity, backlog, segment delay, errors), active tracks, coordinator jobs with Stop, finished recordings with playback through hls.js (needs a playlist URL, e.g. S3/CDN) |
 
