@@ -383,3 +383,53 @@ func TestMediaNodeCrashPresenterComesBack(t *testing.T) {
 		t.Fatal("the presenter should have rejoined on the remaining media node")
 	}
 }
+
+// Admin calls to an edge reach the media node of the presenter, and lists merge the
+// media nodes with the edge's viewers (ADR-0012 phase 3).
+func TestEdgeForwardsAdminCalls(t *testing.T) {
+	mr := miniredis.RunT(t)
+	media, _ := startMedia(t, mr, "m1")
+	edge, _ := newEdge(t, mr)
+	ecc, err := cluster.New(context.Background(), config.RedisConfig{Addr: mr.Addr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ecc.Close() })
+	fwd := &cluster.AdminForwarder{C: ecc, Local: edge.Manager, APIKey: apiKey, Secret: apiSecret}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	connect(t, edge, "g1", "pres")
+	no := false
+	connect(t, edge, "g1", "viewer", func(g *auth.RoomGrant) { g.CanPublish = &no })
+	time.Sleep(5500 * time.Millisecond) // the media node records that it hosts g1
+	ps, err := fwd.ListParticipants(ctx, "g1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, p := range ps {
+		ids[p.GetIdentity()] = true
+	}
+	if len(ps) != 2 || !ids["pres"] || !ids["viewer"] {
+		t.Fatalf("participants %v, want the presenter (media node) and the viewer (edge)", ids)
+	}
+	if p, err := fwd.GetParticipant(ctx, "g1", "pres"); err != nil || p.GetIdentity() != "pres" {
+		t.Fatalf("presenter lookup: %v %v", p, err)
+	}
+	if err := fwd.RemoveParticipant(ctx, "g1", "pres"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, r := range media.Manager.Snapshot().Rooms {
+		for _, p := range r.Participants {
+			if p.Identity == "pres" {
+				t.Fatal("the presenter was not removed from its media node")
+			}
+		}
+	}
+	rooms, err := fwd.ListRooms(ctx, nil)
+	if err != nil || len(rooms) != 1 || rooms[0].GetName() != "g1" {
+		t.Fatalf("rooms %v err %v", rooms, err)
+	}
+}

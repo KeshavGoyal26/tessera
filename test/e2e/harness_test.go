@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/KeshavGoyal26/tessera/pkg/admin"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
@@ -64,7 +66,11 @@ func startServer(t *testing.T, mutate ...func(*config.Config)) *server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(signal.NewServer(cfg.Signal, auth.NewVerifier(auth.StaticKeys(cfg.Keys)), mgr, logger))
+	verifier := auth.NewVerifier(auth.StaticKeys(cfg.Keys))
+	mux := http.NewServeMux()
+	mux.Handle(signal.Path, signal.NewServer(cfg.Signal, verifier, mgr, logger))
+	mux.Handle(admin.PathPrefix, admin.NewServer(admin.Params{Rooms: mgr, Verifier: verifier, Logger: logger}))
+	srv := httptest.NewServer(mux)
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {

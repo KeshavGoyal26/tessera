@@ -191,8 +191,15 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		}
 		logger.Info("recording enabled", "storage", cfg.Recording.Storage.Kind, "capacity", cfg.Recording.Capacity)
 	}
+	var adminRooms room.Admin = rooms
+	var adminRecordings recorder.Service = coordinator
+	if cc != nil && cfg.Cluster.Role == config.RoleEdge {
+		// Admin calls to an edge go to the media nodes concerned.
+		fwd := &cluster.AdminForwarder{C: cc, Local: rooms, APIKey: recKey, Secret: recSecret}
+		adminRooms, adminRecordings = fwd, fwd
+	}
 	adminSrv := admin.NewServer(admin.Params{
-		Rooms: rooms, Recordings: coordinator,
+		Rooms: adminRooms, Recordings: adminRecordings,
 		Verifier: verifier, Registry: reg, Logger: logger,
 	})
 	signalSrv := sig.NewServer(cfg.Signal, verifier, rooms, logger)

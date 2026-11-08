@@ -186,8 +186,9 @@ Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single
   track no viewer on the edge has subscribed to for 10 s is paused upstream (the media
   server stops sending it) and resumes, with a keyframe, when a viewer subscribes. Viewers
   subscribe on demand (`auto_subscribe: false`) to switch among presenters on one connection.
-- Admin API calls go to the media server that hosts the presenter (phase 3 adds forwarding
-  from edges).
+- The admin API can be called on any edge: presenter calls go to the presenter's media
+  server, room calls to every server hosting the room (and the edge's viewers), lists are
+  merged, and recordings are found through Redis. Webhooks come from the media servers.
 - With S3 recording storage the crash journal lives in Redis: when a media server disappears
   (no heartbeat for 10 s), another media server closes its open recordings (playlists sealed,
   master written, `recording_ended` with status FAILED) within about 30 s, even if the machine
