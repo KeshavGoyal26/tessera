@@ -18,6 +18,7 @@ import (
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/rtc/turn"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
@@ -283,7 +284,16 @@ func NewEngine(rtcCfg config.RTCConfig, turnCfg config.TURNConfig, reg prometheu
 				allowed = append(allowed, ip)
 			}
 		}
-		ts, err := turn.NewServer(turnCfg, relayIP, allowed, logger)
+		var peers []*net.IPNet
+		for _, c := range turnCfg.RelayPeers {
+			_, n, err := net.ParseCIDR(c)
+			if err != nil {
+				e.closeConns()
+				return nil, errs.New(errs.CodeInvalidArgument, "turn.relay_peers: bad CIDR %q", c)
+			}
+			peers = append(peers, n)
+		}
+		ts, err := turn.NewServer(turnCfg, relayIP, allowed, peers, logger)
 		if err != nil {
 			e.closeConns()
 			return nil, err
@@ -327,9 +337,13 @@ func (e *engine) closeConns() {
 }
 
 // ICEServers implements Engine: configured servers plus per-session
-// credentials for the embedded TURN server.
+// credentials for the shared-secret TURN relays and the embedded TURN server.
 func (e *engine) ICEServers(participantSID string) []*tesserav1.ICEServer {
 	out := append([]*tesserav1.ICEServer{}, e.iceSrv...)
+	if r := e.cfg.TURNRelay; len(r.URLs) > 0 {
+		u, p := turn.RESTCredentials(r.Secret, participantSID, r.TTL)
+		out = append(out, &tesserav1.ICEServer{Urls: r.URLs, Username: u, Credential: p})
+	}
 	if e.turn != nil {
 		if urls := e.turn.URLs(); len(urls) > 0 {
 			u, p := e.turn.Credentials(participantSID, e.turnTTL)

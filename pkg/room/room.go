@@ -141,6 +141,15 @@ func (m *manager) notify(t tesserav1.WebhookEventType, r *Room, p *Participant, 
 	m.notifier.Notify(context.Background(), ev)
 }
 
+// clientConfiguration is sent in JoinResponse and ReconnectResponse; nil when it
+// holds nothing.
+func (m *manager) clientConfiguration() *tesserav1.ClientConfiguration {
+	if !m.cfg.RTC.TURNRelay.Force {
+		return nil
+	}
+	return &tesserav1.ClientConfiguration{ForceRelay: true}
+}
+
 func (m *manager) getRoom(name string) *Room {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

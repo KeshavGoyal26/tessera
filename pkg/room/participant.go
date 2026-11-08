@@ -249,6 +249,7 @@ func (p *Participant) start() error {
 		IceServers:   m.engine.ICEServers(p.sid),
 		PingInterval: uint32(m.cfg.Signal.PingInterval / time.Second), PingTimeout: uint32(m.cfg.Signal.PingTimeout / time.Second),
 		EnabledPublishCodecs: codecs, ResumeWindow: uint32(m.cfg.Signal.ResumeWindow / time.Second),
+		ClientConfiguration: m.clientConfiguration(),
 	}}})
 	// JoinResponse must be the first message: negotiate the subscriber PC
 	// (data channels) only after it is queued.
@@ -278,10 +279,8 @@ func (p *Participant) rtcpLoop() {
 			dts = append(dts, s.dt)
 		}
 		recvs := make([]*rtc.ReceiverImpl, 0, len(p.tracks))
-		ptracks := make([]*pubTrack, 0, len(p.tracks))
 		for _, tr := range p.tracks {
 			recvs = append(recvs, tr.recv)
-			ptracks = append(ptracks, tr)
 		}
 		p.mu.Unlock()
 		// Round trips measured on the media paths (ICE) pace NACK retries towards
@@ -465,7 +464,8 @@ func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	}
 	p.lastSeen.Store(time.Now().UnixNano())
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Reconnect{Reconnect: &tesserav1.ReconnectResponse{
-		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto()}}})
+		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(),
+		ClientConfiguration: p.room.m.clientConfiguration()}}})
 	return p.run(ctx)
 }
 
@@ -572,6 +572,10 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 	case *tesserav1.SignalRequest_AddTrack:
 		p.addTrack(id, m.AddTrack)
 	case *tesserav1.SignalRequest_Mute:
+		if p.room.m.cfg.Room.LockPublishedTracks {
+			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "published tracks are locked: mute is not allowed")
+			return false
+		}
 		if _, err := p.setTrackMuted(m.Mute.GetSid(), m.Mute.GetMuted()); err != nil {
 			p.respond(id, tesserav1.RequestResponse_REASON_NOT_FOUND, err.Error())
 			return false
@@ -584,6 +588,10 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 	case *tesserav1.SignalRequest_Leave:
 		return true
 	case *tesserav1.SignalRequest_UnpublishTrack:
+		if p.room.m.cfg.Room.LockPublishedTracks {
+			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "published tracks are locked: unpublish is not allowed")
+			return false
+		}
 		p.unpublish(m.UnpublishTrack.GetTrackSid())
 	case *tesserav1.SignalRequest_UpdateMetadata:
 		if !p.permission().GetCanUpdateMetadata() {

@@ -72,3 +72,30 @@ func TestEnvKeys(t *testing.T) {
 		t.Fatalf("keys: %v", cfg.Keys)
 	}
 }
+
+func TestValidateClusterRoles(t *testing.T) {
+	base := func() *Config {
+		cfg := Default()
+		cfg.Keys = map[string]string{"APIkey": goodSecret}
+		return cfg
+	}
+	cfg := base()
+	cfg.Cluster.Role = RoleMedia
+	if cfg.Validate() == nil {
+		t.Fatal("a media node without redis, node_id and private_url must be refused")
+	}
+	cfg.Cluster.Redis.Addr, cfg.NodeID, cfg.Cluster.PrivateURL = "127.0.0.1:6379", "m1", "http://10.0.0.5:7880"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg = base()
+	cfg.Cluster.Role = "router"
+	if cfg.Validate() == nil {
+		t.Fatal("unknown role accepted")
+	}
+	cfg = base()
+	cfg.RTC.TURNRelay.URLs = []string{"turn:edge.example.com:3478"}
+	if cfg.Validate() == nil {
+		t.Fatal("turn_relay urls without a secret accepted")
+	}
+}

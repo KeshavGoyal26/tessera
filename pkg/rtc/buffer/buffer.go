@@ -267,8 +267,7 @@ func (b *Buffer) parsePayload(e *ExtPacket, raw []byte, h *Header) {
 	if e.PaddingOnly {
 		return
 	}
-	switch b.codec {
-	case codecH264:
+	if b.codec == codecH264 {
 		// A keyframe starts with its SPS: browsers send SPS and PPS before every IDR.
 		// When that packet is lost and comes back late, the IDR fragment after it must
 		// not count as the start: a layer switch there forwards the IDR without the

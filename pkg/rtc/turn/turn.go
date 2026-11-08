@@ -35,8 +35,9 @@ type Server struct {
 
 // NewServer starts the TURN listeners. It returns (nil, nil) when TURN is
 // disabled. relayIP is the address relayed traffic uses (the node's media
-// IP); allowed lists the peer IPs clients may relay to.
-func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *slog.Logger) (*Server, error) {
+// IP); allowed lists the peer IPs clients may relay to, peers extra networks
+// (an edge's media-server subnet, ADR-0012).
+func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []*net.IPNet, logger *slog.Logger) (*Server, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -59,6 +60,11 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, logger *
 	permit := func(_ net.Addr, peer net.IP) bool {
 		for _, a := range allowed {
 			if a.Equal(peer) {
+				return true
+			}
+		}
+		for _, n := range peers {
+			if n.Contains(peer) {
 				return true
 			}
 		}
@@ -138,7 +144,16 @@ func (s *Server) Credentials(participantSID string, ttl time.Duration) (username
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	u, p, err := pturn.GenerateLongTermTURNRESTCredentials(s.secret, participantSID, ttl)
+	return RESTCredentials(s.secret, participantSID, ttl)
+}
+
+// RESTCredentials returns TURN REST API credentials (username "expiry:user", HMAC
+// password) that any TURN server sharing secret accepts until ttl elapses.
+func RESTCredentials(secret, user string, ttl time.Duration) (username, password string) {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	u, p, err := pturn.GenerateLongTermTURNRESTCredentials(secret, user, ttl)
 	if err != nil {
 		return "", ""
 	}

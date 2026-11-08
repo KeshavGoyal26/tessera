@@ -38,6 +38,32 @@ type Config struct {
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Limits    LimitsConfig    `yaml:"limits"`
+	Cluster   ClusterConfig   `yaml:"cluster"`
+}
+
+// Cluster roles (ADR-0012).
+const (
+	RoleSingle = ""      // one node is everything (no Redis)
+	RoleEdge   = "edge"  // public: proxies signaling to media nodes and relays media (TURN)
+	RoleMedia  = "media" // private: hosts rooms, receives and records media
+)
+
+// ClusterConfig places the node in a multi-node deployment (ADR-0012).
+type ClusterConfig struct {
+	// Role: "" (single node), "edge" or "media".
+	Role  string      `yaml:"role"`
+	Redis RedisConfig `yaml:"redis"`
+	// PrivateURL is how edges reach this media node's HTTP port, e.g. http://10.0.0.5:7880.
+	PrivateURL string `yaml:"private_url"`
+}
+
+// RedisConfig connects to the cluster's Redis.
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	TLS      bool   `yaml:"tls"`
 }
 
 // RTCConfig configures ICE and the forwarding engine.
@@ -53,6 +79,8 @@ type RTCConfig struct {
 	NodeIP string `yaml:"node_ip"`
 	// ICEServers are extra STUN/TURN servers handed to clients.
 	ICEServers []ICEServerConfig `yaml:"ice_servers"`
+	// TURNRelay hands out per-session credentials for shared-secret TURN servers.
+	TURNRelay TURNRelayConfig `yaml:"turn_relay"`
 	// SocketBufferSize sets SO_RCVBUF/SO_SNDBUF on media sockets, bytes.
 	SocketBufferSize int `yaml:"socket_buffer_size"`
 	// PLIThrottle is the minimum interval between PLIs per layer.
@@ -95,6 +123,20 @@ type TURNConfig struct {
 	CredentialTTL   time.Duration `yaml:"credential_ttl"`
 	RelayRangeStart int           `yaml:"relay_range_start"`
 	RelayRangeEnd   int           `yaml:"relay_range_end"`
+	// RelayPeers are extra networks (CIDR) clients may relay to, besides this node: the
+	// media servers' subnet on an edge (ADR-0012).
+	RelayPeers []string `yaml:"relay_peers"`
+}
+
+// TURNRelayConfig points clients at TURN servers that share Secret (TURN REST API
+// credentials, as coturn's use-auth-secret and the embedded TURN): a media node hands
+// out per-session credentials for the edges' TURN.
+type TURNRelayConfig struct {
+	URLs   []string      `yaml:"urls"`
+	Secret string        `yaml:"secret"`
+	TTL    time.Duration `yaml:"ttl"`
+	// Force makes clients use only relay candidates (media servers stay private).
+	Force bool `yaml:"force"`
 }
 
 // RoomConfig sets room defaults.
@@ -104,6 +146,9 @@ type RoomConfig struct {
 	EmptyTimeout     time.Duration `yaml:"empty_timeout"`
 	DepartureTimeout time.Duration `yaml:"departure_timeout"`
 	MaxParticipants  int           `yaml:"max_participants"`
+	// LockPublishedTracks refuses client mute and unpublish requests: presenters'
+	// camera and microphone stay on (ADR-0012). Admin mute still works.
+	LockPublishedTracks bool `yaml:"lock_published_tracks"`
 }
 
 // SignalConfig configures WebSocket sessions.
@@ -284,6 +329,24 @@ func (c *Config) Validate() error {
 	var errs []error
 	if c.Port <= 0 || c.Port > 65535 {
 		errs = append(errs, fmt.Errorf("port %d out of range", c.Port))
+	}
+	switch c.Cluster.Role {
+	case RoleSingle:
+	case RoleEdge, RoleMedia:
+		if c.Cluster.Redis.Addr == "" {
+			errs = append(errs, errors.New("cluster.redis.addr is required with a cluster role"))
+		}
+		if c.NodeID == "" {
+			errs = append(errs, errors.New("node_id is required with a cluster role"))
+		}
+		if c.Cluster.Role == RoleMedia && c.Cluster.PrivateURL == "" {
+			errs = append(errs, errors.New("cluster.private_url is required for a media node"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("cluster.role %q: want edge, media or empty", c.Cluster.Role))
+	}
+	if r := c.RTC.TURNRelay; len(r.URLs) > 0 && r.Secret == "" {
+		errs = append(errs, errors.New("rtc.turn_relay.secret is required with urls"))
 	}
 	if len(c.Keys) == 0 && c.KeyFile == "" {
 		errs = append(errs, errors.New("no API keys configured (keys or key_file)"))
