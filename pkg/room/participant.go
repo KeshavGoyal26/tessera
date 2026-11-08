@@ -79,6 +79,8 @@ func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signa
 	switch {
 	case perm.Recorder:
 		kind = tesserav1.ParticipantInfo_KIND_RECORDER
+	case perm.Relay:
+		kind = tesserav1.ParticipantInfo_KIND_RELAY
 	case cp.Client.GetSdk() == tesserav1.ClientInfo_SDK_LOADTEST:
 		kind = tesserav1.ParticipantInfo_KIND_LOADTEST
 	}
@@ -200,10 +202,10 @@ func (p *Participant) start() error {
 			return err
 		}
 		cc := m.cfg.RTC.CongestionControl
-		if p.kind == tesserav1.ParticipantInfo_KIND_RECORDER {
-			// Recorders run next to the server and must never be downgraded or
-			// paused; they also may not read every subscribed track, which
-			// would starve TWCC feedback.
+		if p.kind == tesserav1.ParticipantInfo_KIND_RECORDER || p.kind == tesserav1.ParticipantInfo_KIND_RELAY {
+			// Recorders and edge relays run next to the server (private network) and
+			// must never be paused; recorders also may not read every subscribed
+			// track, which would starve TWCC feedback.
 			cc.Enabled = false
 		}
 		bcfg := bwe.Config{Enabled: cc.Enabled, AllowPause: cc.AllowPause, Probe: cc.Probe}

@@ -14,6 +14,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/cluster"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/signal"
 )
 
 // startMedia starts a media node registered in the cluster; stop removes it (as a
@@ -143,5 +144,74 @@ func TestEdgeRelaysToMediaNodes(t *testing.T) {
 	connect(t, edge, "r1", "late")
 	if !hosts(m2, "r1") {
 		t.Fatal("r1 was not placed again after its media node left")
+	}
+}
+
+// TestEdgeServesViewersThroughRelay: a presenter publishes through the edge to a media
+// node; a viewer (can_publish false) joins the edge's own room, where the edge relays
+// the presenter from the media node, and receives the video (ADR-0012 phase 2).
+func TestEdgeServesViewersThroughRelay(t *testing.T) {
+	mr := miniredis.RunT(t)
+	media, _ := startMedia(t, mr, "m1")
+	local := startServer(t) // the edge's own rooms (viewers)
+	ecc, err := cluster.New(context.Background(), config.RedisConfig{Addr: mr.Addr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ecc.Close() })
+	verifier := auth.NewVerifier(auth.StaticKeys(media.cfg.Keys))
+	relays := &cluster.Relays{Cluster: ecc, Rooms: local.Manager, NodeID: "e1", APIKey: apiKey, APISecret: apiSecret,
+		SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger()}
+	t.Cleanup(relays.Close)
+	edgeHTTP := httptest.NewServer(&cluster.Edge{Cluster: ecc, Verifier: verifier, Relays: relays, Logger: testLogger(),
+		Local: signal.NewServer(local.cfg.Signal, verifier, local.Manager, testLogger())})
+	t.Cleanup(edgeHTTP.Close)
+	edge := &server{URL: "ws://" + strings.TrimPrefix(edgeHTTP.URL, "http://"), cfg: media.cfg}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+
+	pres := connect(t, edge, "g1", "pres")
+	v := newVideoStream(t, "cam", 100)
+	if _, err := pres.PublishTrack(ctx, v.track, client.PublishOptions{Name: "cam", Width: 640, Height: 360}); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		tk := time.NewTicker(20 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tk.C:
+				v.writeFrame()
+			}
+		}
+	}()
+	no := false
+	viewer := connect(t, edge, "g1", "viewer", func(g *auth.RoomGrant) { g.CanPublish = &no })
+	if !hosts(local, "g1") || hosts(media, "g1") && len(media.Manager.Snapshot().Rooms[0].Participants) > 2 {
+		t.Fatal("the viewer must be on the edge, the presenter on the media node")
+	}
+	got := make(chan string, 1)
+	viewer.SetCallbacks(client.Callbacks{OnTrackSubscribed: func(rt *client.RemoteTrack) {
+		go func() {
+			b := make([]byte, 1500)
+			for n := 0; n < 50; n++ {
+				if _, err := rt.Read(b); err != nil {
+					return
+				}
+			}
+			got <- rt.ParticipantIdentity
+		}()
+	}})
+	select {
+	case id := <-got:
+		if id != "pres" {
+			t.Fatalf("relayed track from %q, want the presenter", id)
+		}
+	case <-ctx.Done():
+		t.Fatal("the viewer on the edge received no relayed media")
 	}
 }

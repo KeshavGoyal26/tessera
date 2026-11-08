@@ -67,6 +67,8 @@ message ParticipantInfo {
     KIND_RECORDER = 2;
     // A participant created by tessera-loadtest.
     KIND_LOADTEST = 3;
+    // An edge relaying the room's tracks to its own viewers (ADR-0012).
+    KIND_RELAY = 4;
   }
 
   // Server-assigned unique id, prefixed "PA_".
@@ -99,6 +101,8 @@ message ParticipantPermission {
   bool hidden = 5;
   bool recorder = 6;
   bool can_update_metadata = 7;
+  // An edge's relay session (ADR-0012): never paused for bandwidth.
+  bool relay = 8;
 }
 
 // TrackType is the media kind of a track.

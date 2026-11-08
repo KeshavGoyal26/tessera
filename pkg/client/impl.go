@@ -83,6 +83,23 @@ func (t *RemoteTrack) RequestKeyFrame() error {
 	return t.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(t.track.SSRC())}})
 }
 
+// SSRC returns the track's SSRC (0 before it is bound).
+func (t *RemoteTrack) SSRC() uint32 {
+	if t.track == nil {
+		return 0
+	}
+	return uint32(t.track.SSRC())
+}
+
+// WriteRTCP sends RTCP (NACK, PLI) to the server for this track's stream; an edge
+// relaying the track forwards its own receiver's feedback this way (ADR-0012).
+func (t *RemoteTrack) WriteRTCP(pkts []rtcp.Packet) error {
+	if t.pc == nil {
+		return errs.New(errs.CodeFailedPrecondition, "track not bound")
+	}
+	return t.pc.WriteRTCP(pkts)
+}
+
 // TrackRemote exposes the underlying Pion track.
 func (t *RemoteTrack) TrackRemote() *webrtc.TrackRemote { return t.track }
 

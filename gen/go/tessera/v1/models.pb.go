@@ -395,6 +395,8 @@ const (
 	ParticipantInfo_KIND_RECORDER ParticipantInfo_Kind = 2
 	// A participant created by tessera-loadtest.
 	ParticipantInfo_KIND_LOADTEST ParticipantInfo_Kind = 3
+	// An edge relaying the room's tracks to its own viewers (ADR-0012).
+	ParticipantInfo_KIND_RELAY ParticipantInfo_Kind = 4
 )
 
 // Enum value maps for ParticipantInfo_Kind.
@@ -404,12 +406,14 @@ var (
 		1: "KIND_STANDARD",
 		2: "KIND_RECORDER",
 		3: "KIND_LOADTEST",
+		4: "KIND_RELAY",
 	}
 	ParticipantInfo_Kind_value = map[string]int32{
 		"KIND_UNSPECIFIED": 0,
 		"KIND_STANDARD":    1,
 		"KIND_RECORDER":    2,
 		"KIND_LOADTEST":    3,
+		"KIND_RELAY":       4,
 	}
 )
 
@@ -844,8 +848,10 @@ type ParticipantPermission struct {
 	Hidden            bool          `protobuf:"varint,5,opt,name=hidden,proto3" json:"hidden,omitempty"`
 	Recorder          bool          `protobuf:"varint,6,opt,name=recorder,proto3" json:"recorder,omitempty"`
 	CanUpdateMetadata bool          `protobuf:"varint,7,opt,name=can_update_metadata,json=canUpdateMetadata,proto3" json:"can_update_metadata,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// An edge's relay session (ADR-0012): never paused for bandwidth.
+	Relay         bool `protobuf:"varint,8,opt,name=relay,proto3" json:"relay,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ParticipantPermission) Reset() {
@@ -923,6 +929,13 @@ func (x *ParticipantPermission) GetRecorder() bool {
 func (x *ParticipantPermission) GetCanUpdateMetadata() bool {
 	if x != nil {
 		return x.CanUpdateMetadata
+	}
+	return false
+}
+
+func (x *ParticipantPermission) GetRelay() bool {
+	if x != nil {
+		return x.Relay
 	}
 	return false
 }
@@ -1511,7 +1524,7 @@ const file_tessera_v1_models_proto_rawDesc = "" +
 	"\x11recording_enabled\x18\f \x01(\bR\x10recordingEnabled\"8\n" +
 	"\x05Codec\x12\x12\n" +
 	"\x04mime\x18\x01 \x01(\tR\x04mime\x12\x1b\n" +
-	"\tfmtp_line\x18\x02 \x01(\tR\bfmtpLine\"\x81\x06\n" +
+	"\tfmtp_line\x18\x02 \x01(\tR\bfmtpLine\"\x91\x06\n" +
 	"\x0fParticipantInfo\x12\x10\n" +
 	"\x03sid\x18\x01 \x01(\tR\x03sid\x12\x1a\n" +
 	"\bidentity\x18\x02 \x01(\tR\bidentity\x127\n" +
@@ -1539,12 +1552,14 @@ const file_tessera_v1_models_proto_rawDesc = "" +
 	"\rSTATE_JOINING\x10\x01\x12\x10\n" +
 	"\fSTATE_JOINED\x10\x02\x12\x10\n" +
 	"\fSTATE_ACTIVE\x10\x03\x12\x16\n" +
-	"\x12STATE_DISCONNECTED\x10\x04\"U\n" +
+	"\x12STATE_DISCONNECTED\x10\x04\"e\n" +
 	"\x04Kind\x12\x14\n" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rKIND_STANDARD\x10\x01\x12\x11\n" +
 	"\rKIND_RECORDER\x10\x02\x12\x11\n" +
-	"\rKIND_LOADTEST\x10\x03\"\xb4\x02\n" +
+	"\rKIND_LOADTEST\x10\x03\x12\x0e\n" +
+	"\n" +
+	"KIND_RELAY\x10\x04\"\xca\x02\n" +
 	"\x15ParticipantPermission\x12#\n" +
 	"\rcan_subscribe\x18\x01 \x01(\bR\fcanSubscribe\x12\x1f\n" +
 	"\vcan_publish\x18\x02 \x01(\bR\n" +
@@ -1553,7 +1568,8 @@ const file_tessera_v1_models_proto_rawDesc = "" +
 	"\x13can_publish_sources\x18\x04 \x03(\x0e2\x17.tessera.v1.TrackSourceR\x11canPublishSources\x12\x16\n" +
 	"\x06hidden\x18\x05 \x01(\bR\x06hidden\x12\x1a\n" +
 	"\brecorder\x18\x06 \x01(\bR\brecorder\x12.\n" +
-	"\x13can_update_metadata\x18\a \x01(\bR\x11canUpdateMetadata\"\xae\x01\n" +
+	"\x13can_update_metadata\x18\a \x01(\bR\x11canUpdateMetadata\x12\x14\n" +
+	"\x05relay\x18\b \x01(\bR\x05relay\"\xae\x01\n" +
 	"\n" +
 	"VideoLayer\x122\n" +
 	"\aquality\x18\x01 \x01(\x0e2\x18.tessera.v1.VideoQualityR\aquality\x12\x14\n" +

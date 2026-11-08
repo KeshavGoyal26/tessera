@@ -205,7 +205,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		var hosted cluster.Rooms
 		if role == config.RoleEdge {
 			// Signaling goes to the room's media node; this node relays media (TURN).
-			rtcHandler = &cluster.Edge{Cluster: cc, Verifier: verifier, MaxMessageSize: cfg.Signal.MaxMessageSize, Logger: logger}
+			relays := &cluster.Relays{Cluster: cc, Rooms: rooms, NodeID: cfg.NodeID, APIKey: recKey, APISecret: recSecret, Logger: logger}
+			defer relays.Close()
+			rtcHandler = &cluster.Edge{Cluster: cc, Verifier: verifier, Local: signalSrv, Relays: relays,
+				MaxMessageSize: cfg.Signal.MaxMessageSize, Logger: logger}
 		} else {
 			hosted = rooms
 		}

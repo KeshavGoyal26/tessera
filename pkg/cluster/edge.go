@@ -16,13 +16,20 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/signal"
 )
 
-// Edge serves /rtc on an edge node (ADR-0012): it checks the token, finds or places
-// the room's media node and relays the WebSocket to that node's private address.
-// Clients connect to the edge exactly as to a single server; a reconnect carries the
-// same token, so it reaches the same media node and the session resumes there.
+// Edge serves /rtc on an edge node (ADR-0012). Presenters (tokens that may publish)
+// are relayed to the media node hosting their room: the edge checks the token, finds
+// or places the room and relays the WebSocket to the node's private address. Viewers
+// (tokens with can_publish false) join the edge's own room when Local is set: Relays
+// brings the group's presenters there from the media node. Clients connect to the edge
+// exactly as to a single server; a reconnect carries the same token and lands where
+// the session lives.
 type Edge struct {
 	Cluster  *Client
 	Verifier auth.Verifier
+	// Local serves viewers on this edge (the edge's own signaling server); nil relays
+	// everyone to the media nodes.
+	Local  http.Handler
+	Relays *Relays
 	// MaxMessageSize bounds one signaling message (default 1 MiB).
 	MaxMessageSize int64
 	Logger         *slog.Logger
@@ -46,6 +53,13 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if claims.Grants == nil || !claims.Grants.RoomJoin || claims.Grants.Room == "" {
 		signal.WriteHTTPError(w, errs.New(errs.CodePermissionDenied, "token lacks room_join grant"))
+		return
+	}
+	if e.Local != nil && claims.Grants.CanPublish != nil && !*claims.Grants.CanPublish {
+		if e.Relays != nil {
+			e.Relays.Ensure(claims.Grants.Room)
+		}
+		e.Local.ServeHTTP(w, r)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

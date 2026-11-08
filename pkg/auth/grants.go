@@ -31,6 +31,9 @@ type RoomGrant struct {
 	CanUpdateOwnMetadata bool `json:"can_update_own_metadata,omitempty"`
 	Hidden               bool `json:"hidden,omitempty"`
 	Recorder             bool `json:"recorder,omitempty"`
+	// Relay marks an edge's relay session (ADR-0012): it subscribes over the private
+	// network and is never paused for bandwidth. Use with Hidden.
+	Relay bool `json:"relay,omitempty"`
 	// AutoRecord records this participant from the moment they join until they leave.
 	AutoRecord bool `json:"auto_record,omitempty"`
 
@@ -88,6 +91,7 @@ func (g *RoomGrant) ToPermission() *tesserav1.ParticipantPermission {
 		CanPublishData:    boolOr(g.CanPublishData, true),
 		Hidden:            g.Hidden,
 		Recorder:          g.Recorder,
+		Relay:             g.Relay,
 		CanUpdateMetadata: g.CanUpdateOwnMetadata,
 	}
 	for _, s := range g.CanPublishSources {

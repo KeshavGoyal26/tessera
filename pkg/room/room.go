@@ -57,6 +57,7 @@ type Manager interface {
 	// Ready reports readiness (false while draining).
 	Ready() error
 	TrackWatcher
+	RemotePublishers
 	Close()
 }
 
