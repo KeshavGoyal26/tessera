@@ -25,10 +25,12 @@ const (
 // Trial resume: when every wanted video track is paused, nothing forwards to carry
 // probe padding (and without audio, no feedback arrives at all), so the estimate
 // could never rise again. After a back-off the first paused track is resumed on
-// trial: its own traffic measures the path. It stays on if the estimate comes to
-// cover it within trialHold, otherwise it is paused again and the back-off doubles.
+// trial: its own traffic measures the path. The trial goes on while the path shows
+// no congestion (no overuse, the estimate not falling) and succeeds once the
+// estimate covers the track; congestion, or trialHold without success, pauses it
+// again and doubles the back-off.
 const (
-	trialHold       = 10 * time.Second
+	trialHold       = 30 * time.Second
 	trialMinBackoff = 5 * time.Second
 	trialMaxBackoff = 60 * time.Second
 )
@@ -61,6 +63,7 @@ type allocator struct {
 
 	trialID      string    // track resumed on trial ("" = none)
 	trialUntil   time.Time // end of the trial
+	trialEst     int64     // estimate when the trial started
 	trialBackoff time.Duration
 	stalledSince time.Time // since when every wanted video track is paused
 
@@ -199,8 +202,9 @@ func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) 
 		switch {
 		case i >= 0 && on[i]: // the estimate covers it now: success
 			a.trialID, a.trialBackoff, a.stalledSince = "", 0, time.Time{}
-		case i >= 0 && videos[i].t.Wanted() && now.Before(a.trialUntil):
-			on[i] = true
+		case i >= 0 && videos[i].t.Wanted() && now.Before(a.trialUntil) &&
+			a.est.State() != StateOveruse && a.est.Estimate() >= a.trialEst*9/10:
+			on[i] = true // no congestion yet: let the estimate grow with the track's traffic
 			return
 		default: // failed (or the track went away)
 			a.trialID = ""
@@ -226,7 +230,7 @@ func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) 
 		a.stalledSince = now
 	}
 	if now.Sub(a.stalledSince) >= max(a.trialBackoff, trialMinBackoff) && a.est.State() != StateOveruse {
-		a.trialID, a.trialUntil = videos[first].t.ID(), now.Add(trialHold)
+		a.trialID, a.trialUntil, a.trialEst = videos[first].t.ID(), now.Add(trialHold), a.est.Estimate()
 		on[first] = true
 	}
 }

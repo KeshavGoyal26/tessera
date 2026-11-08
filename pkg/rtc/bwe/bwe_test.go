@@ -7,13 +7,16 @@ import (
 	"github.com/pion/rtcp"
 )
 
-type fakeEst struct{ bps int64 }
+type fakeEst struct {
+	bps   int64
+	state CongestionState
+}
 
 func (f *fakeEst) OnPacketSent(uint16, int, int64, bool)                 {}
 func (f *fakeEst) OnTransportFeedback(*rtcp.TransportLayerCC, time.Time) {}
 func (f *fakeEst) OnRTT(time.Duration)                                   {}
 func (f *fakeEst) Estimate() int64                                       { return f.bps }
-func (f *fakeEst) State() CongestionState                                { return StateNormal }
+func (f *fakeEst) State() CongestionState                                { return f.state }
 
 type fakeTrack struct {
 	id       string
@@ -263,10 +266,16 @@ func TestAllocatorTrialResume(t *testing.T) {
 	if cam.paused {
 		t.Fatal("no trial resume after 5 s")
 	}
-	step(trialHold) // the estimate never covered it: paused again, back-off 10 s
-	if !cam.paused {
-		t.Fatal("failed trial must pause again")
+	step(trialHold / 2)
+	if cam.paused {
+		t.Fatal("a trial without congestion must go on")
 	}
+	est.state = StateOveruse // the track congests the link: paused again, back-off 10 s
+	step(allocTick)
+	if !cam.paused {
+		t.Fatal("a congested trial must pause again")
+	}
+	est.state = StateNormal
 	step(9 * time.Second)
 	if !cam.paused {
 		t.Fatal("trial again before the doubled back-off")
@@ -274,6 +283,14 @@ func TestAllocatorTrialResume(t *testing.T) {
 	step(time.Second)
 	if cam.paused {
 		t.Fatal("no second trial after 10 s")
+	}
+	step(trialHold) // no congestion but the estimate never covered it: paused again
+	if !cam.paused {
+		t.Fatal("a trial that never succeeds must end")
+	}
+	step(20 * time.Second) // back-off 20 s
+	if cam.paused {
+		t.Fatal("no third trial after 20 s")
 	}
 	est.bps = 2_000_000 // the trial's traffic raised the estimate
 	step(allocTick)
