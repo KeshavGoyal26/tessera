@@ -148,6 +148,15 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 
 	metrics.HandleExtra(stats.Path, stats.Handler(rooms))
 
+	var cc *cluster.Client
+	if cfg.Cluster.Role != config.RoleSingle {
+		cc, err = cluster.New(ctx, cfg.Cluster.Redis)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = cc.Close() }()
+	}
+
 	recKey, recSecret := firstKey(cfg)
 	coordinator := recorder.NewCoordinator(recorder.CoordinatorParams{
 		Config: cfg.Recording, Rooms: rooms, Notifier: notifier,
@@ -159,8 +168,12 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	if cfg.Recording.Enabled {
 		// Record inside this server: jobs come straight from the coordinator and tracks
 		// straight from the receive buffers (no separate recorder or WebRTC session).
-		w, err := recorder.NewWorker(recorder.InProcessConfig(cfg.Recording, cfg.Development), reg, logger,
-			recorder.WithJobAPI(coordinator), recorder.WithConnector(recorder.LocalConnector{Rooms: rooms, Verifier: verifier}))
+		wopts := []recorder.WorkerOption{recorder.WithJobAPI(coordinator), recorder.WithConnector(recorder.LocalConnector{Rooms: rooms, Verifier: verifier})}
+		if cc != nil && cfg.Recording.Storage.Kind == "s3" {
+			// Shared storage: any media node can close the recordings of a node that is gone.
+			wopts = append(wopts, recorder.WithJournal(&cluster.Journal{C: cc, Node: cfg.NodeID}))
+		}
+		w, err := recorder.NewWorker(recorder.InProcessConfig(cfg.Recording, cfg.Development), reg, logger, wopts...)
 		if err != nil {
 			return err
 		}
@@ -196,11 +209,6 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	mux := http.NewServeMux()
 	var rtcHandler http.Handler = signalSrv
 	if role := cfg.Cluster.Role; role != config.RoleSingle {
-		cc, err := cluster.New(ctx, cfg.Cluster.Redis)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = cc.Close() }()
 		self := cluster.NodeInfo{ID: cfg.NodeID, Role: role, PrivateURL: cfg.Cluster.PrivateURL}
 		var hosted cluster.Rooms
 		if role == config.RoleEdge {

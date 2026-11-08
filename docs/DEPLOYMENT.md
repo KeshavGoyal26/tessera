@@ -188,6 +188,10 @@ Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single
   subscribe on demand (`auto_subscribe: false`) to switch among presenters on one connection.
 - Admin API calls go to the media server that hosts the presenter (phase 3 adds forwarding
   from edges).
+- With S3 recording storage the crash journal lives in Redis: when a media server disappears
+  (no heartbeat for 10 s), another media server closes its open recordings (playlists sealed,
+  master written, `recording_ended` with status FAILED) within about 30 s, even if the machine
+  never comes back. With local storage the journal stays on the machine's disk.
 
 ## 7. Monitoring and alerting
 

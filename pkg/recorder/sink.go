@@ -39,9 +39,11 @@ type storageSink struct {
 	playlistWhere string
 
 	// Crash journal (journal.go): after each playlist upload, the playlist and meta()
-	// are written to the file journal. Both unset = not journaled.
-	journal string
-	meta    func() journalTrack
+	// are written with journal. All unset = not journaled.
+	journal      JournalStore
+	journalH     string
+	journalTrack string
+	meta         func() journalTrack
 }
 
 type upload struct {
@@ -85,12 +87,12 @@ func (s *storageSink) loop(ctx context.Context) {
 			s.mu.Lock()
 			s.playlistKey, s.playlistWhere = u.key, where
 			s.mu.Unlock()
-			if s.journal != "" {
+			if s.journal != nil {
 				m := u.meta
 				m.Key, m.Playlist = u.key, string(u.data)
 				m.Bytes, m.Segments, m.DurMs = s.bytes.Load(), s.segs.Load(), time.Duration(s.durNs.Load()).Milliseconds()
 				if b, err := json.Marshal(m); err == nil {
-					_ = writeFileAtomic(s.journal, b)
+					_ = s.journal.Put(s.journalH, s.journalTrack, b)
 				}
 			}
 		}

@@ -58,6 +58,7 @@ type Worker struct {
 	api        JobAPI
 	conn       Connector
 	defStorage storage.Storage
+	journal    JournalStore
 	stats      *workerStats
 
 	mu     sync.Mutex
@@ -79,6 +80,9 @@ func NewWorker(cfg *Config, reg prometheus.Registerer, logger *slog.Logger, opts
 	}
 	for _, o := range opts {
 		o(w)
+	}
+	if w.journal == nil {
+		w.journal = FileJournal{Dir: filepath.Join(w.cfg.TempDir, "journal")}
 	}
 	if w.defStorage == nil {
 		st, err := w.buildDefaultStorage()
@@ -143,6 +147,18 @@ func (w *Worker) Run(ctx context.Context) error {
 	}()
 
 	w.recoverJournal(ctx)
+	go func() { // with a shared journal, other nodes' recordings are closed while running
+		t := time.NewTicker(journalRecoverEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				w.recoverJournal(ctx)
+			}
+		}
+	}()
 	backoff := time.Second
 	for ctx.Err() == nil {
 		free := w.freeCapacity()
@@ -250,7 +266,7 @@ type jobRun struct {
 	id     string
 	req    *tesserav1.StartRecordingRequest
 	cancel context.CancelFunc
-	// journal is the crash-journal directory of this recording ("" = not journaled).
+	// journal is the crash-journal handle of this recording ("" = not journaled).
 	journal string
 
 	stopOnce sync.Once
@@ -365,7 +381,7 @@ func (r *jobRun) execute(ctx context.Context) {
 	r.journal = r.startJournal()
 	defer func() {
 		if r.journal != "" {
-			_ = os.RemoveAll(r.journal) // ended normally: nothing to recover
+			w.journal.End(r.journal) // ended normally: nothing to recover
 		}
 	}()
 
@@ -495,7 +511,7 @@ func (r *jobRun) onTrack(ctx context.Context) func(Track) {
 			return
 		}
 		if r.journal != "" {
-			sink.journal = filepath.Join(r.journal, t.SID+".json")
+			sink.journal, sink.journalH, sink.journalTrack = r.w.journal, r.journal, t.SID
 			sink.meta = func() journalTrack { // called on the track's goroutine
 				return journalTrack{SID: t.SID, Ident: t.ParticipantIdentity, Codecs: tr.codecString,
 					Width: int(tr.stats.width.Load()), Height: int(tr.stats.height.Load()), Audio: tr.codec == "Opus"}
