@@ -74,8 +74,6 @@ type Segment struct {
 	Duration time.Duration
 	// ProgramDateTime is the wall-clock time of the first sample.
 	ProgramDateTime time.Time
-	// Discontinuity is set when timing or codec config changed.
-	Discontinuity bool
 }
 
 // Sink receives muxer output (typically a storage-backed uploader).

@@ -37,6 +37,12 @@ and no second WebRTC session: about half the per-presenter CPU of the old design
   <track_sid>/index.m3u8       media playlist (EVENT while live, VOD + ENDLIST at the end)
   <track_sid>/init.mp4         init segment (init_N.mp4 after a codec change: a new EXT-X-MAP,
                                no discontinuity; keyframes also carry their SPS/PPS in-band)
+
+A playlist's timeline is always its media timeline, so no rendition ever needs an
+EXT-X-DISCONTINUITY (one in a single rendition stalls hls.js): a pause of up to 8 s holds the
+last sample (a frozen frame while the audio goes on), a codec change switches at the next
+sample, a longer stretch without media is listed as EXT-X-GAP entries (players step over it),
+and a clock that goes backwards (new SSRC) continues the timeline.
   <track_sid>/seg_00000.m4s    CMAF fragment (moof+mdat), cut on keyframes
 ```
 

@@ -15,7 +15,8 @@ type PlaylistSegment struct {
 	URI             string
 	Duration        float64
 	ProgramDateTime time.Time
-	Discontinuity   bool
+	// Gap marks a stretch without media (EXT-X-GAP): players skip it and never fetch URI.
+	Gap bool
 	// Map is the init segment URI to emit before this segment (EXT-X-MAP).
 	Map string
 }
@@ -49,17 +50,18 @@ func (p *MediaPlaylist) Encode() []byte {
 		b.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 	}
 	b.WriteString("#EXT-X-INDEPENDENT-SEGMENTS\n")
-	for i, s := range p.Segments {
-		if s.Discontinuity && i > 0 {
-			b.WriteString("#EXT-X-DISCONTINUITY\n")
-		}
+	for _, s := range p.Segments {
 		if s.Map != "" {
 			fmt.Fprintf(&b, "#EXT-X-MAP:URI=%q\n", s.Map)
 		}
 		if !s.ProgramDateTime.IsZero() {
 			fmt.Fprintf(&b, "#EXT-X-PROGRAM-DATE-TIME:%s\n", s.ProgramDateTime.UTC().Format("2006-01-02T15:04:05.000Z"))
 		}
-		fmt.Fprintf(&b, "#EXTINF:%.3f,\n%s\n", s.Duration, s.URI)
+		fmt.Fprintf(&b, "#EXTINF:%.3f,\n", s.Duration)
+		if s.Gap {
+			b.WriteString("#EXT-X-GAP\n")
+		}
+		fmt.Fprintf(&b, "%s\n", s.URI)
 	}
 	if !p.Live {
 		b.WriteString("#EXT-X-ENDLIST\n")

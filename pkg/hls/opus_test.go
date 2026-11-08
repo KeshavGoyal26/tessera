@@ -2,8 +2,10 @@ package hls
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +97,10 @@ func TestOpusAndVideoAlignedHLS(t *testing.T) {
 	}
 }
 
-func TestMuxerDiscontinuityOnGapAndBackwardsClock(t *testing.T) {
+// TestMuxerGapAndBackwardsClock: a stretch without media is listed as EXT-X-GAP entries
+// and a backwards clock continues the timeline, so the playlist's timeline is the media
+// timeline and no rendition needs a discontinuity.
+func TestMuxerGapAndBackwardsClock(t *testing.T) {
 	var sink memSink
 	m, _ := NewMuxer(MuxerConfig{TargetSegmentDuration: time.Second}, TrackSpec{Codec: CodecOpus, Timescale: 48000, Channels: 2}, &sink)
 	ctx := context.Background()
@@ -116,8 +121,23 @@ func TestMuxerDiscontinuityOnGapAndBackwardsClock(t *testing.T) {
 	if err := m.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sink.playlist, "#EXT-X-DISCONTINUITY") || strings.Count(sink.playlist, "#EXT-X-DISCONTINUITY\n") != 2 {
-		t.Fatalf("%s", sink.playlist)
+	pl := sink.playlist
+	if strings.Contains(pl, "#EXT-X-DISCONTINUITY") || strings.Count(pl, "#EXT-X-GAP\n") != 20 {
+		t.Fatalf("want 20 gap entries (20 s at the 1 s target) and no discontinuity:\n%s", pl)
+	}
+	var total, gap float64
+	lines := strings.Split(pl, "\n")
+	for i, l := range lines {
+		if d, ok := strings.CutPrefix(l, "#EXTINF:"); ok {
+			v, _ := strconv.ParseFloat(strings.TrimSuffix(d, ","), 64)
+			total += v
+			if lines[i+1] == "#EXT-X-GAP" {
+				gap += v
+			}
+		}
+	}
+	if math.Abs(gap-20) > 0.05 || math.Abs(total-27) > 0.1 { // 3 s, the 20 s gap, 2 s, 2 s after the backwards jump
+		t.Fatalf("gap %.2f s, total %.2f s:\n%s", gap, total, pl)
 	}
 }
 
@@ -147,6 +167,7 @@ func TestMuxerSpecChangeKeepsTimeline(t *testing.T) {
 		}
 	}
 	step(100)
+	dts += 48000 * 3 / 2 // a 1.5 s pause, then new parameters (as a browser resuming at another size)
 	if err := m.UpdateSpec(ctx, TrackSpec{Codec: CodecOpus, Timescale: 48000, Channels: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +175,19 @@ func TestMuxerSpecChangeKeepsTimeline(t *testing.T) {
 	if err := m.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(sink.playlist, "#EXT-X-DISCONTINUITY") || strings.Count(sink.playlist, "#EXT-X-MAP:") != 2 ||
-		!strings.Contains(sink.playlist, `#EXT-X-MAP:URI="init_1.mp4"`) {
+	if strings.Contains(sink.playlist, "#EXT-X-DISCONTINUITY") || strings.Contains(sink.playlist, "#EXT-X-GAP") ||
+		strings.Count(sink.playlist, "#EXT-X-MAP:") != 2 || !strings.Contains(sink.playlist, `#EXT-X-MAP:URI="init_1.mp4"`) {
 		t.Fatalf("%s", sink.playlist)
+	}
+	// The pause is held by the last sample before it: the playlist covers 2 + 1.5 + 2 s.
+	var total float64
+	for _, l := range strings.Split(sink.playlist, "\n") {
+		if d, ok := strings.CutPrefix(l, "#EXTINF:"); ok {
+			v, _ := strconv.ParseFloat(strings.TrimSuffix(d, ","), 64)
+			total += v
+		}
+	}
+	if math.Abs(total-5.5) > 0.05 {
+		t.Fatalf("playlist covers %.2f s, want 5.5:\n%s", total, sink.playlist)
 	}
 }

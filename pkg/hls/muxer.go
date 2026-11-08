@@ -44,7 +44,8 @@ type Muxer struct {
 	cur       []Sample
 	curDTSOut int64
 	curPDT    time.Time
-	curDisc   bool
+	segEnd    int64 // output DTS where the last written segment ends
+	nextSpec  *TrackSpec
 	frag      uint32
 	segN      int
 	segs      []segmentInfo
@@ -57,7 +58,7 @@ type segmentInfo struct {
 	name string
 	dur  float64
 	pdt  time.Time
-	disc bool
+	gap  bool   // EXT-X-GAP: no media for dur
 	init string // non-empty when an EXT-X-MAP precedes this segment
 }
 
@@ -89,26 +90,30 @@ func (m *Muxer) wall(outDTS int64) time.Time {
 	return m.wallBase.Add(time.Duration((outDTS - m.baseOut) * int64(time.Second) / int64(m.spec.Timescale)))
 }
 
-// UpdateSpec switches to new codec parameters (e.g. SPS change). The current
-// segment is cut and the next one starts with a new init segment (EXT-X-MAP). The
-// timeline continues, so there is no EXT-X-DISCONTINUITY: browsers change resolution
-// several times per recording, and a discontinuity in the video playlist only would
-// leave the audio rendition's discontinuity sequence behind, which stalls hls.js when a
-// live playlist is opened mid-recording.
-func (m *Muxer) UpdateSpec(ctx context.Context, spec TrackSpec) error {
+// UpdateSpec switches to new codec parameters (e.g. SPS change) from the next sample:
+// the last old sample keeps its real duration, and the next one starts a segment with a
+// new init segment (EXT-X-MAP) on the same timeline.
+func (m *Muxer) UpdateSpec(_ context.Context, spec TrackSpec) error {
 	if _, err := InitSegment(spec); err != nil {
 		return err
 	}
-	if m.started {
-		if err := m.commitPending(); err != nil {
-			return err
-		}
-		if err := m.flush(ctx); err != nil {
-			return err
-		}
+	if !m.started {
+		m.spec, m.initDirty = spec, true
+		return nil
 	}
-	m.spec = spec
-	m.initDirty = true
+	m.nextSpec = &spec // applied with the next sample, once the last old one has its duration
+	return nil
+}
+
+// switchSpec closes the current segment and makes a pending spec change current.
+func (m *Muxer) switchSpec(ctx context.Context) error {
+	if m.nextSpec == nil {
+		return nil
+	}
+	if err := m.flush(ctx); err != nil {
+		return err
+	}
+	m.spec, m.nextSpec, m.initDirty = *m.nextSpec, nil, true
 	return nil
 }
 
@@ -134,6 +139,13 @@ func (m *Muxer) commitPending() error {
 	return nil
 }
 
+// minGap is the shortest hole listed as EXT-X-GAP (hls.js steps over smaller ones);
+// gapURI names gap entries, which players never fetch.
+const (
+	minGap = 100 * time.Millisecond
+	gapURI = "gap.m4s"
+)
+
 // WriteSample appends a sample, cutting segments on keyframes after the target duration.
 func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 	if m.closed {
@@ -157,7 +169,6 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 		}
 		m.firstDTS = s.DTS
 		m.pending = &s
-		m.curDisc = false
 		return nil
 	}
 	p := m.pending
@@ -167,7 +178,7 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 			return nil
 		}
 		m.pending = &s
-		return nil
+		return m.switchSpec(ctx)
 	}
 	delta := s.DTS - p.DTS
 	if delta == 0 && m.video {
@@ -177,20 +188,12 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 		p.KeyFrame = p.KeyFrame || s.KeyFrame
 		return nil
 	}
-	switch {
-	case delta <= 0:
-		// Clock went backwards (or duplicate): start a new timeline piece.
-		if err := m.cutForJump(ctx, s, true); err != nil {
+	if delta <= 0 || delta > m.ticks(m.cfg.MaxGap) {
+		// The clock went backwards (e.g. a new SSRC) or nothing came for a long while.
+		if err := m.cutForJump(ctx, s, delta <= 0); err != nil {
 			return err
 		}
-		if !s.KeyFrame && m.video {
-			m.pending = nil
-			return nil
-		}
-		m.pending = &s
-		return nil
-	case delta > m.ticks(m.cfg.MaxGap):
-		if err := m.cutForJump(ctx, s, false); err != nil {
+		if err := m.switchSpec(ctx); err != nil {
 			return err
 		}
 		if !s.KeyFrame && m.video {
@@ -200,11 +203,16 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 		m.pending = &s
 		return nil
 	}
+	// A sample lasts until the next one: a short pause holds the last frame.
 	p.Duration = uint32(delta)
 	if err := m.commitPending(); err != nil {
 		return err
 	}
-	if s.KeyFrame && len(m.cur) > 0 && s.DTS-m.cur[0].DTS >= m.ticks(m.cfg.TargetSegmentDuration) {
+	if m.nextSpec != nil {
+		if err := m.switchSpec(ctx); err != nil {
+			return err
+		}
+	} else if s.KeyFrame && len(m.cur) > 0 && s.DTS-m.cur[0].DTS >= m.ticks(m.cfg.TargetSegmentDuration) {
 		if err := m.flush(ctx); err != nil {
 			return err
 		}
@@ -213,8 +221,9 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 	return nil
 }
 
-// cutForJump closes the current segment and marks the next one as discontinuous.
-// For backwards jumps the output timeline continues from the end of the last sample.
+// cutForJump closes the current segment. After a backwards jump the output timeline
+// continues from the end of the last sample; a forward jump keeps the gap, which flush
+// lists as EXT-X-GAP.
 func (m *Muxer) cutForJump(ctx context.Context, next Sample, backwards bool) error {
 	if err := m.commitPending(); err != nil {
 		return err
@@ -222,7 +231,6 @@ func (m *Muxer) cutForJump(ctx context.Context, next Sample, backwards bool) err
 	if err := m.flush(ctx); err != nil {
 		return err
 	}
-	m.curDisc = true
 	if backwards {
 		m.baseOut += m.prevEnd - m.baseIn
 		m.baseIn = next.DTS
@@ -233,6 +241,12 @@ func (m *Muxer) cutForJump(ctx context.Context, next Sample, backwards bool) err
 func (m *Muxer) flush(ctx context.Context) error {
 	if len(m.cur) == 0 {
 		return nil
+	}
+	// A stretch without media (the publisher stopped sending) keeps its place in the
+	// playlist: the playlist's timeline is the media timeline, so no rendition ever
+	// needs a discontinuity (one in a single rendition stalls hls.js).
+	if m.segN > 0 {
+		m.addGap(m.curDTSOut - m.segEnd)
 	}
 	if m.initDirty {
 		data, err := InitSegment(m.spec)
@@ -258,24 +272,35 @@ func (m *Muxer) flush(ctx context.Context) error {
 	data := Fragment(m.spec.ID, m.frag, uint64(m.curDTSOut), m.cur)
 	name := fmt.Sprintf("seg_%05d.m4s", m.segN)
 	d := time.Duration(dur * int64(time.Second) / int64(m.spec.Timescale))
-	seg := Segment{Name: name, Data: data, Duration: d, ProgramDateTime: m.curPDT, Discontinuity: m.curDisc}
+	seg := Segment{Name: name, Data: data, Duration: d, ProgramDateTime: m.curPDT}
 	if err := m.sink.WriteSegment(ctx, seg); err != nil {
 		return err
 	}
 	m.segN++
-	info := segmentInfo{name: name, dur: d.Seconds(), pdt: m.curPDT, disc: m.curDisc}
+	info := segmentInfo{name: name, dur: d.Seconds(), pdt: m.curPDT}
 	// merge init marker into the segment entry
 	if n := len(m.segs); n > 0 && m.segs[n-1].name == "" {
 		info.init = m.segs[n-1].init
 		m.segs = m.segs[:n-1]
 	}
 	m.segs = append(m.segs, info)
+	m.segEnd = m.curDTSOut + dur
 	m.cur = m.cur[:0]
-	m.curDisc = false
 	if m.cfg.Live {
 		return m.writePlaylist(ctx, false)
 	}
 	return nil
+}
+
+// addGap lists a stretch of ticks without media as EXT-X-GAP entries of at most the
+// target duration (holes under minGap are left to the player).
+func (m *Muxer) addGap(ticks int64) {
+	gap := time.Duration(ticks * int64(time.Second) / int64(m.spec.Timescale))
+	for gap >= minGap {
+		d := min(gap, m.cfg.TargetSegmentDuration)
+		m.segs = append(m.segs, segmentInfo{name: gapURI, dur: d.Seconds(), gap: true})
+		gap -= d
+	}
 }
 
 func (m *Muxer) writePlaylist(ctx context.Context, final bool) error {
@@ -283,7 +308,7 @@ func (m *Muxer) writePlaylist(ctx context.Context, final bool) error {
 	mp.TargetMin = int(m.cfg.TargetSegmentDuration.Seconds() + 0.5)
 	for _, s := range m.segs {
 		mp.Segments = append(mp.Segments, PlaylistSegment{
-			URI: s.name, Duration: s.dur, ProgramDateTime: s.pdt, Discontinuity: s.disc, Map: s.init,
+			URI: s.name, Duration: s.dur, ProgramDateTime: s.pdt, Gap: s.gap, Map: s.init,
 		})
 	}
 	return m.sink.WritePlaylist(ctx, m.cfg.PlaylistName, mp.Encode())

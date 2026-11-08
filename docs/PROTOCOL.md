@@ -299,7 +299,7 @@ Hidden participants (recorders) do not generate participant events.
   master.m3u8                     # participant/composite recordings (written live, final at the end)
   quality.json                    # connection timeline (written every 12 s while recording, final at the end)
   <track_sid>/init.mp4            # ftyp + moov (avcC or dOps/esds)
-  <track_sid>/index.m3u8          # media playlist (EVENT → VOD)
+  <track_sid>/index.m3u8          # media playlist (EVENT → VOD); no discontinuities, EXT-X-GAP for stretches without media
   <track_sid>/seg_00000.m4s       # moof + mdat fragments
   ...
 ```

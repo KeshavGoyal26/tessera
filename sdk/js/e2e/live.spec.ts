@@ -203,6 +203,12 @@ test("connection dot live and while rewinding; the recording's timeline marks an
       }, { timeout: 40_000, intervals: [2_000] })
       .toBe(true);
     const bad = tl.samples.filter((s) => s.q >= 2);
+    // The outage left no discontinuity in any rendition (one in a single rendition stalls hls.js).
+    const master = await (await viewer.request.get(url.replace(/quality\.json$/, "master.m3u8"))).text();
+    for (const uri of master.split("\n").flatMap((l) => l.match(/(TR_\w+\/index\.m3u8)/)?.[1] ?? [])) {
+      const pl = await (await viewer.request.get(url.replace(/quality\.json$/, uri))).text();
+      expect(pl, uri).not.toContain("#EXT-X-DISCONTINUITY");
+    }
     expect(bad.length, JSON.stringify(tl.samples)).toBeGreaterThan(0); // the outage
     expect(tl.samples.filter((s) => s.q === 0).length).toBeGreaterThan(2); // before and after it
     expect(await bar.getAttribute("style")).toContain("--q-");
