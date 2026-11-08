@@ -270,8 +270,8 @@ func TestAllocatorTrialResume(t *testing.T) {
 	if cam.paused {
 		t.Fatal("a trial without congestion must go on")
 	}
-	est.state = StateOveruse // the track congests the link: paused again, back-off 10 s
-	step(allocTick)
+	est.state = StateOveruse
+	step(allocTick) // after the grace the track congests the link: paused again, back-off 10 s
 	if !cam.paused {
 		t.Fatal("a congested trial must pause again")
 	}
@@ -297,5 +297,34 @@ func TestAllocatorTrialResume(t *testing.T) {
 	step(trialHold + time.Second)
 	if cam.paused || a.trialID != "" || a.trialBackoff != 0 {
 		t.Fatalf("successful trial must keep the track on: paused=%v trial=%q backoff=%v", cam.paused, a.trialID, a.trialBackoff)
+	}
+}
+
+// The keyframe burst that starts a resumed video reads as overuse: it must not end
+// the trial it belongs to.
+func TestTrialSurvivesKeyframeBurst(t *testing.T) {
+	est := &fakeEst{bps: 300_000}
+	a := NewAllocator(Config{Enabled: true, AllowPause: true}, est).(*allocator)
+	clock := time.Unix(1000, 0)
+	a.now = func() time.Time { return clock }
+	cam := video("cam", 1, 450_000)
+	a.AddTrack(cam)
+	a.Allocate()
+	clock = clock.Add(trialMinBackoff)
+	a.Allocate()
+	if cam.paused {
+		t.Fatal("no trial")
+	}
+	est.state, est.bps = StateOveruse, 200_000 // the burst
+	clock = clock.Add(trialGrace / 2)
+	a.Allocate()
+	if cam.paused {
+		t.Fatal("the keyframe burst ended the trial")
+	}
+	est.state = StateNormal
+	clock = clock.Add(trialGrace)
+	a.Allocate()
+	if cam.paused {
+		t.Fatal("the trial must go on after the burst (baseline taken after the grace)")
 	}
 }

@@ -30,6 +30,9 @@ const (
 // estimate covers the track; congestion, or trialHold without success, pauses it
 // again and doubles the back-off.
 const (
+	// trialGrace: a resumed video starts with a keyframe burst that reads as overuse;
+	// the trial is judged only after it.
+	trialGrace      = 2 * time.Second
 	trialHold       = 30 * time.Second
 	trialMinBackoff = 5 * time.Second
 	trialMaxBackoff = 60 * time.Second
@@ -63,7 +66,8 @@ type allocator struct {
 
 	trialID      string    // track resumed on trial ("" = none)
 	trialUntil   time.Time // end of the trial
-	trialEst     int64     // estimate when the trial started
+	trialStart   time.Time
+	trialEst     int64 // estimate at the end of the grace (0 before)
 	trialBackoff time.Duration
 	stalledSince time.Time // since when every wanted video track is paused
 
@@ -202,9 +206,12 @@ func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) 
 		switch {
 		case i >= 0 && on[i]: // the estimate covers it now: success
 			a.trialID, a.trialBackoff, a.stalledSince = "", 0, time.Time{}
+		case i >= 0 && videos[i].t.Wanted() && now.Sub(a.trialStart) < trialGrace:
+			on[i] = true // the keyframe burst: not judged yet
+			return
 		case i >= 0 && videos[i].t.Wanted() && now.Before(a.trialUntil) &&
-			a.est.State() != StateOveruse && a.est.Estimate() >= a.trialEst*9/10:
-			on[i] = true // no congestion yet: let the estimate grow with the track's traffic
+			a.est.State() != StateOveruse && a.est.Estimate() >= a.trialBaseline()*9/10:
+			on[i] = true // no congestion: let the estimate grow with the track's traffic
 			return
 		default: // failed (or the track went away)
 			a.trialID = ""
@@ -230,9 +237,17 @@ func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) 
 		a.stalledSince = now
 	}
 	if now.Sub(a.stalledSince) >= max(a.trialBackoff, trialMinBackoff) && a.est.State() != StateOveruse {
-		a.trialID, a.trialUntil, a.trialEst = videos[first].t.ID(), now.Add(trialHold), a.est.Estimate()
+		a.trialID, a.trialStart, a.trialUntil, a.trialEst = videos[first].t.ID(), now, now.Add(trialHold), 0
 		on[first] = true
 	}
+}
+
+// trialBaseline is the estimate the trial is judged against: taken once, after the grace.
+func (a *allocator) trialBaseline() int64 {
+	if a.trialEst == 0 {
+		a.trialEst = a.est.Estimate()
+	}
+	return a.trialEst
 }
 
 // maybeProbe probes for the first paused track's bitrate when nothing is probing.
