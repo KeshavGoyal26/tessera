@@ -14,7 +14,7 @@ export class Rooms implements View {
   private body!: HTMLElement;
   private filter?: HTMLInputElement;
   private args: string[] = [];
-  private onClick = (e: Event) => void this.click(e);
+  private onClick = (e: Event) => void handleAction(e);
 
   mount(root: HTMLElement, args: string[]): void {
     this.root = root;
@@ -26,28 +26,6 @@ export class Rooms implements View {
     if (args.length < 2) this.filter = filterBox(root.querySelector('.view-head')!, args.length ? 'Filter participants' : 'Filter rooms', () => this.update());
     root.addEventListener('click', this.onClick);
     this.update();
-  }
-
-  private async click(e: Event): Promise<void> {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
-    if (!b) return;
-    const d = b.dataset as Record<string, string>;
-    const msg: Record<string, string> = {
-      'end-room': `End room "${d.room}" and disconnect everyone?`,
-      'remove-participant': `Remove "${d.identity}" from "${d.room}"?`,
-    };
-    if (msg[d.act!] && !confirm(msg[d.act!])) return;
-    b.disabled = true;
-    try {
-      const body: Record<string, unknown> = { room: d.room, identity: d.identity, track_sid: d.track };
-      if (d.act === 'mute-track') body.muted = d.muted === 'true';
-      await action(d.act!, body);
-      toast(ACTION_DONE[d.act!] ?? `${d.act} OK`);
-    } catch (err) {
-      toast(`${d.act} failed: ${(err as Error).message}`, true);
-    } finally {
-      b.disabled = false;
-    }
   }
 
   update(): void {
@@ -123,7 +101,7 @@ export class Rooms implements View {
 
 /** What a participant sends or receives: a presenter's tracks and subscribers, a viewer's tracks and pauses.
  *  A presenter relayed from another node (no connection here) is paused upstream while unwatched: not flagged. */
-function media(p: Participant): string {
+export function media(p: Participant): string {
   const pub = p.published ?? [], sub = p.subscribed ?? [];
   if (pub.length) {
     const subs = Math.max(0, ...pub.map((t) => t.subscribers));
@@ -146,4 +124,27 @@ export function toast(msg: string, bad = false): void {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+/** Runs the action of a clicked button[data-act] (room, participant and track actions). */
+export async function handleAction(e: Event): Promise<void> {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
+  if (!b) return;
+  const d = b.dataset as Record<string, string>;
+  const msg: Record<string, string> = {
+    'end-room': `End room "${d.room}" and disconnect everyone?`,
+    'remove-participant': `Remove "${d.identity}" from "${d.room}"?`,
+  };
+  if (msg[d.act!] && !confirm(msg[d.act!])) return;
+  b.disabled = true;
+  try {
+    const body: Record<string, unknown> = { room: d.room, identity: d.identity, track_sid: d.track };
+    if (d.act === 'mute-track') body.muted = d.muted === 'true';
+    await action(d.act!, body);
+    toast(ACTION_DONE[d.act!] ?? `${d.act} OK`);
+  } catch (err) {
+    toast(`${d.act} failed: ${(err as Error).message}`, true);
+  } finally {
+    b.disabled = false;
+  }
 }

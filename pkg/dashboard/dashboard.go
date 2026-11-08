@@ -61,6 +61,8 @@ type Params struct {
 	Now func() time.Time
 	// Thresholds for alerts (defaults: loss 5 %, RTT 300 ms, CPU 80 %).
 	LossPercent, RTTMs, CPUPercent float64
+	// Cluster turns on the cluster view (nil: a single node).
+	Cluster *ClusterParams
 }
 
 // Handler is the dashboard http.Handler (mounted at PathPrefix).
@@ -74,12 +76,17 @@ type Handler struct {
 	sessions map[string]*session
 	fails    map[string][]time.Time
 
-	hist    *ring
-	latest  *Update
-	subs    map[chan []byte]struct{}
-	alertAt map[string]time.Time
-	rec     []RecorderStatus
-	recAt   time.Time
+	hist   *ring
+	latest *Update
+	// latestJSON is latest marshalled (nil until someone needs it); summary is this
+	// node's Summary for the cluster heartbeat.
+	latestJSON []byte
+	summary    []byte
+	cl         clusterData
+	subs       map[chan []byte]struct{}
+	alertAt    map[string]time.Time
+	rec        []RecorderStatus
+	recAt      time.Time
 
 	stop chan struct{}
 	done chan struct{}
@@ -155,8 +162,12 @@ func New(p Params) (*Handler, error) {
 		subs: map[chan []byte]struct{}{}, alertAt: map[string]time.Time{},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
+	h.cl = clusterData{last: map[string]NodeView{}, alertAt: map[string]time.Time{}, cache: map[string]cached{}}
 	h.tick() // initial snapshot so the first request has data
 	go h.loop()
+	if p.Cluster != nil {
+		go h.clusterLoop()
+	}
 	return h, nil
 }
 
@@ -222,9 +233,12 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, route string) {
 	case "login":
 		h.login(w, r)
 		return
+	case "node": // other nodes' dashboards, with a cluster token instead of a session
+		h.nodeAPI(w, r)
+		return
 	case "session":
 		if s := h.session(r); s != nil {
-			writeJSON(w, 200, map[string]any{"authenticated": true, "csrf": s.csrf, "api_key": s.apiKey})
+			writeJSON(w, 200, map[string]any{"authenticated": true, "csrf": s.csrf, "api_key": s.apiKey, "cluster": h.clusterInfo()})
 		} else {
 			writeJSON(w, 200, map[string]any{"authenticated": false})
 		}
@@ -268,6 +282,8 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, route string) {
 		h.events(w, r)
 	case route == "recordings" && r.Method == http.MethodGet:
 		h.listRecordings(w, r)
+	case (route == "cluster" || strings.HasPrefix(route, "cluster/")) && r.Method == http.MethodGet:
+		h.clusterAPI(w, r, route)
 	case strings.HasPrefix(route, "actions/") && r.Method == http.MethodPost:
 		h.action(w, r, strings.TrimPrefix(route, "actions/"))
 	default:
@@ -370,7 +386,15 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		Secure:  r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 		Expires: s.expires,
 	})
-	writeJSON(w, 200, map[string]any{"authenticated": true, "csrf": s.csrf, "api_key": s.apiKey})
+	writeJSON(w, 200, map[string]any{"authenticated": true, "csrf": s.csrf, "api_key": s.apiKey, "cluster": h.clusterInfo()})
+}
+
+// clusterInfo tells the browser whether this node is part of a cluster (nil if not).
+func (h *Handler) clusterInfo() map[string]string {
+	if h.p.Cluster == nil {
+		return nil
+	}
+	return map[string]string{"self": h.p.Cluster.Self, "role": h.p.Cluster.Role}
 }
 
 func (h *Handler) session(r *http.Request) *session {

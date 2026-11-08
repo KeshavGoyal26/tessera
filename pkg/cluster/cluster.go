@@ -5,7 +5,7 @@
 //
 // Keys (prefix "tessera:"):
 //
-//	node:<id>               hash (role, private_url, sessions, rooms, draining); expires 10 s after the last heartbeat
+//	node:<id>               hash (role, private_url, sessions, rooms, draining, seen, stats); expires 10 s after the last heartbeat
 //	nodes                   set of node ids (stale ids are dropped when their hash is gone)
 //	group:<room>            sorted set of media node ids hosting the room, scored by last refresh (ms)
 //	pres:<room>\x00<identity> media node of a presenter; refreshed by that node, expires 60 s after it stops
@@ -40,6 +40,10 @@ type NodeInfo struct {
 	Sessions   int
 	Rooms      int
 	Draining   bool
+	// Seen is the time of the last heartbeat; Stats the node's summary for the cluster
+	// dashboard (opaque JSON, a few hundred bytes), both set by Nodes.
+	Seen  time.Time
+	Stats []byte
 }
 
 // Client talks to the cluster's Redis.
@@ -70,7 +74,8 @@ func nodeKey(id string) string { return keyPrefix + "node:" + id }
 func (c *Client) Heartbeat(ctx context.Context, n NodeInfo) error {
 	_, err := c.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.HSet(ctx, nodeKey(n.ID), "role", n.Role, "private_url", n.PrivateURL,
-			"sessions", n.Sessions, "rooms", n.Rooms, "draining", strconv.FormatBool(n.Draining))
+			"sessions", n.Sessions, "rooms", n.Rooms, "draining", strconv.FormatBool(n.Draining),
+			"seen", time.Now().UnixMilli(), "stats", n.Stats)
 		p.Expire(ctx, nodeKey(n.ID), nodeTTL)
 		p.SAdd(ctx, keyPrefix+nodesKey, n.ID)
 		return nil
@@ -112,8 +117,13 @@ func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 		}
 		sessions, _ := strconv.Atoi(h["sessions"])
 		rooms, _ := strconv.Atoi(h["rooms"])
-		out = append(out, NodeInfo{ID: id, Role: h["role"], PrivateURL: h["private_url"],
-			Sessions: sessions, Rooms: rooms, Draining: h["draining"] == "true"})
+		seen, _ := strconv.ParseInt(h["seen"], 10, 64)
+		n := NodeInfo{ID: id, Role: h["role"], PrivateURL: h["private_url"],
+			Sessions: sessions, Rooms: rooms, Draining: h["draining"] == "true", Seen: time.UnixMilli(seen)}
+		if st := h["stats"]; st != "" {
+			n.Stats = []byte(st)
+		}
+		out = append(out, n)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

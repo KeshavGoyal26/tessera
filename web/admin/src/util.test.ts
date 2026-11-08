@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Participant, Published, Snapshot, Subscribed } from './types';
-import { esc, fmtBps, fmtBytes, fmtDur, matches, percentile, playUrl, role, roleCounts, sortSnapshot, table } from './util';
+import type { NodeRoom, Participant, Published, Snapshot, Subscribed } from './types';
+import { esc, fmtBps, fmtBytes, fmtDur, matches, mergeRoom, nodeHealth, percentile, playUrl, role, roleCounts, sortSnapshot, table } from './util';
 
 describe('util', () => {
   it('escapes HTML', () => expect(esc('<a href="x">&')).toBe('&lt;a href=&quot;x&quot;&gt;&amp;'));
@@ -90,5 +90,28 @@ describe('lists', () => {
     expect(html).toContain('Showing 3 of 5.');
     expect(table(['n'], rows)).not.toContain('Showing');
     expect(table(['n'], [], 'No <rooms>.')).toBe('<p class="muted">No &lt;rooms&gt;.</p>');
+  });
+});
+
+describe('cluster', () => {
+  const part = (identity: string, kind: string, published: boolean, ice = 'host') =>
+    ({ sid: `PA_${identity}`, identity, kind, ice_candidate_type: ice, published: published ? [{ sid: `TR_${identity}`, kind: 'video' }] : [], subscribed: [] }) as unknown as Participant;
+  it('merges a room: presenters from media nodes, viewers from edges, no relayed copies or relay sessions', () => {
+    const parts = [
+      { node: 'e1', role: 'edge', room: { participants: [part('alice', 'standard', true, ''), part('v2', 'standard', false), part('v1', 'standard', false)] } },
+      { node: 'm1', role: 'media', room: { participants: [part('alice', 'standard', true), part('relay-e1', 'relay', false), part('rec', 'recorder', false)] } },
+      { node: 'e2', role: 'edge', error: 'timeout' },
+    ] as unknown as NodeRoom[];
+    const { people, relays } = mergeRoom(parts);
+    expect(people.map((x) => `${x.role}:${x.p.identity}@${x.node}`)).toEqual(['presenter:alice@m1', 'viewer:v1@e1', 'viewer:v2@e1']);
+    expect(relays).toEqual({ m1: 1 });
+  });
+  it('rates node health: down, late heartbeat, draining, alerts, ok', () => {
+    const now = 100_000;
+    expect(nodeHealth({ down: true, seen: now }, now).label).toBe('down');
+    expect(nodeHealth({ seen: now - 5000 }, now).label).toBe('late');
+    expect(nodeHealth({ draining: true, seen: now }, now).label).toBe('draining');
+    expect(nodeHealth({ seen: now, summary: { critical: 2, warnings: 1 } }, now)).toEqual({ label: '2 critical', kind: 'bad' });
+    expect(nodeHealth({ seen: now - 1000, summary: { critical: 0, warnings: 0 } }, now)).toEqual({ label: 'ok', kind: 'ok' });
   });
 });

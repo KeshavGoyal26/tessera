@@ -51,3 +51,19 @@ export interface CoordRecording { recording_id: string; room: string; status: st
   /** Set once the tracks have their first segments, so also while recording (a live EVENT playlist). */
   master_playlist_url?: string
   outputs?: { track_sid: string; participant_identity?: string; playlist_url?: string; duration_ms?: string }[] }
+
+// Cluster view (pkg/dashboard/cluster.go).
+export interface NodeSummary {
+  version: string; started_at: number; cpu: number; cores: number; rss: number; bps_in: number; bps_out: number; rooms: number
+  /** On an edge these are the relayed copies of presenters. */
+  presenters: number; viewers: number; relays: number; published: number; subscribed: number
+  recordings: number; rec_used: number; rec_cap: number; loss_max: number; rtt_avg: number; critical: number; warnings: number
+}
+export interface NodeView { id: string; role: string; self?: boolean; draining?: boolean; down?: boolean; reachable: boolean; seen: number; summary?: NodeSummary }
+export interface ClusterPoint {
+  t: number; media: number; edges: number; down: number; presenters: number; viewers: number; bps_in: number; bps_out: number
+  cpu_max: number; cpu_avg: number; recordings: number; rec_used: number; rec_cap: number; loss_max: number
+}
+export interface ClusterState { self: string; time: number; error?: string; nodes: NodeView[] | null; alerts: Alert[] | null; point?: ClusterPoint }
+export interface ClusterRoom { name: string; presenters: number; viewers: number; recording?: boolean; media: string[]; edges: string[] }
+export interface NodeRoom { node: string; role: string; room?: Room; error?: string }

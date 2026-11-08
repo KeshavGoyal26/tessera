@@ -54,3 +54,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .filter { width: min(100%, 300px); padding: 6px 10px; }
 .more { margin: 6px 2px 0; font-size: 12px; }
 a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* cluster: node picker, "showing another node" banner; actions hidden where they cannot run */
+.node-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; } .node-pick select { padding: 4px 6px; max-width: 220px; }
+.scope { padding: 8px 16px; background: var(--warnbg); border-bottom: 1px solid var(--border); font-size: 13px; } .scope button { margin-left: 8px; }
+.no-actions td.actions button[data-act] { display: none; }

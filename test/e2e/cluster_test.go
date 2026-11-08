@@ -31,7 +31,7 @@ func startMedia(t *testing.T, mr *miniredis.Miniredis, id string) (s *server, st
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		cc.Run(ctx, cluster.NodeInfo{ID: id, Role: config.RoleMedia, PrivateURL: "http://" + strings.TrimPrefix(s.URL, "ws://")}, s.Manager, testLogger())
+		cc.Run(ctx, cluster.NodeInfo{ID: id, Role: config.RoleMedia, PrivateURL: "http://" + strings.TrimPrefix(s.URL, "ws://")}, s.Manager, nil, testLogger())
 	}()
 	stop = func() { cancel(); <-done; _ = cc.Close() }
 	t.Cleanup(func() {

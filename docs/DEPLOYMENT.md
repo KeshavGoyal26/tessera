@@ -164,6 +164,7 @@ node_id: edge-1
 cluster:
   role: edge
   redis: { addr: redis.internal:6379, tls: true, password: "${REDIS_PASSWORD}" }
+  private_url: http://10.0.0.7:7880      # optional: lets other nodes' dashboards show this edge
 turn:
   enabled: true
   domain: edge.example.com

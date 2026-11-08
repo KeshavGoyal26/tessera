@@ -1,4 +1,4 @@
-import type { CoordRecording, Participant, Snapshot } from './types';
+import type { CoordRecording, NodeRoom, Participant, Snapshot } from './types';
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, (c) => ESC[c]!);
 
@@ -101,4 +101,35 @@ export function table(head: string[], rows: string[], empty = 'Nothing to show.'
   if (!rows.length) return `<p class="muted">${esc(empty)}</p>`;
   const more = rows.length > limit ? `<p class="muted more">Showing ${limit} of ${rows.length}.</p>` : '';
   return `<div class="table-wrap"><table><thead><tr>${head.map((h) => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.slice(0, limit).join('')}</tbody></table></div>${more}`;
+}
+
+export interface ClusterParticipant { p: Participant; node: string; role: Role }
+
+/** One room across the cluster: presenters (and any viewers) from media nodes, viewers from
+ *  edges. An edge's presenters are relayed copies and a media node's relay sessions are
+ *  internal, so neither is listed; relays counts the relay sessions per media node. */
+export function mergeRoom(parts: NodeRoom[]): { people: ClusterParticipant[]; relays: Record<string, number> } {
+  const people: ClusterParticipant[] = [];
+  const relays: Record<string, number> = {};
+  for (const part of parts) {
+    for (const p of part.room?.participants ?? []) {
+      const r = role(p);
+      if (r === 'recorder') continue;
+      if (r === 'relay') { relays[part.node] = (relays[part.node] ?? 0) + 1; continue; }
+      if (part.role === 'edge' && r === 'presenter') continue;
+      people.push({ p, node: part.node, role: r });
+    }
+  }
+  people.sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || cmp(a.p.identity, b.p.identity) || cmp(a.node, b.node));
+  return { people, relays };
+}
+
+/** Health of a node in the cluster table: down, late heartbeat, draining or alerts. */
+export function nodeHealth(n: { down?: boolean; draining?: boolean; seen: number; summary?: { critical: number; warnings: number } }, now: number): { label: string; kind: 'ok' | 'warn' | 'bad' } {
+  if (n.down) return { label: 'down', kind: 'bad' };
+  if (now - n.seen > 4000) return { label: 'late', kind: 'warn' };
+  if (n.draining) return { label: 'draining', kind: 'warn' };
+  if (n.summary?.critical) return { label: `${n.summary.critical} critical`, kind: 'bad' };
+  if (n.summary?.warnings) return { label: `${n.summary.warnings} warning${n.summary.warnings > 1 ? 's' : ''}`, kind: 'warn' };
+  return { label: 'ok', kind: 'ok' };
 }

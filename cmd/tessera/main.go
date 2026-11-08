@@ -212,9 +212,16 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	})
 	signalSrv := sig.NewServer(cfg.Signal, verifier, rooms, logger)
 
+	var dashCluster *dashboard.ClusterParams
+	if cc != nil {
+		// The cluster view; actions and the recordings list go through the admin
+		// forwarder on an edge, as admin API calls do.
+		dashCluster = &dashboard.ClusterParams{Nodes: cc, Self: cfg.NodeID, Role: cfg.Cluster.Role,
+			APIKey: recKey, Secret: recSecret, Verifier: verifier, KeepHistory: cfg.Cluster.Role == config.RoleEdge}
+	}
 	dash, err := dashboard.New(dashboard.Params{
-		Stats: rooms, Keys: keys, Rooms: rooms, Recordings: coordinator,
-		RecorderURLs: recorderURLs, Logger: logger,
+		Stats: rooms, Keys: keys, Rooms: adminRooms, Recordings: adminRecordings,
+		RecorderURLs: recorderURLs, Logger: logger, Cluster: dashCluster,
 	})
 	if err != nil {
 		return err
@@ -235,7 +242,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		} else {
 			hosted = rooms
 		}
-		go cc.Run(ctx, self, hosted, logger)
+		go cc.Run(ctx, self, hosted, dash.Summary, logger)
 		logger.Info("cluster node", "role", role, "id", cfg.NodeID, "redis", cfg.Cluster.Redis.Addr)
 	}
 	mux.Handle(sig.Path, rtcHandler)

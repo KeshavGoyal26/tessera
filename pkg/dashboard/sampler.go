@@ -123,6 +123,10 @@ func (h *Handler) tick() {
 	pt := pointOf(snap, active)
 	alerts := h.alerts(snap, recs)
 	u := &Update{Snapshot: snap, Recorders: recs, Alerts: alerts, Point: pt}
+	var sum []byte
+	if h.p.Cluster != nil {
+		sum, _ = json.Marshal(summaryOf(snap, pt, recs, alerts))
+	}
 	h.mu.Lock()
 	viewers := len(h.subs)
 	h.mu.Unlock()
@@ -132,7 +136,7 @@ func (h *Handler) tick() {
 		b, err = json.Marshal(u)
 	}
 	h.mu.Lock()
-	h.latest = u
+	h.latest, h.latestJSON, h.summary = u, b, sum
 	h.hist.add(pt)
 	if err == nil {
 		for ch := range h.subs {
@@ -278,17 +282,23 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return stamp(cur, h.alertAt, now)
+}
+
+// stamp keeps each alert's first-seen time in at (dropping ended ones), orders critical
+// first and caps the list at maxAlerts with a summary alert. The caller holds h.mu.
+func stamp(cur map[string]Alert, at map[string]time.Time, now time.Time) []Alert {
 	out := make([]Alert, 0, len(cur))
 	for id, a := range cur {
-		if _, ok := h.alertAt[id]; !ok {
-			h.alertAt[id] = now
+		if _, ok := at[id]; !ok {
+			at[id] = now
 		}
-		a.Since = h.alertAt[id]
+		a.Since = at[id]
 		out = append(out, a)
 	}
-	for id := range h.alertAt {
+	for id := range at {
 		if _, ok := cur[id]; !ok {
-			delete(h.alertAt, id)
+			delete(at, id)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

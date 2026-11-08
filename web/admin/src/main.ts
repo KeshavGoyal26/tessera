@@ -1,6 +1,8 @@
 import { checkSession, login, logout, session } from './api';
+import { Cluster, cluster, refreshCluster } from './views/cluster';
 import { store } from './store';
 import { esc } from './util';
+import { render } from './views/view';
 import { Connectivity } from './views/connectivity';
 import { Overview } from './views/overview';
 import { Quality } from './views/quality';
@@ -11,6 +13,7 @@ import './style.css';
 
 const app = document.getElementById('app')!;
 const ROUTES: Record<string, { label: string; make: () => View }> = {
+  cluster: { label: 'Cluster', make: () => new Cluster() },
   overview: { label: 'Overview', make: () => new Overview() },
   rooms: { label: 'Rooms', make: () => new Rooms() },
   quality: { label: 'Track quality', make: () => new Quality() },
@@ -40,9 +43,10 @@ let current: { name: string; args: string; view: View } | undefined;
 let unsub: (() => void) | undefined;
 
 function route(): void {
-  const [name = 'overview', ...args] = location.hash.replace(/^#\/?/, '').split('/');
-  const r = ROUTES[name] ?? ROUTES.overview!;
-  const key = ROUTES[name] ? name : 'overview';
+  const home = session.cluster ? 'cluster' : 'overview';
+  const [name = home, ...args] = location.hash.replace(/^#\/?/, '').split('/');
+  const key = ROUTES[name] && (name !== 'cluster' || session.cluster) ? name : home;
+  const r = ROUTES[key]!;
   document.querySelectorAll('nav a').forEach((a) => {
     const on = a.getAttribute('href') === `#/${key}`;
     a.classList.toggle('active', on);
@@ -59,10 +63,11 @@ function route(): void {
 
 function shell(): void {
   app.innerHTML = `<header><div class="brand">Tessera <span class="muted">admin</span></div>
-    <nav aria-label="Views">${Object.entries(ROUTES).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
+    <nav aria-label="Views">${Object.entries(ROUTES).filter(([k]) => k !== 'cluster' || session.cluster).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
+    ${session.cluster ? '<label class="node-pick">Node <select id="node" aria-label="Node shown by Overview, Rooms, Track quality, Connectivity and Recordings"></select></label>' : ''}
     <div class="spacer"></div><span id="conn" class="conn" role="status" title="live stream"></span>
     <span class="muted user">${esc(session.apiKey)}</span><button id="theme" title="Toggle theme" aria-label="Toggle light or dark theme">◐</button><button id="logout">Log out</button></header>
-    <main id="view"></main>`;
+    <div id="scope" class="scope" hidden></div><main id="view"></main>`;
   document.getElementById('theme')!.onclick = toggleTheme;
   document.getElementById('logout')!.onclick = async () => { store.close(); unsub?.(); await logout(); location.reload(); };
   unsub = store.on(() => {
@@ -73,8 +78,35 @@ function shell(): void {
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) current?.view.update(); });
   window.addEventListener('hashchange', route);
+  if (session.cluster) clusterShell();
   void store.start();
   route();
+}
+
+/** Node picker and the banner shown while the node views show another node. */
+function clusterShell(): void {
+  const pick = document.getElementById('node') as HTMLSelectElement;
+  const self = session.cluster!.self;
+  const fill = () => {
+    const nodes = (cluster.state?.nodes ?? []).filter((n) => !n.down && n.reachable && n.id !== self);
+    const opts = [`<option value="">${esc(self)} (this node)</option>`,
+      ...nodes.map((n) => `<option value="${esc(n.id)}">${esc(n.id)} · ${esc(n.role)}</option>`)];
+    if (store.node && !nodes.some((n) => n.id === store.node)) opts.push(`<option value="${esc(store.node)}">${esc(store.node)} (unreachable)</option>`);
+    pick.innerHTML = opts.join('');
+    pick.value = store.node;
+  };
+  cluster.listeners.add(fill);
+  pick.onchange = () => { store.setNode(pick.value); if (location.hash.startsWith('#/cluster')) location.hash = '#/overview'; };
+  pick.onfocus = () => void refreshCluster();
+  const scope = document.getElementById('scope')!;
+  store.on(() => {
+    document.body.classList.toggle('no-actions', !store.canAct);
+    if (pick.value !== store.node) fill();
+    scope.hidden = !store.node;
+    if (store.node) render(scope, `Showing <b>${esc(store.node)}</b> through this dashboard (refreshed every 2 s)${store.canAct ? '' : ' · actions need an edge\'s dashboard'}. <button data-back>Back to ${esc(self)}</button>`);
+  });
+  scope.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-back]')) store.setNode(''); });
+  void refreshCluster();
 }
 
 function loginForm(error = ''): void {

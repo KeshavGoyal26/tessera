@@ -3,11 +3,13 @@ package cluster
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
+	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
 )
 
@@ -37,6 +39,16 @@ func TestRegistryExpires(t *testing.T) {
 	nodes, err := c.Nodes(ctx)
 	if err != nil || len(nodes) != 2 || nodes[1].ID != "m1" || nodes[1].Sessions != 3 || nodes[1].PrivateURL != "http://m1" {
 		t.Fatalf("nodes %+v err %v", nodes, err)
+	}
+	if time.Since(nodes[0].Seen) > 5*time.Second || nodes[0].Stats != nil {
+		t.Fatalf("seen %v stats %q", nodes[0].Seen, nodes[0].Stats)
+	}
+	// The dashboard summary rides on the heartbeat.
+	withStats := media("m1", 3)
+	withStats.Stats = []byte(`{"cpu":12}`)
+	_ = c.Heartbeat(ctx, withStats)
+	if nodes, _ := c.Nodes(ctx); string(nodes[1].Stats) != `{"cpu":12}` {
+		t.Fatalf("stats %q", nodes[1].Stats)
 	}
 	mr.FastForward(nodeTTL + time.Second) // no heartbeat: both entries expire
 	if nodes, _ := c.Nodes(ctx); len(nodes) != 0 {
@@ -122,5 +134,48 @@ func TestRoomNodes(t *testing.T) {
 	mr.FastForward(roomTTL + time.Second)
 	if v, _ := mr.Get(presKey("g1", "a")); v != "" {
 		t.Fatalf("presenter placement must expire with its node's refreshes, got %q", v)
+	}
+}
+
+type fakeRooms struct{ ps []*tesserav1.ParticipantInfo }
+
+func (f fakeRooms) ListRooms(context.Context, []string) ([]*tesserav1.Room, error) {
+	return []*tesserav1.Room{{Name: "g1", NumParticipants: uint32(len(f.ps))}}, nil
+}
+func (f fakeRooms) ListParticipants(context.Context, string) ([]*tesserav1.ParticipantInfo, error) {
+	return f.ps, nil
+}
+func (fakeRooms) Ready() error { return nil }
+
+// TestRunRenewsPresenters: a media node renews the placement of its presenters, load-test
+// ones included (the admin forwarder finds presenters through it), but not of relay or
+// recorder sessions; its summary rides on the heartbeat.
+func TestRunRenewsPresenters(t *testing.T) {
+	c, _ := newTestClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rooms := fakeRooms{ps: []*tesserav1.ParticipantInfo{
+		{Identity: "alice", Kind: tesserav1.ParticipantInfo_KIND_STANDARD},
+		{Identity: "lt", Kind: tesserav1.ParticipantInfo_KIND_LOADTEST},
+		{Identity: "relay:e1", Kind: tesserav1.ParticipantInfo_KIND_RELAY},
+		{Identity: "recorder-RC_1", Kind: tesserav1.ParticipantInfo_KIND_RECORDER},
+	}}
+	go c.Run(ctx, media("m1", 0), rooms, func() []byte { return []byte(`{"cpu":1}`) }, slog.New(slog.DiscardHandler))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		n, err := c.rdb.Exists(ctx, presKey("g1", "alice"), presKey("g1", "lt")).Result()
+		if err == nil && n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("presenters not renewed: %d %v", n, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n, _ := c.rdb.Exists(ctx, presKey("g1", "relay:e1"), presKey("g1", "recorder-RC_1")).Result(); n != 0 {
+		t.Fatal("internal sessions must not be placed as presenters")
+	}
+	if nodes, _ := c.Nodes(ctx); len(nodes) != 1 || string(nodes[0].Stats) != `{"cpu":1}` || nodes[0].Sessions != 4 {
+		t.Fatalf("heartbeat %+v", nodes)
 	}
 }

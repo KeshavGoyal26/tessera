@@ -31,6 +31,40 @@ browser tab skips rendering.
 
 Light and dark theme (follows the OS, toggle in the header), responsive down to phone width.
 
+## Cluster view
+
+On a cluster node (ADR-0012) the dashboard opens on **Cluster**, and any node's dashboard can show
+the whole cluster (use an edge's: it is reachable, and its actions go through the admin forwarder).
+
+| | Content |
+|-|---------|
+| Cluster | nodes up/down by role, presenters (media nodes), viewers (all nodes), egress, busiest CPU, recording capacity; cluster alerts; the node table (status, CPU, memory, people, recording, bandwidth, version, uptime, heartbeat age); one hour of cluster charts; the room index across nodes (presenters, viewers, media nodes, edges) |
+| Cluster › room | one room on every node: presenters on their media node and viewers on each edge (relayed copies and relay sessions left out), with Record / Remove |
+| Node picker | the header's **Node** menu points Overview, Rooms, Track quality, Connectivity and Recordings at another node, shown through this dashboard (a banner says so; **Back** returns) |
+
+How it stays cheap:
+
+- Each node adds its **summary** (about 330 bytes: CPU, memory, people, recording capacity,
+  bandwidth, alert counts) to the registry heartbeat it already sends every 2 s. It is derived from
+  the sample the dashboard takes anyway.
+- The serving node reads the registry every 5 s (always on edges, otherwise for an hour after a
+  visit), keeps one hour of cluster history and derives the cluster alerts from it.
+- Room index, one room and one node are fetched from the nodes' dashboards **only while that page
+  is open** (the browser polls every 2–5 s while visible) and cached for 1–4 s on the serving node,
+  so several open dashboards cost the same as one. A node answers from its latest sample (the
+  full update is marshalled at most once per second whoever asks).
+- Measured on a local cluster (2 media nodes, 1 edge, 20 clients): 23 Redis commands/s with or
+  without the cluster page open; every cluster endpoint answers in under 1 ms; cluster state
+  1.5 KB, room index 0.4 KB, one room 12.5 KB.
+
+Cluster alerts: a node that stops heartbeating (listed as down for an hour), a late heartbeat
+(over 4 s), a draining node, the registry unreachable, no media node up, and each node's own
+alerts rolled up into one line per node.
+
+Nodes fetch from each other with a token signed by the cluster API key (`room_admin` grant) over
+the private network, at `GET /admin/api/node`; a node needs `cluster.private_url` to be reachable
+(media nodes have it; set it on edges too to see their viewers from another node's dashboard).
+
 ## Alerts
 
 Evaluated every second on the server:
@@ -57,6 +91,11 @@ Thresholds are `dashboard.Params` fields (`LossPercent`, `RTTMs`, `CPUPercent`).
 | `GET history` | last hour of `Point`s (ring buffer, 3600 × 1 s, in memory, lost on restart) |
 | `GET recordings` | coordinator's recordings: all in progress and the newest 200 ended, with `total` |
 | `POST actions/{end-room,remove-participant,mute-track,start-recording,stop-recording}` | CSRF required |
+| `GET cluster` | cluster sample: nodes with summaries, cluster alerts, latest cluster point (cluster nodes only) |
+| `GET cluster/history` | last hour of cluster points (720 × 5 s) |
+| `GET cluster/rooms`, `GET cluster/room?name=` | room index across nodes; one room on every node |
+| `GET cluster/node?id=[&history]` | another node's update (or its last hour), through this dashboard |
+| `GET node[?room=\|?rooms\|?history]` | for other nodes' dashboards only: bearer token signed by a cluster API key with `room_admin` |
 
 The sampler calls `stats.Provider.Snapshot()` once per second regardless of the number of
 viewers (see `docs/STATS.md`), so dashboard load does not grow with viewers.
@@ -87,8 +126,9 @@ adaptation, connectivity, recorder) uses the metrics of `docs/STATS.md` and
 
 ## Known gaps
 
-- History is in memory only; multi-node aggregation is not implemented (one node per dashboard:
-  an edge shows its viewers and relayed presenters, a media node its presenters and relay sessions).
+- History is in memory only (one hour per node, one hour of cluster samples on the serving node).
+- With local recording storage, playlist URLs point at the media node that recorded them, which
+  an edge's dashboard (or a browser) may not reach; use S3/CDN storage in a cluster.
 - Roles are inferred (a presenter who has not published yet is listed as a viewer).
 - The frontend has unit tests and was checked with a headless browser against `tessera-loadtest`
   rooms, but there is no automated end-to-end suite yet.
