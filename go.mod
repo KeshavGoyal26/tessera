@@ -5,6 +5,7 @@ go 1.27.0
 toolchain go1.27.3
 
 require (
+	github.com/alicebob/miniredis/v2 v2.34.0
 	github.com/coder/websocket v1.8.15
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/pion/ice/v4 v4.4.8
@@ -16,14 +17,17 @@ require (
 	github.com/pion/turn/v5 v5.1.3
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/prometheus/client_golang v1.25.0
+	github.com/redis/go-redis/v9 v9.7.3
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/net v0.60.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
+	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
@@ -48,6 +52,7 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect

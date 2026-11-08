@@ -207,6 +207,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = conn.Close(CloseNormal, "")
 }
 
+// WriteHTTPError writes err as the JSON error of a failed upgrade (status from its code).
+func WriteHTTPError(w http.ResponseWriter, err error) { writeHTTPError(w, err) }
+
 func writeHTTPError(w http.ResponseWriter, err error) {
 	code := errs.CodeOf(err)
 	status := errs.HTTPStatus(code)

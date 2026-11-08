@@ -135,6 +135,52 @@ Rules of thumb for sizing (leave 30% headroom):
 Scale out by running independent nodes and routing each room to one node (hash room name to node). A room
 cannot span nodes yet.
 
+## 6a. Two tiers: edges and private media servers (ADR-0012)
+
+Edges are the only public machines; media servers (rooms, recording) stay private. Redis
+(ElastiCache with a replica in production) holds the node registry and which media server
+hosts each room. It is never on the media path: if it fails, running sessions continue and
+new joins wait until it is back.
+
+```yaml
+# media server (private address 10.0.1.5)
+node_id: media-1
+cluster:
+  role: media
+  redis: { addr: redis.internal:6379, tls: true, password: "${REDIS_PASSWORD}" }
+  private_url: http://10.0.1.5:7880     # how edges reach this server
+rtc:
+  turn_relay:                            # clients reach this server only through an edge's TURN
+    urls: ["turn:edge.example.com:3478?transport=udp", "turns:edge.example.com:443?transport=tcp"]
+    secret: "${TURN_SECRET}"             # the same secret as the edges' turn.secret
+    force: true
+room:
+  lock_published_tracks: true            # presenters cannot mute or unpublish
+```
+
+```yaml
+# edge (public)
+node_id: edge-1
+cluster:
+  role: edge
+  redis: { addr: redis.internal:6379, tls: true, password: "${REDIS_PASSWORD}" }
+turn:
+  enabled: true
+  domain: edge.example.com
+  secret: "${TURN_SECRET}"
+  tls_port: 443
+  relay_peers: ["10.0.1.0/24"]           # the media servers' subnet
+recording:
+  enabled: false
+```
+
+Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single server. An
+edge checks the token, places the room on the least-loaded live media server that is not
+draining (or finds where it already is) and relays the WebSocket there; a reconnect carries
+the same token and reaches the same server. A room whose media server disappears (no heartbeat
+for 10 s) is placed on another one at the next join. Admin API calls go to the media server
+that hosts the room (phase 3 adds forwarding from edges).
+
 ## 7. Monitoring and alerting
 
 - Scrape `:6789/metrics` (Prometheus). `deploy/grafana/` has a provisioned

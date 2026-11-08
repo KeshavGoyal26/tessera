@@ -27,6 +27,7 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/admin"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
+	"github.com/KeshavGoyal26/tessera/pkg/cluster"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
 	"github.com/KeshavGoyal26/tessera/pkg/dashboard"
 	"github.com/KeshavGoyal26/tessera/pkg/metrics"
@@ -193,7 +194,25 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	defer dash.Close()
 
 	mux := http.NewServeMux()
-	mux.Handle(sig.Path, signalSrv)
+	var rtcHandler http.Handler = signalSrv
+	if role := cfg.Cluster.Role; role != config.RoleSingle {
+		cc, err := cluster.New(ctx, cfg.Cluster.Redis)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = cc.Close() }()
+		self := cluster.NodeInfo{ID: cfg.NodeID, Role: role, PrivateURL: cfg.Cluster.PrivateURL}
+		var hosted cluster.Rooms
+		if role == config.RoleEdge {
+			// Signaling goes to the room's media node; this node relays media (TURN).
+			rtcHandler = &cluster.Edge{Cluster: cc, Verifier: verifier, MaxMessageSize: cfg.Signal.MaxMessageSize, Logger: logger}
+		} else {
+			hosted = rooms
+		}
+		go cc.Run(ctx, self, hosted, logger)
+		logger.Info("cluster node", "role", role, "id", cfg.NodeID, "redis", cfg.Cluster.Redis.Addr)
+	}
+	mux.Handle(sig.Path, rtcHandler)
 	mux.Handle(admin.PathPrefix, adminSrv)
 	mux.Handle(dashboard.PathPrefix+"/", dash)
 	mux.Handle(dashboard.PathPrefix, dash)
