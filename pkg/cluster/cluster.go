@@ -188,6 +188,14 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 			return NodeInfo{}, err
 		}
 		if ok {
+			// Record the placement now rather than at the node's next heartbeat, so the
+			// presenters of a group joining together land on the same node and a burst
+			// of new groups spreads over the nodes.
+			now := strconv.FormatInt(time.Now().UnixMilli(), 10)
+			if err := notePlaced.Run(ctx, c.rdb, []string{groupKey(room), nodeKey(best.ID)}, best.ID, now,
+				int((2 * roomTTL).Seconds())).Err(); err != nil {
+				return NodeInfo{}, err
+			}
 			return *best, nil
 		}
 	}
@@ -225,6 +233,14 @@ func (c *Client) KeepRooms(ctx context.Context, node string, presenters map[stri
 
 var releaseIf = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end
+return 0`)
+
+// notePlaced adds a node to a group's hosting set and counts the session on the node
+// until its next heartbeat reports the real number (only while the node is registered).
+var notePlaced = redis.NewScript(`
+redis.call("ZADD", KEYS[1], ARGV[2], ARGV[1])
+redis.call("EXPIRE", KEYS[1], ARGV[3])
+if redis.call("EXISTS", KEYS[2]) == 1 then redis.call("HINCRBY", KEYS[2], "sessions", 1) end
 return 0`)
 
 func (c *Client) releaseIf(ctx context.Context, key, node string) error {

@@ -58,8 +58,23 @@ func TestPlacePresenter(t *testing.T) {
 	for _, n := range []NodeInfo{draining, media("m1", 5), media("m2", 2), {ID: "e1", Role: config.RoleEdge}} {
 		_ = c.Heartbeat(ctx, n)
 	}
-	if n, err := c.PlacePresenter(ctx, "g1", "a"); err != nil || n.ID != "m2" {
+	if n, err := c.PlacePresenter(ctx, "g0", "a"); err != nil || n.ID != "m2" {
 		t.Fatalf("first presenter: least-loaded live media node, got %+v err %v", n, err)
+	}
+	// The placement counts at once: before any heartbeat the group is hosted on m2 and
+	// m2 has one more session.
+	if ids, _ := c.RoomNodes(ctx, "g0"); len(ids) != 1 || ids[0] != "m2" {
+		t.Fatalf("g0 hosted on %v", ids)
+	}
+	if n, _ := c.PlacePresenter(ctx, "g0", "b"); n.ID != "m2" {
+		t.Fatalf("same group before a heartbeat: got %s", n.ID)
+	}
+	if ns, _ := c.Nodes(ctx); sessionsOf(ns, "m2") != 4 {
+		t.Fatalf("m2 sessions %d, want 4", sessionsOf(ns, "m2"))
+	}
+	_ = c.Heartbeat(ctx, media("m2", 2))
+	if n, err := c.PlacePresenter(ctx, "g3", "a"); err != nil || n.ID != "m2" {
+		t.Fatalf("new group: least-loaded live media node, got %+v err %v", n, err)
 	}
 	// The group is hosted on m1 (under the spill threshold): the next presenter joins it
 	// there although m2 is less loaded.
@@ -75,14 +90,23 @@ func TestPlacePresenter(t *testing.T) {
 		t.Fatalf("spill: got %s", n.ID)
 	}
 	// A placed presenter stays (a reconnect resumes there) until its node is gone.
-	if n, _ := c.PlacePresenter(ctx, "g1", "a"); n.ID != "m2" {
+	if n, _ := c.PlacePresenter(ctx, "g3", "a"); n.ID != "m2" {
 		t.Fatalf("placed presenter moved to %s", n.ID)
 	}
 	mr.FastForward(nodeTTL + time.Second)
 	_ = c.Heartbeat(ctx, media("m3", 0))
-	if n, err := c.PlacePresenter(ctx, "g1", "a"); err != nil || n.ID != "m3" {
+	if n, err := c.PlacePresenter(ctx, "g3", "a"); err != nil || n.ID != "m3" {
 		t.Fatalf("after its node left: got %+v err %v", n, err)
 	}
+}
+
+func sessionsOf(ns []NodeInfo, id string) int {
+	for _, n := range ns {
+		if n.ID == id {
+			return n.Sessions
+		}
+	}
+	return -1
 }
 
 func TestRoomNodes(t *testing.T) {
