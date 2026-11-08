@@ -1,6 +1,7 @@
 # ADR-0012: Edge tier (SFU + TURN) in front of private media servers
 
-- Status: proposed
+- Status: accepted; phases 0-3 implemented on `main` (2026-11-08), phase 4 planned in
+  [docs/perf/CLUSTER-TEST-PLAN.md](../perf/CLUSTER-TEST-PLAN.md)
 - Date: 2026-11-08 (revised the same day: fixed roles, always-on media, single stream, H.264 only)
 - Deciders: Tessera maintainers
 
