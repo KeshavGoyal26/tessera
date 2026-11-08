@@ -31,9 +31,12 @@ and no second WebRTC session: about half the per-presenter CPU of the old design
 
 ```
 <prefix>/                      prefix = filename_prefix, default "{room}/{recording_id}"
-  master.m3u8                  EXT-X-MEDIA TYPE=AUDIO (demuxed audio) + EXT-X-STREAM-INF
+  master.m3u8                  EXT-X-MEDIA TYPE=AUDIO (demuxed audio) + EXT-X-STREAM-INF; written live
+                               once the tracks have segments (hls_url attribute, RECORDING_UPDATED)
+  quality.json                 connection timeline, one sample per 4 s (format: PROTOCOL.md section 6)
   <track_sid>/index.m3u8       media playlist (EVENT while live, VOD + ENDLIST at the end)
-  <track_sid>/init.mp4         init segment (init_N.mp4 after a codec change)
+  <track_sid>/init.mp4         init segment (init_N.mp4 after a codec change: a new EXT-X-MAP,
+                               no discontinuity; keyframes also carry their SPS/PPS in-band)
   <track_sid>/seg_00000.m4s    CMAF fragment (moof+mdat), cut on keyframes
 ```
 

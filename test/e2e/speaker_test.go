@@ -95,3 +95,56 @@ func TestActiveSpeakerAndConnectionQuality(t *testing.T) {
 		t.Fatalf("stats speakers %+v", snap.Rooms[0].ActiveSpeakers)
 	}
 }
+
+// TestLateJoinerGetsCurrentQuality: the room only broadcasts quality changes, so a viewer
+// who joins after a presenter's quality has settled gets the current one on joining.
+func TestLateJoinerGetsCurrentQuality(t *testing.T) {
+	oldQ := room.QualityInterval
+	room.QualityInterval = 300 * time.Millisecond
+	t.Cleanup(func() { room.QualityInterval = oldQ })
+	s := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pres := connect(t, s, "late", "pres")
+	syn := newSynth(t, "audio", "pres-a")
+	if _, err := pres.PublishTrack(ctx, syn.track, client.PublishOptions{Name: "mic"}); err != nil {
+		t.Fatal(err)
+	}
+	syn.run()
+	t.Cleanup(syn.Stop)
+	settled := func() bool {
+		for _, r := range s.Manager.Snapshot().Rooms {
+			for _, p := range r.Participants {
+				if p.Identity == "pres" && p.ConnectionQuality != "unknown" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for !settled() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("the presenter's quality never settled")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	time.Sleep(4 * room.QualityInterval) // no change from here on: nothing is broadcast
+
+	quality := make(chan *tesserav1.ConnectionQualityUpdate, 16)
+	viewer := client.New(client.Options{AutoSubscribe: true, SettingEngine: client.LoopbackSettingEngine(), Logger: testLogger()})
+	viewer.SetCallbacks(client.Callbacks{OnConnectionQuality: func(u *tesserav1.ConnectionQualityUpdate) { quality <- u }})
+	if err := viewer.Connect(ctx, s.URL, token(t, "late", "viewer")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = viewer.Disconnect(context.Background()) })
+	select {
+	case u := <-quality:
+		if len(u.Updates) != 1 || u.Updates[0].ParticipantSid != pres.LocalParticipant().Sid ||
+			u.Updates[0].Quality == tesserav1.ConnectionQuality_CONNECTION_QUALITY_UNSPECIFIED {
+			t.Fatalf("update %v", u)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a late viewer got no connection quality")
+	}
+}

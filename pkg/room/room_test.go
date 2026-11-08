@@ -44,3 +44,34 @@ func TestAdminRoomLifecycle(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+// TestRemotePublisherQuality: a presenter relayed from a media node shows the connection
+// quality that node measured, not the one this node would compute for the relay.
+func TestRemotePublisherQuality(t *testing.T) {
+	m, err := NewManager(Params{Config: config.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	rp, err := m.(RemotePublishers).AddRemotePublisher("g", "alice", "Alice", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quality := func() string {
+		for _, r := range m.Snapshot().Rooms {
+			for _, p := range r.Participants {
+				if p.Identity == "alice" {
+					return p.ConnectionQuality
+				}
+			}
+		}
+		return ""
+	}
+	if q := quality(); q != "unknown" {
+		t.Fatalf("before any update: %q", q)
+	}
+	rp.SetQuality(tesserav1.ConnectionQuality_CONNECTION_QUALITY_POOR, 2)
+	if q := quality(); q != "poor" {
+		t.Fatalf("after the media node's update: %q", q)
+	}
+}

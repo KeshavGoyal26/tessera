@@ -41,6 +41,7 @@ const (
 	ContentTypePlaylist = "application/vnd.apple.mpegurl"
 	ContentTypeSegment  = "video/iso.segment"
 	ContentTypeInit     = "video/mp4"
+	ContentTypeJSON     = "application/json"
 )
 
 // cleanKey rejects keys that would escape the storage root.

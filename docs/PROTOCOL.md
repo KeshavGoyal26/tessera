@@ -297,11 +297,24 @@ Hidden participants (recorders) do not generate participant events.
 ```
 <prefix>/<recording_id>/
   master.m3u8                     # participant/composite recordings (written live, final at the end)
+  quality.json                    # connection timeline (written every 12 s while recording, final at the end)
   <track_sid>/init.mp4            # ftyp + moov (avcC or dOps/esds)
   <track_sid>/index.m3u8          # media playlist (EVENT → VOD)
   <track_sid>/seg_00000.m4s       # moof + mdat fragments
   ...
 ```
+
+`quality.json` is how the participant's media reached the recorder, one sample per 4 s of media
+time (the player's `currentTime`), for players to draw under the scrubber:
+
+```json
+{"step_ms": 4000, "final": false, "samples": [{"t": 16, "q": 3, "loss": 0, "gap_ms": 3750, "kbps": 0}]}
+```
+
+`q`: 0 good (under 3 % loss after retransmission, video flowing), 1 unstable (3-10 % loss or the
+video paused 0.7-2 s), 2 poor (over 10 % loss or the video frozen 2 s or more), 3 no media (nothing
+on any track for 2 s or more: disconnected). `gap_ms` is the longest video pause in the step (audio
+pauses in silence are not counted); `kbps` what arrived on all tracks.
 
 Media playlist example:
 

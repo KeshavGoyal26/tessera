@@ -8,6 +8,7 @@
 // switch that tile to the HLS player (⏪ Rewind) to scrub back, then return to WebRTC (● Live).
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
+import { attachTimeline, liveLevel, setDot, timelineUrl } from "./quality";
 
 type Role = "presenter" | "viewer";
 
@@ -186,6 +187,7 @@ function watchRoom(r: Room): void {
     .on(RoomEvent.TrackMuted, render)
     .on(RoomEvent.TrackUnmuted, render)
     .on(RoomEvent.ParticipantAttributesChanged, render)
+    .on(RoomEvent.ConnectionQualityChanged, render)
     .on(RoomEvent.TrackSubscribed, onSubscribed)
     .on(RoomEvent.TrackUnsubscribed, (track) => {
       for (const m of track.detach()) m.remove();
@@ -256,7 +258,8 @@ function render(): void {
       const media = MEDIA.filter(([s]) => sending(p, s))
         .map(([, icon]) => icon)
         .join("");
-      li.innerHTML = `<button type="button" class="presenter" aria-pressed="${on}"><span class="av"></span><span class="who"><span class="pn"></span><span class="media">${media}</span></span><span class="go">${on ? "Watching" : "Watch"}</span></button>`;
+      li.innerHTML = `<button type="button" class="presenter" aria-pressed="${on}"><span class="av"></span><span class="who"><span class="pn-row"><i class="cq"></i><span class="pn"></span></span><span class="media">${media}</span></span><span class="go">${on ? "Watching" : "Watch"}</span></button>`;
+      setDot(li.querySelector(".cq"), liveLevel(p.connectionQuality));
       li.querySelector(".av")!.textContent = name.charAt(0).toUpperCase();
       li.querySelector(".pn")!.textContent = name;
       if (p.attributes?.recorded === "true") li.querySelector(".pn")!.insertAdjacentHTML("afterend", '<span class="rec-dot">REC</span>');
@@ -285,7 +288,7 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     const name = p.name || p.identity;
     tile.id = tileId(p.identity);
     tile.className = "tile";
-    tile.innerHTML = `<div class="avatar"></div><div class="label"><span class="nm"></span></div>
+    tile.innerHTML = `<div class="avatar"></div><div class="label"><i class="cq"></i><span class="nm"></span></div>
       <div class="tile-actions"><button class="icon-btn" data-act="replay" type="button" hidden></button><button class="icon-btn" data-act="audio" type="button" title="Mute">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
     tile.querySelector(".avatar")!.textContent = name.charAt(0).toUpperCase();
     tile.querySelector(".nm")!.textContent = name;
@@ -305,6 +308,8 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     el("watch-stage").append(tile);
   }
   const replay = replays.has(p.identity);
+  // Live: the presenter's connection now. Rewinding: the recording's at the playhead (set by its timeline).
+  if (!replay) setDot(tile.querySelector(".cq"), liveLevel(p.connectionQuality));
   const btn = tile.querySelector<HTMLButtonElement>('[data-act="replay"]')!;
   btn.hidden = !replay && !p.attributes?.hls_url;
   btn.textContent = replay ? "● Live" : "⏪ Rewind";
@@ -325,12 +330,18 @@ async function startReplay(p: RemoteParticipant): Promise<void> {
   video.className = "replay";
   video.controls = video.playsInline = true;
   video.muted = tile.classList.contains("muted-audio");
+  // The recording's connection timeline, drawn over the top of the tile (click to seek).
+  const bar = document.createElement("div");
+  bar.className = "qbar";
+  bar.setAttribute("role", "img");
+  const stopTimeline = attachTimeline(video, bar, timelineUrl(url), (l) => setDot(tile.querySelector(".cq"), l, "Connection at this moment"));
   // Registered before hls.js loads, so a second click (Live) during the load cancels this one.
   let player: { destroy(): void } | undefined;
-  const entry = { destroy: () => (player?.destroy(), video.remove()) };
+  const entry = { destroy: () => (player?.destroy(), stopTimeline(), bar.remove(), video.remove()) };
   replays.set(p.identity, entry);
   for (const pub of p.trackPublications.values()) if (!live(pub, p.identity)) pub.setSubscribed(false);
   tile.prepend(video);
+  tile.append(bar);
   render();
   const { default: Hls } = await import("hls.js");
   if (replays.get(p.identity) !== entry) return; // back to live meanwhile

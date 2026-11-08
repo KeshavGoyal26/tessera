@@ -1,6 +1,7 @@
 import { action, recordings } from '../api';
 import { store } from '../store';
 import type { CoordRecording, RecTrack } from '../types';
+import { attachTimeline, setDot, timelineUrl } from '../quality';
 import { badge, esc, fmtBytes, fmtDur, fmtNum, matches, playUrl, table } from '../util';
 import { toast } from './rooms';
 import { filterBox, render, type View } from './view';
@@ -14,12 +15,13 @@ export class Recordings implements View {
   private filter!: HTMLInputElement;
   private timer?: number;
   private hls?: { destroy(): void };
+  private stopTimeline?: () => void;
   private onClick = (e: Event) => void this.click(e);
 
   mount(root: HTMLElement): void {
     this.root = root;
     root.addEventListener('click', this.onClick);
-    root.innerHTML = '<div class="view-head"><h2>Recordings</h2></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><p class="muted player-msg" role="status"></p></div><div class="body"></div>';
+    root.innerHTML = '<div class="view-head"><h2>Recordings</h2></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><div class="qline" hidden><i class="cq"></i><div class="qbar" role="img"></div><span class="qsum muted"></span></div><p class="muted player-msg" role="status"></p></div><div class="body"></div>';
     this.filter = filterBox(root.querySelector('.view-head')!, 'Filter by participant, room or id', () => this.update());
     void this.refreshCoord();
     // The list is not in the live stream; refresh it while the page is visible.
@@ -61,6 +63,14 @@ export class Recordings implements View {
     box.querySelector('.player-title')!.textContent = title;
     msg.textContent = '';
     this.hls?.destroy();
+    this.stopTimeline?.();
+    // A participant recording's connection timeline sits next to its master playlist.
+    const line = box.querySelector<HTMLElement>('.qline')!;
+    line.hidden = !/master\.m3u8(\?|$)/.test(url);
+    if (!line.hidden) {
+      const dot = line.querySelector('.cq'), sum = line.querySelector('.qsum')!;
+      this.stopTimeline = attachTimeline(video, line.querySelector('.qbar')!, timelineUrl(url), (l, s) => { setDot(dot, l, 'Connection at this moment'); sum.textContent = s; });
+    }
     if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; void video.play().catch(() => undefined); return; }
     const { default: Hls } = await import('hls.js');
     if (!Hls.isSupported()) { msg.textContent = 'HLS playback is not supported in this browser.'; return; }
@@ -74,6 +84,8 @@ export class Recordings implements View {
 
   private closePlayer(): void {
     this.hls?.destroy();
+    this.stopTimeline?.();
+    this.stopTimeline = undefined;
     this.hls = undefined;
     const box = this.root.querySelector<HTMLElement>('.player')!;
     box.querySelector('video')!.removeAttribute('src');
@@ -147,6 +159,7 @@ export class Recordings implements View {
   destroy(): void {
     window.clearInterval(this.timer);
     this.hls?.destroy();
+    this.stopTimeline?.();
     this.root.removeEventListener('click', this.onClick);
     this.root.innerHTML = '';
   }

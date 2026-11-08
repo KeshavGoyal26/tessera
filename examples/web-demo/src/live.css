@@ -241,3 +241,47 @@ li.watching .presenter .go {
   aspect-ratio: 16 / 9;
   min-height: 0;
 }
+
+/* connection quality: a dot (live, or the recording's at the playhead) and the recording's
+   timeline bar across the top of a rewinding tile */
+:root {
+  --q-good: #2fbf71;
+  --q-fair: #f2b705;
+  --q-poor: #e5484d;
+  --q-lost: #9b1c1c;
+}
+.cq {
+  background: #6b7280;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  height: 9px;
+  width: 9px;
+}
+.cq[data-level="good"] { background: var(--q-good); }
+.cq[data-level="fair"] { background: var(--q-fair); }
+.cq[data-level="poor"] { background: var(--q-poor); }
+.cq[data-level="lost"] { background: var(--q-lost); box-shadow: 0 0 0 2px #fff3; }
+.pn-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.qbar {
+  background: none;
+  cursor: pointer;
+  height: 6px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.qbar .qhead {
+  background: #fff;
+  bottom: -2px;
+  box-shadow: 0 0 2px #000;
+  position: absolute;
+  top: -2px;
+  transform: translateX(-1px);
+  width: 2px;
+}

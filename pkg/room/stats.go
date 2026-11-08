@@ -116,6 +116,11 @@ func (p *Participant) stats(now time.Time) stats.ParticipantStats {
 		ps.Subscribed = append(ps.Subscribed, ss)
 	}
 	ps.ConnectionQuality, ps.QualityScore = qualityFrom(ps, lossSum)
+	p.mu.Lock()
+	if p.upQuality != "" {
+		ps.ConnectionQuality, ps.QualityScore = p.upQuality, p.upScore
+	}
+	p.mu.Unlock()
 	return ps
 }
 

@@ -71,6 +71,10 @@ type Participant struct {
 	resumeT    *time.Timer
 	twcc       *rtc.TWCCSender
 	alloc      bwe.Allocator
+	// upQuality/upScore, when set, replace the computed connection quality: a presenter
+	// relayed from a media node takes the quality that node measured on its connection.
+	upQuality string
+	upScore   float64
 }
 
 func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signal.Conn) *Participant {

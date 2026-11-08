@@ -286,6 +286,7 @@ type jobRun struct {
 	// many tracks the live master lists. Both are used by the job goroutine only.
 	masterURL string
 	liveRends int
+	quality   *qualityLog // connection timeline (quality.json)
 }
 
 type recTrack struct {
@@ -385,6 +386,7 @@ func (r *jobRun) execute(ctx context.Context) {
 	r.st = st
 	r.prefix = expandPrefix(r.req.GetFilenamePrefix(), rec.GetRoom(), r.id, r.started)
 	r.journal = r.startJournal()
+	r.quality = newQualityLog(r.origin)
 	defer func() {
 		if r.journal != "" {
 			w.journal.End(r.journal) // ended normally: nothing to recover
@@ -427,13 +429,17 @@ wait:
 				failure = "no matching track appeared within " + trackWaitTimeout.String()
 				break wait
 			}
-		case <-tick.C:
+		case now := <-tick.C:
 			if !activeSent && r.anyStarted() {
 				activeSent = true
 				r.update(ctx, tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE, "", nil, "")
 			}
 			if activeSent {
 				r.liveMaster(ctx)
+				r.quality.tick(now, r.recTracks())
+				if r.quality.due(now) {
+					r.writeQuality(ctx, false)
+				}
 			}
 			if r.allTracksEnded() {
 				break wait
@@ -696,6 +702,10 @@ func (r *jobRun) finalize(ctx context.Context) ([]*tesserav1.RecordingOutput, st
 			continue
 		}
 		rends = append(rends, t.rendition(sid))
+	}
+	if r.quality != nil && r.quality.step >= 0 {
+		r.quality.close(r.recTracks())
+		r.writeQuality(fctx, true)
 	}
 	var master string
 	if r.wantsMaster(len(rends)) {

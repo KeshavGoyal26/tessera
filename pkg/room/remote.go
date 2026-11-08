@@ -31,6 +31,9 @@ type RemotePublisher interface {
 	// SetInfo mirrors a change of the presenter's name, metadata or attributes upstream
 	// (e.g. the playlist URL of their live recording); unchanged info is not broadcast.
 	SetInfo(name, metadata string, attributes map[string]string)
+	// SetQuality takes the presenter's connection quality as measured on the media node
+	// (this node only sees the relay's connection).
+	SetQuality(q tesserav1.ConnectionQuality, score float32)
 	// Close removes the participant from the room.
 	Close()
 }
@@ -157,6 +160,24 @@ func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.
 }
 
 func (rp *remotePublisher) UnpublishTrack(sid string) { rp.p.unpublish(sid) }
+
+// SetQuality implements RemotePublisher.
+func (rp *remotePublisher) SetQuality(q tesserav1.ConnectionQuality, score float32) {
+	s := stats.QualityUnknown
+	switch q {
+	case tesserav1.ConnectionQuality_CONNECTION_QUALITY_EXCELLENT:
+		s = stats.QualityExcellent
+	case tesserav1.ConnectionQuality_CONNECTION_QUALITY_GOOD:
+		s = stats.QualityGood
+	case tesserav1.ConnectionQuality_CONNECTION_QUALITY_POOR:
+		s = stats.QualityPoor
+	case tesserav1.ConnectionQuality_CONNECTION_QUALITY_LOST:
+		s = stats.QualityLost
+	}
+	rp.p.mu.Lock()
+	rp.p.upQuality, rp.p.upScore = s, float64(score)
+	rp.p.mu.Unlock()
+}
 
 // SetInfo implements RemotePublisher.
 func (rp *remotePublisher) SetInfo(name, metadata string, attributes map[string]string) {

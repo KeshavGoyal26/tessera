@@ -43,6 +43,10 @@ The page has two fields, your name (pre-filled with a random `Guest-NNNN`) and t
   A recorded presenter's tile gets **⏪ Rewind** a few seconds after they go live: it switches
   the tile to the live HLS recording (pause, scrub back to the start) and **● Live** returns to
   WebRTC. If the presenter ends meanwhile, the tile keeps playing the finished recording.
+  A dot before each presenter's name shows their connection (green good, yellow unstable, red
+  lost; from the server's connection-quality updates). While rewinding, a bar across the top of the
+  tile shows the recording's connection timeline (click to seek) and the dot follows the playhead,
+  so a frozen moment in the recording shows whether the presenter's connection dropped.
 
 Everyone lands in `room1` unless they type another room (or open `?room=<name>`).
 `?url=ws://host:7880` points the page at another server.

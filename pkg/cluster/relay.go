@@ -100,10 +100,11 @@ type groupRelay struct {
 
 	mu       sync.Mutex
 	stopped  bool
-	sessions map[string]client.Client // by media node id
-	pubs     map[string]remotePres    // by presenter identity
-	tracks   map[string]localTrack    // by the media node's track SID
-	watch    map[string]*trackWatch   // by the media node's track SID
+	sessions map[string]client.Client                    // by media node id
+	pubs     map[string]remotePres                       // by presenter identity
+	quality  map[string]*tesserav1.ConnectionQualityInfo // latest from the media nodes, by node + "/" + identity
+	tracks   map[string]localTrack                       // by the media node's track SID
+	watch    map[string]*trackWatch                      // by the media node's track SID
 	idleFrom time.Time
 	done     chan struct{}
 }
@@ -225,6 +226,7 @@ func (g *groupRelay) join(ctx context.Context, node, url string) error {
 		OnTrackSubscribed:   func(t *client.RemoteTrack) { g.onTrack(node, c, t) },
 		OnTrackUnsubscribed: g.onTrackGone,
 		OnParticipantUpdate: func(ps []*tesserav1.ParticipantInfo) { g.onParticipants(node, ps) },
+		OnConnectionQuality: func(u *tesserav1.ConnectionQualityUpdate) { g.onQuality(node, c, u) },
 		OnDisconnected: func(tesserav1.DisconnectReason) {
 			g.mu.Lock()
 			if g.sessions[node] == c {
@@ -283,7 +285,11 @@ func (g *groupRelay) publisher(node string, c client.Client, identity string) ro
 	}
 	g.mu.Lock()
 	g.pubs[identity] = remotePres{rp: rp, node: node}
+	q := g.quality[node+"/"+identity]
 	g.mu.Unlock()
+	if q != nil {
+		rp.SetQuality(q.GetQuality(), q.GetScore())
+	}
 	return rp
 }
 
@@ -370,12 +376,40 @@ func (g *groupRelay) onTrackGone(remoteSID string) {
 	}
 }
 
+// onQuality mirrors the media node's connection quality of its presenters onto their
+// copies here, so this edge's viewers see the presenter's own connection.
+func (g *groupRelay) onQuality(node string, c client.Client, u *tesserav1.ConnectionQualityUpdate) {
+	ids := map[string]string{}
+	for _, p := range c.RemoteParticipants() {
+		ids[p.GetSid()] = p.GetIdentity()
+	}
+	for _, q := range u.GetUpdates() {
+		id := ids[q.GetParticipantSid()]
+		if id == "" {
+			continue
+		}
+		g.mu.Lock()
+		if g.quality == nil {
+			g.quality = map[string]*tesserav1.ConnectionQualityInfo{}
+		}
+		g.quality[node+"/"+id] = q
+		cur, ok := g.pubs[id]
+		g.mu.Unlock()
+		if ok && cur.node == node {
+			cur.rp.SetQuality(q.GetQuality(), q.GetScore())
+		}
+	}
+}
+
 // onParticipants removes presenters that left node (not ones that moved elsewhere) and
 // mirrors info changes of the others (e.g. a recording's playlist URL in the attributes).
 func (g *groupRelay) onParticipants(node string, ps []*tesserav1.ParticipantInfo) {
 	for _, p := range ps {
 		if p.GetState() == tesserav1.ParticipantInfo_STATE_DISCONNECTED {
 			g.drop(func(identity string, rp remotePres) bool { return identity == p.GetIdentity() && rp.node == node })
+			g.mu.Lock()
+			delete(g.quality, node+"/"+p.GetIdentity())
+			g.mu.Unlock()
 			continue
 		}
 		g.mu.Lock()
@@ -401,6 +435,7 @@ func (g *groupRelay) drop(match func(identity string, rp remotePres) bool) {
 		}
 		closing = append(closing, rp.rp)
 		delete(g.pubs, id)
+		delete(g.quality, rp.node+"/"+id)
 		for k, lt := range g.tracks {
 			if lt.identity == id {
 				delete(g.tracks, k)

@@ -58,3 +58,11 @@ a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid 
 .node-pick { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; } .node-pick select { padding: 4px 6px; max-width: 220px; }
 .scope { padding: 8px 16px; background: var(--warnbg); border-bottom: 1px solid var(--border); font-size: 13px; } .scope button { margin-left: 8px; }
 .no-actions td.actions button[data-act] { display: none; }
+/* recording player: connection timeline (green / yellow / red per 4 s) with the playhead's dot */
+:root { --q-good: #2fbf71; --q-fair: #f2b705; --q-poor: #e5484d; --q-lost: #9b1c1c; }
+.qline { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; }
+.qline .qbar { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--mutedbg); cursor: pointer; }
+.qline .qhead { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); transform: translateX(-1px); }
+.cq { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.cq[data-level="good"] { background: var(--q-good); } .cq[data-level="fair"] { background: var(--q-fair); }
+.cq[data-level="poor"] { background: var(--q-poor); } .cq[data-level="lost"] { background: var(--q-lost); }

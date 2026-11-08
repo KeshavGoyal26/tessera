@@ -25,7 +25,8 @@ type Room struct {
 
 	spkMu    sync.Mutex
 	speakers speaker.Observer
-	quality  map[string]tesserav1.ConnectionQuality
+	qMu      sync.Mutex
+	quality  map[string]tesserav1.ConnectionQuality // last quality sent, by participant SID
 	done     chan struct{}
 
 	watchers map[uint64]func(PublishedTrack) // in-process consumers (recorder), under mu
@@ -71,6 +72,7 @@ func (r *Room) worker() {
 func (r *Room) connectionQuality(now time.Time) {
 	upd := &tesserav1.ConnectionQualityUpdate{}
 	seen := map[string]bool{}
+	r.qMu.Lock()
 	for _, p := range r.Participants() {
 		if p.permission().GetHidden() {
 			continue
@@ -88,8 +90,25 @@ func (r *Room) connectionQuality(now time.Time) {
 			delete(r.quality, sid)
 		}
 	}
+	r.qMu.Unlock()
 	if len(upd.Updates) > 0 {
 		r.broadcast(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_ConnectionQuality{ConnectionQuality: upd}}, nil)
+	}
+}
+
+// sendQualities gives a participant who just joined everyone's current quality: the
+// room only broadcasts changes, so a late viewer would otherwise wait for one.
+func (r *Room) sendQualities(p *Participant) {
+	upd := &tesserav1.ConnectionQualityUpdate{}
+	r.qMu.Lock()
+	for sid, q := range r.quality {
+		if sid != p.sid {
+			upd.Updates = append(upd.Updates, &tesserav1.ConnectionQualityInfo{ParticipantSid: sid, Quality: q})
+		}
+	}
+	r.qMu.Unlock()
+	if len(upd.Updates) > 0 {
+		p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_ConnectionQuality{ConnectionQuality: upd}})
 	}
 }
 
@@ -229,6 +248,7 @@ func (r *Room) join(claims *auth.Claims, cp signal.ConnectParams, conn signal.Co
 		rt.ParticipantJoined(r.Name(), p.identity)
 	}
 	r.broadcastParticipant(p)
+	r.sendQualities(p)
 	// Subscribe the newcomer to existing tracks.
 	if p.autoSubscribe {
 		for _, other := range r.Participants() {

@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -184,6 +185,12 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 	got, _ := coord.GetRecording(ctx, id)
 	if got.Status != tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE || got.Error != "" || len(got.Outputs) != 2 {
 		t.Fatalf("%v", got)
+	}
+	// The connection timeline sits next to the master playlist, final once the recording ends.
+	var tl QualityTimeline
+	if b, err := os.ReadFile(filepath.Join(root, "auto", id, "quality.json")); err != nil || json.Unmarshal(b, &tl) != nil ||
+		!tl.Final || tl.StepMs != 4000 || len(tl.Samples) == 0 || tl.Samples[0].Kbps == 0 {
+		t.Fatalf("quality.json: %v %+v", err, tl)
 	}
 	master := filepath.Join(root, "auto", id, "master.m3u8")
 	if b, err := exec.Command("ffmpeg", "-v", "error", "-i", master, "-f", "null", "-").CombinedOutput(); err != nil || len(b) != 0 {
