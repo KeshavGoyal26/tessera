@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/rtc"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
@@ -63,5 +65,29 @@ func TestTURNOverTLSOnly(t *testing.T) {
 	typ := mediaVia(t, s, client.Options{SettingEngine: client.LoopbackSettingEngine(), TURNSOnly: true})
 	if typ != stats.CandidateRelay {
 		t.Fatalf("candidate type %q, want relay", typ)
+	}
+}
+
+// A media node hands out credentials for another node's TURN (the edge's, ADR-0012):
+// both share the TURN secret, and a client forced to relay reaches the media node
+// through it.
+func TestSharedSecretTURNRelay(t *testing.T) {
+	port := freePort(t)
+	edgeTURN := config.TURNConfig{Enabled: true, UDPPort: port, TCPPort: -1, Secret: "shared-turn-secret", CredentialTTL: time.Hour,
+		RelayPeers: []string{"127.0.0.0/8"}}
+	edgeRTC := config.Default().RTC
+	edgeRTC.UDPPort, edgeRTC.IPs = 0, []string{"127.0.0.1"}
+	edge, err := rtc.NewEngine(edgeRTC, edgeTURN, nil, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = edge.Close() })
+	s := startServer(t, func(c *config.Config) {
+		c.RTC.TURNRelay = config.TURNRelayConfig{URLs: []string{fmt.Sprintf("turn:127.0.0.1:%d?transport=udp", port)},
+			Secret: "shared-turn-secret", TTL: time.Hour, Force: true}
+	})
+	typ := mediaVia(t, s, client.Options{SettingEngine: client.LoopbackSettingEngine(), ForceRelay: true})
+	if typ != stats.CandidateRelay {
+		t.Fatalf("candidate type %q, want relay through the other node's TURN", typ)
 	}
 }
