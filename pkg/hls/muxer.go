@@ -90,8 +90,11 @@ func (m *Muxer) wall(outDTS int64) time.Time {
 }
 
 // UpdateSpec switches to new codec parameters (e.g. SPS change). The current
-// segment is cut and the next one starts with a new init segment and an
-// EXT-X-DISCONTINUITY.
+// segment is cut and the next one starts with a new init segment (EXT-X-MAP). The
+// timeline continues, so there is no EXT-X-DISCONTINUITY: browsers change resolution
+// several times per recording, and a discontinuity in the video playlist only would
+// leave the audio rendition's discontinuity sequence behind, which stalls hls.js when a
+// live playlist is opened mid-recording.
 func (m *Muxer) UpdateSpec(ctx context.Context, spec TrackSpec) error {
 	if _, err := InitSegment(spec); err != nil {
 		return err
@@ -103,7 +106,6 @@ func (m *Muxer) UpdateSpec(ctx context.Context, spec TrackSpec) error {
 		if err := m.flush(ctx); err != nil {
 			return err
 		}
-		m.curDisc = true
 	}
 	m.spec = spec
 	m.initDirty = true
@@ -246,7 +248,6 @@ func (m *Muxer) flush(ctx context.Context) error {
 		}
 		m.initCount++
 		m.initDirty = false
-		m.curDisc = m.curDisc || m.initCount > 1
 		m.segs = append(m.segs, segmentInfo{init: m.initName}) // marker, merged below
 	}
 	var dur int64

@@ -1,6 +1,7 @@
 package hls
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -123,8 +124,17 @@ func TestDepacketizerSingleAndSTAP(t *testing.T) {
 	if err != nil || len(out) != 1 || !out[0].KeyFrame || len(out[0].NALUs) != 1 || out[0].SPS == nil || out[0].PPS == nil {
 		t.Fatalf("%v %+v", err, out)
 	}
-	if got := out[0].AVCC(); len(got) != 8 || got[3] != 4 {
-		t.Fatalf("avcc %x", got)
+	// A keyframe keeps its parameter sets in-band: SPS, PPS, then the slice.
+	want := []byte{0, 0, 0, 8}
+	want = append(append(want, sps...), 0, 0, 0, 4)
+	want = append(append(want, pps...), 0, 0, 0, 4)
+	want = append(want, idr...)
+	if got := out[0].AVCC(); !bytes.Equal(got, want) {
+		t.Fatalf("avcc %x, want %x", got, want)
+	}
+	// Other frames are the slices only.
+	if got := (&AccessUnit{NALUs: [][]byte{{0x41, 9}}, SPS: sps, PPS: pps}).AVCC(); !bytes.Equal(got, []byte{0, 0, 0, 2, 0x41, 9}) {
+		t.Fatalf("non-key avcc %x", got)
 	}
 }
 

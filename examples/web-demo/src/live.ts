@@ -207,6 +207,7 @@ function gone(identity: string): void {
   const tile = $(tileId(identity));
   if (!replays.has(identity) || !tile) return unwatch(identity);
   watched.delete(identity);
+  if (tile.classList.contains("ended")) return render();
   tile.classList.add("ended");
   tile.querySelector<HTMLButtonElement>('[data-act="replay"]')!.hidden = true;
   tile.querySelector(".nm")!.textContent += " (ended)";
@@ -324,8 +325,15 @@ async function startReplay(p: RemoteParticipant): Promise<void> {
   video.className = "replay";
   video.controls = video.playsInline = true;
   video.muted = tile.classList.contains("muted-audio");
+  // Registered before hls.js loads, so a second click (Live) during the load cancels this one.
+  let player: { destroy(): void } | undefined;
+  const entry = { destroy: () => (player?.destroy(), video.remove()) };
+  replays.set(p.identity, entry);
+  for (const pub of p.trackPublications.values()) if (!live(pub, p.identity)) pub.setSubscribed(false);
+  tile.prepend(video);
+  render();
   const { default: Hls } = await import("hls.js");
-  let player: { destroy(): void };
+  if (replays.get(p.identity) !== entry) return; // back to live meanwhile
   if (Hls.isSupported()) {
     const hls = new Hls();
     hls.on(Hls.Events.ERROR, (_e, d) => {
@@ -338,11 +346,7 @@ async function startReplay(p: RemoteParticipant): Promise<void> {
     video.src = url; // native HLS (Safari without MSE)
     player = { destroy: () => video.removeAttribute("src") };
   }
-  replays.set(p.identity, { destroy: () => (player.destroy(), video.remove()) });
-  for (const pub of p.trackPublications.values()) if (!live(pub, p.identity)) pub.setSubscribed(false);
-  tile.prepend(video);
   void video.play().catch(() => undefined);
-  render();
 }
 
 function goLive(p: RemoteParticipant): void {

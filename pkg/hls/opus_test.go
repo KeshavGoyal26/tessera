@@ -129,3 +129,33 @@ func (m *memSink) WritePlaylist(_ context.Context, _ string, d []byte) error {
 	m.playlist = string(d)
 	return nil
 }
+
+// TestMuxerSpecChangeKeepsTimeline: new codec parameters get a new init segment but no
+// EXT-X-DISCONTINUITY (the timeline continues); hls.js stalls on a live playlist opened
+// mid-recording when only one rendition has discontinuities.
+func TestMuxerSpecChangeKeepsTimeline(t *testing.T) {
+	var sink memSink
+	ctx := context.Background()
+	m, _ := NewMuxer(MuxerConfig{TargetSegmentDuration: time.Second, Live: true}, TrackSpec{Codec: CodecOpus, Timescale: 48000, Channels: 2}, &sink)
+	dts := int64(0)
+	step := func(n int) {
+		for i := 0; i < n; i++ {
+			if err := m.WriteSample(ctx, Sample{DTS: dts, Data: []byte{0xfc, 1}}); err != nil {
+				t.Fatal(err)
+			}
+			dts += 960
+		}
+	}
+	step(100)
+	if err := m.UpdateSpec(ctx, TrackSpec{Codec: CodecOpus, Timescale: 48000, Channels: 1}); err != nil {
+		t.Fatal(err)
+	}
+	step(100)
+	if err := m.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sink.playlist, "#EXT-X-DISCONTINUITY") || strings.Count(sink.playlist, "#EXT-X-MAP:") != 2 ||
+		!strings.Contains(sink.playlist, `#EXT-X-MAP:URI="init_1.mp4"`) {
+		t.Fatalf("%s", sink.playlist)
+	}
+}

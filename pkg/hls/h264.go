@@ -40,13 +40,21 @@ type AccessUnit struct {
 }
 
 // AVCC returns the NAL units as 4-byte length-prefixed data (ISO-BMFF form).
+//
+// A keyframe that carried parameter sets keeps them in front of its slices too: after a
+// resolution change, a reader that keeps the first init segment (FFmpeg's HLS demuxer, an
+// MP4 remux) still decodes the new size.
 func (a *AccessUnit) AVCC() []byte {
+	nalus := a.NALUs
+	if a.KeyFrame && len(a.SPS) > 0 && len(a.PPS) > 0 {
+		nalus = append([][]byte{a.SPS, a.PPS}, a.NALUs...)
+	}
 	n := 0
-	for _, u := range a.NALUs {
+	for _, u := range nalus {
 		n += 4 + len(u)
 	}
 	out := make([]byte, 0, n)
-	for _, u := range a.NALUs {
+	for _, u := range nalus {
 		out = binary.BigEndian.AppendUint32(out, uint32(len(u)))
 		out = append(out, u...)
 	}
