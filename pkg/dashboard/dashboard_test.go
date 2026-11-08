@@ -38,6 +38,7 @@ type fakeRecs struct {
 	recorder.Service
 	started *tesserav1.StartRecordingRequest
 	stopped string
+	list    []*tesserav1.RecordingInfo // nil: one recording RC_1
 }
 
 func (f *fakeRecs) StartRecording(_ context.Context, r *tesserav1.StartRecordingRequest) (*tesserav1.RecordingInfo, error) {
@@ -49,6 +50,9 @@ func (f *fakeRecs) StopRecording(_ context.Context, id string) (*tesserav1.Recor
 	return &tesserav1.RecordingInfo{}, nil
 }
 func (f *fakeRecs) ListRecordings(context.Context, *tesserav1.ListRecordingsRequest) ([]*tesserav1.RecordingInfo, error) {
+	if f.list != nil {
+		return f.list, nil
+	}
 	return []*tesserav1.RecordingInfo{{RecordingId: "RC_1", Room: "r"}}, nil
 }
 
@@ -408,5 +412,36 @@ func TestAlertsBounded(t *testing.T) {
 	}
 	if last := out[len(out)-1]; last.ID != "more" || last.Message != "52 more alerts not shown" || last.Since.IsZero() {
 		t.Fatalf("summary alert %+v", last)
+	}
+}
+
+func TestRecordingsListBounded(t *testing.T) {
+	recs := &fakeRecs{}
+	for i := range maxListedEnded + 50 {
+		recs.list = append(recs.list, &tesserav1.RecordingInfo{RecordingId: fmt.Sprintf("RC_%d", i), Status: tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE})
+		if i == 3 { // an old recording still running (a presenter recorded since joining)
+			recs.list[i].Status = tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE
+		}
+	}
+	e := &env{rooms: &fakeRooms{}, recs: recs}
+	e.h = newHandler(t, time.Now(), recs)
+	e.srv = httptest.NewServer(e.h)
+	t.Cleanup(e.srv.Close)
+	c, _ := e.login(t)
+	_, body := e.do(t, "GET", "/admin/api/recordings", "", c, nil)
+	var out struct {
+		Recordings []struct {
+			ID string `json:"recording_id"`
+		} `json:"recordings"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Total != maxListedEnded+50 || len(out.Recordings) != maxListedEnded+1 {
+		t.Fatalf("total %d, listed %d", out.Total, len(out.Recordings))
+	}
+	if out.Recordings[0].ID != "RC_3" || out.Recordings[len(out.Recordings)-1].ID != fmt.Sprintf("RC_%d", maxListedEnded+49) {
+		t.Fatalf("want the running one and the newest ended ones, oldest first: %v ... %v", out.Recordings[0], out.Recordings[len(out.Recordings)-1])
 	}
 }

@@ -440,6 +440,15 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 
 // ---- actions ----------------------------------------------------------------
 
+// maxListedEnded bounds the ended recordings returned by GET recordings.
+const maxListedEnded = 200
+
+func isEnded(s tesserav1.RecordingStatus) bool {
+	return s == tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE ||
+		s == tesserav1.RecordingStatus_RECORDING_STATUS_FAILED ||
+		s == tesserav1.RecordingStatus_RECORDING_STATUS_ABORTED
+}
+
 func (h *Handler) listRecordings(w http.ResponseWriter, r *http.Request) {
 	if h.p.Recordings == nil {
 		jsonErr(w, http.StatusNotImplemented, "recordings are not enabled")
@@ -450,14 +459,29 @@ func (h *Handler) listRecordings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	// Keep every recording in progress and the newest maxListedEnded ended ones (the
+	// coordinator keeps up to 1000): the view refreshes this list every few seconds.
+	nEnded := 0
+	keep := make([]bool, len(list))
+	for i := len(list) - 1; i >= 0; i-- {
+		if !isEnded(list[i].GetStatus()) {
+			keep[i] = true
+		} else if nEnded < maxListedEnded {
+			keep[i] = true
+			nEnded++
+		}
+	}
 	out := make([]json.RawMessage, 0, len(list))
-	for _, rec := range list {
+	for i, rec := range list {
+		if !keep[i] {
+			continue
+		}
 		b, err := (jsonpb).Marshal(rec)
 		if err == nil {
 			out = append(out, b)
 		}
 	}
-	writeJSON(w, 200, map[string]any{"recordings": out})
+	writeJSON(w, 200, map[string]any{"recordings": out, "total": len(list)})
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {
