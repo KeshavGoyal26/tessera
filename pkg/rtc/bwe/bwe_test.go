@@ -328,3 +328,20 @@ func TestTrialSurvivesKeyframeBurst(t *testing.T) {
 		t.Fatal("the trial must go on after the burst (baseline taken after the grace)")
 	}
 }
+
+// The estimator's state when video paused (often overuse) does not change while nothing
+// is sent: it must not block the trial resume (regression: video paused for good in CI).
+func TestTrialStartsDespiteStaleOveruse(t *testing.T) {
+	est := &fakeEst{bps: 300_000, state: StateOveruse}
+	a := NewAllocator(Config{Enabled: true, AllowPause: true}, est).(*allocator)
+	clock := time.Unix(1000, 0)
+	a.now = func() time.Time { return clock }
+	cam := video("cam", 1, 450_000)
+	a.AddTrack(cam)
+	a.Allocate()
+	clock = clock.Add(trialMinBackoff)
+	a.Allocate()
+	if cam.paused {
+		t.Fatal("a stale overuse state blocked the trial resume")
+	}
+}

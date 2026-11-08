@@ -236,7 +236,9 @@ func (a *allocator) trialResume(now time.Time, videos []*trackState, on []bool) 
 	if a.stalledSince.IsZero() {
 		a.stalledSince = now
 	}
-	if now.Sub(a.stalledSince) >= max(a.trialBackoff, trialMinBackoff) && a.est.State() != StateOveruse {
+	// No congestion check here: with nothing sent no feedback arrives, so the state is
+	// whatever it was when the video paused (often overuse) and would block every trial.
+	if now.Sub(a.stalledSince) >= max(a.trialBackoff, trialMinBackoff) {
 		a.trialID, a.trialStart, a.trialUntil, a.trialEst = videos[first].t.ID(), now, now.Add(trialHold), 0
 		on[first] = true
 	}
