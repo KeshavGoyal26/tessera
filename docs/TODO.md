@@ -24,6 +24,3 @@ From the functional QA of 2026-11-09. Severity in brackets.
 - [low] Live demo rewind timeline: grey/fade near the live edge, no buffering cue.
 - [low] Optional: show presenters proxied through an edge on that edge's dashboard pages.
 
-## Untested since change
-- Random presenter placement (`TestEdgeRelaysPresentersFromSeveralMediaNodes` not run),
-  edge presenter count and Connectivity page filter.
