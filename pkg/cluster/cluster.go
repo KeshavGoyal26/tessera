@@ -16,8 +16,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -161,10 +163,7 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 			live = append(live, n)
 		}
 	}
-	var best *NodeInfo
-	if len(live) > 0 {
-		best = &live[PickNode(len(live))]
-	}
+	slices.SortFunc(live, func(a, b NodeInfo) int { return strings.Compare(a.ID, b.ID) })
 	key := presKey(room, identity)
 	for range 3 {
 		owner, err := c.rdb.Get(ctx, key).Result()
@@ -180,9 +179,10 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 		case !errors.Is(err, redis.Nil):
 			return NodeInfo{}, err
 		}
-		if best == nil {
+		if len(live) == 0 {
 			return NodeInfo{}, ErrNoMediaNode
 		}
+		best := live[PickNode(len(live))]
 		ok, err := c.rdb.SetNX(ctx, key, best.ID, roomTTL).Result()
 		if err != nil {
 			return NodeInfo{}, err
@@ -196,7 +196,7 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 				int((2 * roomTTL).Seconds())).Err(); err != nil {
 				return NodeInfo{}, err
 			}
-			return *best, nil
+			return best, nil
 		}
 	}
 	return NodeInfo{}, errs.New(errs.CodeUnavailable, "cluster: could not place a presenter of %q", room)
