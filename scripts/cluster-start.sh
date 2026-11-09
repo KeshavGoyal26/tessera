@@ -22,7 +22,7 @@ redis-server --port 6390 --save "" --appendonly no --daemonize yes --logfile "$D
 
 node_cfg() { # id role port metrics
   local rec="recording: { enabled: false }"
-  [ "$2" = media ] && rec="recording: { temp_dir: $D/$1/tmp, storage: { kind: local, local_root: $D/$1/rec } }"
+  [ "$2" = media ] && rec="recording: { temp_dir: $D/$1/tmp, storage: { kind: local, local_root: $D/$1/rec, local_base_url: "http://127.0.0.1:$4/recordings" } }"
   mkdir -p "$D/$1"
   cat > "$D/$1.yaml" <<YAML
 node_id: $1
