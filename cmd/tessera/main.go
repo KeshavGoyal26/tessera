@@ -207,7 +207,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	var adminRecordings recorder.Service = coordinator
 	if cc != nil && cfg.Cluster.Role == config.RoleEdge {
 		// Admin calls to an edge go to the media nodes concerned.
-		fwd := &cluster.AdminForwarder{C: cc, Local: rooms, APIKey: recKey, Secret: recSecret}
+		fwd := &cluster.AdminForwarder{C: cc, Local: rooms, APIKey: recKey, Secret: recSecret, Self: cfg.NodeID}
 		adminRooms, adminRecordings = fwd, fwd
 	}
 	adminSrv := admin.NewServer(admin.Params{

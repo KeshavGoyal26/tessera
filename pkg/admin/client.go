@@ -23,6 +23,9 @@ type Client struct {
 	baseURL, apiKey, secret string
 	grant                   auth.RoomGrant
 	hc                      *http.Client
+	// Forwarded marks calls one node makes on another's behalf (cluster): the receiving
+	// edge answers from its own rooms and does not forward them again.
+	Forwarded bool
 }
 
 // NewClient creates a client. grant is the grant put into every token; use
@@ -57,6 +60,9 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 	}
 	hr.Header.Set("Content-Type", "application/protobuf")
 	hr.Header.Set("Authorization", "Bearer "+tok)
+	if c.Forwarded {
+		hr.Header.Set(forwardedHeader, "1")
+	}
 	hres, err := c.hc.Do(hr)
 	if err != nil {
 		return errs.Wrap(errs.CodeUnavailable, err, "admin request failed")

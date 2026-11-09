@@ -7,6 +7,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -143,6 +144,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.finish(w, rpc, start, err)
 		return
 	}
+	if r.Header.Get(forwardedHeader) != "" {
+		r = r.WithContext(context.WithValue(r.Context(), forwardedKey{}, true))
+	}
 	resp, err := rt.handle(&callCtx{r: r, grants: grants}, req)
 	if err != nil {
 		s.finish(w, rpc, start, err)
@@ -218,3 +222,10 @@ func writeTwirp(w http.ResponseWriter, status int, e twirpError) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(e)
 }
+
+const forwardedHeader = "X-Tessera-Forwarded"
+
+type forwardedKey struct{}
+
+// Forwarded reports whether the call came from another node (see Client.Forwarded).
+func Forwarded(ctx context.Context) bool { v, _ := ctx.Value(forwardedKey{}).(bool); return v }

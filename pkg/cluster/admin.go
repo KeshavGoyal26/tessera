@@ -30,6 +30,8 @@ type AdminForwarder struct {
 	Local  room.Admin // this edge's rooms (viewers and relayed copies of presenters)
 	APIKey string
 	Secret string
+	// Self is this edge's node id: viewers on the other edges are reached through them.
+	Self string
 }
 
 var (
@@ -40,8 +42,29 @@ var (
 func recKey(id string) string { return keyPrefix + "rec:" + id }
 
 func (f *AdminForwarder) client(n NodeInfo) *admin.Client {
-	return admin.NewClient(n.PrivateURL, f.APIKey, f.Secret,
+	c := admin.NewClient(n.PrivateURL, f.APIKey, f.Secret,
 		auth.RoomGrant{RoomCreate: true, RoomList: true, RoomAdmin: true, RoomRecord: true})
+	c.Forwarded = true
+	return c
+}
+
+// otherEdges lists the edges a viewer call can go to: none for a call that another node
+// forwarded (it answers from its own rooms, so calls never bounce between edges).
+func (f *AdminForwarder) otherEdges(ctx context.Context) []NodeInfo {
+	if admin.Forwarded(ctx) {
+		return nil
+	}
+	nodes, err := f.C.Nodes(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []NodeInfo
+	for _, n := range nodes {
+		if n.Role == config.RoleEdge && n.ID != f.Self && n.PrivateURL != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (f *AdminForwarder) media(ctx context.Context) ([]NodeInfo, error) {
@@ -221,6 +244,19 @@ func (f *AdminForwarder) ListParticipants(ctx context.Context, room string) ([]*
 	if err == nil {
 		for _, p := range local {
 			if !seen[p.GetIdentity()] {
+				seen[p.GetIdentity()] = true
+				out = append(out, p)
+			}
+		}
+	}
+	for _, e := range f.otherEdges(ctx) { // their viewers (their presenters are relayed copies)
+		ps, perr := f.client(e).ListParticipants(ctx, room)
+		if perr != nil {
+			continue
+		}
+		for _, p := range ps {
+			if !seen[p.GetIdentity()] && p.GetKind() != tesserav1.ParticipantInfo_KIND_RELAY && len(p.GetTracks()) == 0 {
+				seen[p.GetIdentity()] = true
 				out = append(out, p)
 			}
 		}
@@ -240,7 +276,16 @@ func (f *AdminForwarder) onParticipant(ctx context.Context, room, identity strin
 	if ok {
 		return remote(f.client(n))
 	}
-	return local()
+	err = local()
+	if !errors.Is(err, errs.ErrNotFound) {
+		return err
+	}
+	for _, e := range f.otherEdges(ctx) { // a viewer on another edge
+		if err = remote(f.client(e)); !errors.Is(err, errs.ErrNotFound) {
+			return err
+		}
+	}
+	return err
 }
 
 // GetParticipant implements room.Admin.
