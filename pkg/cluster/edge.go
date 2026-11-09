@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -98,7 +99,8 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(body)
 			return
 		}
-		e.Logger.Warn("edge: media node unreachable", "node", node.ID, "err", err)
+		// The dial error quotes the URL, access token included: log it without the query.
+		e.Logger.Warn("edge: media node unreachable", "node", node.ID, "err", tokenRE.ReplaceAllString(err.Error(), "access_token=…"))
 		signal.WriteHTTPError(w, errs.New(errs.CodeUnavailable, "media server unreachable"))
 		return
 	}
@@ -169,3 +171,5 @@ func relay(ctx context.Context, a, b *websocket.Conn) {
 	<-done
 	<-done
 }
+
+var tokenRE = regexp.MustCompile(`access_token=[^&\s"]+`)

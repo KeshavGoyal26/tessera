@@ -66,10 +66,11 @@ after the target. Segments are always uploaded before the playlist that lists th
   frame is held for the gap, so A/V sync is preserved.
 - Opus loss/DTX: gaps simply lengthen the previous sample duration (no fake silence frames).
 - SSRC change: per-stream state is reset and the output timeline continues from the last sample
-  plus the elapsed wall time. A forward DTS jump larger than 2x the target duration or a clock
-  that moves backwards starts a new segment marked `EXT-X-DISCONTINUITY`.
-- SPS/PPS change (resolution switch): the muxer cuts, writes `init_N.mp4` and marks a
-  discontinuity.
+  plus the elapsed wall time. A forward DTS jump larger than 2x the target duration starts a new
+  segment after EXT-X-GAP entries for the stretch without media; a clock that moves backwards
+  continues the timeline. No EXT-X-DISCONTINUITY is ever written.
+- SPS/PPS change (resolution switch): from the next sample the muxer cuts and writes
+  `init_N.mp4` (a new EXT-X-MAP, same timeline).
 - One stream per track (no simulcast, ADR-0012): the recording is the stream viewers see.
   When a short uplink makes the publisher's encoder lower its resolution, that is a resolution
   change (above).
