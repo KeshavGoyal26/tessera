@@ -5,7 +5,7 @@
 // ?url= (server, default ws://<host>:7880), ?record=1. window.room exposes the Room for debugging.
 //
 // A recorded presenter's live recording is announced in their `hls_url` attribute: a viewer can
-// switch that tile to the HLS player (⏪ Rewind) to scrub back, then return to WebRTC (● Live).
+// switch that tile to the HLS player (Rewind) to scrub back, then return to WebRTC (Live).
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 import { attachTimeline, liveLevel, setDot, timelineUrl } from "./quality";
@@ -206,6 +206,13 @@ let rejoining = false;
 /** Once the viewer picks or drops someone, stop choosing for them. */
 let viewerChose = false;
 /** Presenters shown from their HLS recording instead of WebRTC, by identity. */
+const ico = (d: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const ICON = {
+  sound: ico("M4 9h4l5-4v14l-5-4H4V9Zm12.5 3a4 4 0 0 0-2-3.5v7a4 4 0 0 0 2-3.5Z"),
+  muted: ico("M4 9h4l5-4v14l-5-4H4V9Zm11.3.3 1.4-1.4L19 10.2l2.3-2.3 1.4 1.4-2.3 2.3 2.3 2.3-1.4 1.4-2.3-2.3-2.3 2.3-1.4-1.4 2.3-2.3-2.3-2.3Z"),
+  rewind: ico("M11 6v12l-8-6 8-6Zm10 0v12l-8-6 8-6Z"),
+  live: ico("M12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z"),
+};
 const replays = new Map<string, { destroy(): void }>();
 
 const isPresenter = (p: RemoteParticipant) => p.attributes?.role === "presenter" || p.trackPublications.size > 0;
@@ -333,7 +340,7 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     tile.id = tileId(p.identity);
     tile.className = "tile";
     tile.innerHTML = `<div class="avatar"></div><div class="label"><i class="cq"></i><span class="nm"></span></div>
-      <div class="tile-actions"><button class="icon-btn" data-act="replay" type="button" hidden></button><button class="icon-btn" data-act="audio" type="button" title="Mute">🔊</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
+      <div class="tile-actions"><button class="icon-btn" data-act="replay" type="button" hidden></button><button class="icon-btn" data-act="audio" type="button" title="Mute">${ICON.sound}</button><button class="icon-btn" data-act="close" type="button" title="Stop watching">✕</button></div>`;
     tile.querySelector(".avatar")!.textContent = name.charAt(0).toUpperCase();
     tile.querySelector(".nm")!.textContent = name;
     tile.querySelector('[data-act="close"]')!.addEventListener("click", () => {
@@ -342,7 +349,9 @@ function syncTile(p: RemoteParticipant): HTMLElement {
     });
     tile.querySelector('[data-act="audio"]')!.addEventListener("click", (e) => {
       const muted = tile.classList.toggle("muted-audio");
-      (e.currentTarget as HTMLButtonElement).textContent = muted ? "🔇" : "🔊";
+      const b = e.currentTarget as HTMLButtonElement;
+      b.innerHTML = muted ? ICON.muted : ICON.sound;
+      b.title = muted ? "Unmute" : "Mute";
       for (const a of tile.querySelectorAll<HTMLMediaElement>("audio, video.replay")) a.muted = muted;
     });
     tile.querySelector('[data-act="replay"]')!.addEventListener("click", () => {
@@ -356,7 +365,8 @@ function syncTile(p: RemoteParticipant): HTMLElement {
   if (!replay) setDot(tile.querySelector(".cq"), liveLevel(p.connectionQuality));
   const btn = tile.querySelector<HTMLButtonElement>('[data-act="replay"]')!;
   btn.hidden = !replay && !p.attributes?.hls_url;
-  btn.textContent = replay ? "● Live" : "⏪ Rewind";
+  btn.innerHTML = replay ? ICON.live : ICON.rewind;
+  btn.classList.toggle("is-live", replay);
   btn.title = replay ? "Back to the live stream" : "Watch the recording: pause and scrub back";
   tile.classList.toggle("replay", replay);
   tile.classList.toggle("has-video", replay || (!!tile.querySelector("video") && sending(p, TrackSource.Camera)));

@@ -82,8 +82,8 @@
   object-fit: contain;
   background: #000;
 }
-.stage .tile.self:not(.screen) video {
-  object-fit: cover;
+.icon-btn.is-live .ico {
+  fill: var(--bad);
 }
 /* HLS replay: the label moves up so the player controls stay usable */
 .stage .tile.replay .label {
@@ -223,7 +223,9 @@ li.watching .presenter .go {
 }
 .stage:not([data-count="0"]):not([data-count="1"]) .tile {
   aspect-ratio: 16 / 9;
+  max-height: 100%;
   min-height: 0;
+  justify-self: center;
 }
 
 @media (max-width: 720px) {
