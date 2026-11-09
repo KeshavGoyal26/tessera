@@ -3,6 +3,9 @@ import type { Participant } from '../types';
 import { avg, badge, esc, fmtNum, percentile, qualityBadge, role, table } from '../util';
 import { ChartGroup, render, type View } from './view';
 
+// A presenter relayed to an edge from its media node has no connection to this node.
+const relayed = (p: Participant) => p.kind === 'relay' || ((p.published?.length ?? 0) > 0 && !p.ice_candidate_type);
+
 const WORST = 100; // participants listed, worst first
 
 const ORDER = ['lost', 'poor', 'unknown', 'good', 'excellent'];
@@ -23,7 +26,7 @@ export class Connectivity implements View {
 
   update(): void {
     const all: { room: string; p: Participant }[] = [];
-    for (const r of store.update?.snapshot.rooms ?? []) for (const p of r.participants ?? []) all.push({ room: r.name, p });
+    for (const r of store.update?.snapshot.rooms ?? []) for (const p of r.participants ?? []) if (!relayed(p)) all.push({ room: r.name, p });
     if (!all.length) { render(this.body, `<p class="muted">${store.update ? 'No participants on this node.' : 'Waiting for data…'}</p>`); this.charts.update(store.points.map((p) => p.t / 1000), store.points.length); return; }
     const count = (f: (p: Participant) => string): Map<string, number> => {
       const m = new Map<string, number>();
