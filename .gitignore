@@ -29,3 +29,4 @@ examples/java-spring/target/
 /tessera
 /tessera-loadtest
 /.cluster/
+/cmd/tessera-loadtest/tessera-loadtest

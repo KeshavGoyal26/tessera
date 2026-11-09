@@ -36,8 +36,8 @@ function toast(msg: string): void {
 
 // ---- landing ---------------------------------------------------------------
 
-field("name").value = params.get("name") ?? `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
-field("room").value = params.get("room") || "room1";
+field("name").value = (params.get("name") ?? `Guest-${Math.floor(1000 + Math.random() * 9000)}`).slice(0, 40);
+field("room").value = (params.get("room") || "room1").slice(0, 64);
 field("record").checked = params.get("record") === "1";
 try {
   const why = sessionStorage.getItem("tessera-left");

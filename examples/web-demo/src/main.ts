@@ -37,7 +37,8 @@ const field = (name: string) => form.elements.namedItem(name) as HTMLInputElemen
 const params = new URLSearchParams(location.search);
 for (const key of ["name", "room", "url", "token"] as const) {
   const v = params.get(key);
-  if (v) field(key).value = v;
+  const max = field(key).maxLength;
+  if (v) field(key).value = max > 0 ? v.slice(0, max) : v;
 }
 if (params.get("url") || params.get("token")) advanced.open = true;
 if (params.get("record") === "1") field("record").checked = true;
