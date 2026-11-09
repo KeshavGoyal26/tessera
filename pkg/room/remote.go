@@ -31,6 +31,8 @@ type RemotePublisher interface {
 	// SetInfo mirrors a change of the presenter's name, metadata or attributes upstream
 	// (e.g. the playlist URL of their live recording); unchanged info is not broadcast.
 	SetInfo(name, metadata string, attributes map[string]string)
+	// SetTrackMuted mirrors a mute change of a relayed track (sid in this room).
+	SetTrackMuted(sid string, muted bool)
 	// SetQuality takes the presenter's connection quality as measured on the media node
 	// (this node only sees the relay's connection).
 	SetQuality(q tesserav1.ConnectionQuality, score float32)
@@ -102,7 +104,7 @@ func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.
 	m := p.room.m
 	ti := proto.Clone(info).(*tesserav1.TrackInfo)
 	ti.Sid = newSID("TR_")
-	ti.Muted = false
+	ti.Muted = info.GetMuted() // a presenter who joined muted stays muted here
 	ti.MimeType = codec.MimeType
 	kind := webrtc.RTPCodecTypeVideo
 	if ti.GetType() == tesserav1.TrackType_TRACK_TYPE_AUDIO {
@@ -160,6 +162,20 @@ func (rp *remotePublisher) PublishTrack(info *tesserav1.TrackInfo, codec webrtc.
 }
 
 func (rp *remotePublisher) UnpublishTrack(sid string) { rp.p.unpublish(sid) }
+
+// SetTrackMuted implements RemotePublisher.
+func (rp *remotePublisher) SetTrackMuted(sid string, muted bool) {
+	rp.p.mu.Lock()
+	t := rp.p.tracks[sid]
+	same := t == nil || t.info.GetMuted() == muted
+	rp.p.mu.Unlock()
+	if same {
+		return
+	}
+	if _, err := rp.p.setTrackMuted(sid, muted); err == nil {
+		rp.p.room.broadcastParticipant(rp.p)
+	}
+}
 
 // SetQuality implements RemotePublisher.
 func (rp *remotePublisher) SetQuality(q tesserav1.ConnectionQuality, score float32) {

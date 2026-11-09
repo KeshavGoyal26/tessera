@@ -131,7 +131,7 @@ func (f *AdminForwarder) ListRooms(ctx context.Context, names []string) ([]*tess
 	for _, n := range media {
 		rooms, err := f.client(n).ListRooms(ctx, names...)
 		if err != nil {
-			return nil, err
+			continue // a node that is down or unreachable: list the others
 		}
 		for _, r := range rooms {
 			if cur, ok := byName[r.GetName()]; ok {
@@ -207,7 +207,7 @@ func (f *AdminForwarder) ListParticipants(ctx context.Context, room string) ([]*
 	for _, n := range nodes {
 		ps, err := f.client(n).ListParticipants(ctx, room)
 		if err != nil {
-			return nil, err
+			continue // a node that is down or unreachable: list the others
 		}
 		for _, p := range ps {
 			if p.GetKind() == tesserav1.ParticipantInfo_KIND_RELAY {
@@ -361,7 +361,7 @@ func (f *AdminForwarder) ListRecordings(ctx context.Context, req *tesserav1.List
 	for _, n := range media {
 		list, err := f.client(n).ListRecordings(ctx, req)
 		if err != nil {
-			return nil, err
+			continue // a node that is down or unreachable: list the others
 		}
 		out = append(out, list...)
 	}

@@ -417,6 +417,14 @@ func (g *groupRelay) onParticipants(node string, ps []*tesserav1.ParticipantInfo
 		g.mu.Unlock()
 		if ok && cur.node == node {
 			cur.rp.SetInfo(p.GetName(), p.GetMetadata(), p.GetAttributes())
+			for _, t := range p.GetTracks() { // mute changes on the media node
+				g.mu.Lock()
+				lt, found := g.tracks[t.GetSid()]
+				g.mu.Unlock()
+				if found {
+					cur.rp.SetTrackMuted(lt.sid, t.GetMuted())
+				}
+			}
 		}
 	}
 }
