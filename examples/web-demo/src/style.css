@@ -210,6 +210,10 @@ summary {
   justify-content: center;
   width: 84px;
 }
+/* A tile without video (camera off) shows the avatar, not a frozen or black frame. */
+.tile:not(.has-video) video {
+  display: none;
+}
 .tile.has-video .avatar {
   display: none;
 }

@@ -9,6 +9,7 @@
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 import { attachTimeline, liveLevel, setDot, timelineUrl } from "./quality";
+import { leftMessage } from "./reasons";
 
 type Role = "presenter" | "viewer";
 
@@ -38,6 +39,14 @@ function toast(msg: string): void {
 field("name").value = params.get("name") ?? `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
 field("room").value = params.get("room") || "room1";
 field("record").checked = params.get("record") === "1";
+try {
+  const why = sessionStorage.getItem("tessera-left");
+  sessionStorage.removeItem("tessera-left");
+  if (why) {
+    el("error").textContent = why;
+    el("error").hidden = false;
+  }
+} catch { /* storage unavailable */ }
 // A reload while in a room lands here on the room's history entry; make it the join card's.
 history.replaceState(null, "", location.href);
 
@@ -62,7 +71,11 @@ async function fetchToken(name: string, role: Role, record: boolean): Promise<st
 async function join(role: Role): Promise<void> {
   const name = field("name").value.trim();
   channel = field("room").value.trim();
-  if (!name || !channel) return;
+  if (!name || !channel) {
+    el("error").textContent = "Enter a name and a room.";
+    el("error").hidden = false;
+    return;
+  }
   // Keep the room in the URL so a reload (after leaving) comes back to it.
   params.set("room", channel);
   history.replaceState(null, "", `${location.pathname}?${params}${location.hash}`);
@@ -76,9 +89,23 @@ async function join(role: Role): Promise<void> {
     await r.connect(serverUrl, await fetchToken(name, role, field("record").checked));
     room = r;
     (window as unknown as { room: Room }).room = r;
-    r.on(RoomEvent.Reconnecting, () => setStatus(ConnectionState.Reconnecting))
-      .on(RoomEvent.Reconnected, () => setStatus(ConnectionState.Connected))
-      .on(RoomEvent.Disconnected, () => location.reload());
+    r.on(RoomEvent.Reconnecting, () => {
+      rejoining = true;
+      setStatus(ConnectionState.Reconnecting);
+    })
+      .on(RoomEvent.Reconnected, () => {
+        rejoining = false;
+        setStatus(ConnectionState.Connected);
+        render(); // presenters gone for good are dropped now
+      })
+      .on(RoomEvent.Disconnected, (reason) => {
+        // Say why on the join card the reload brings back (kicked, room ended, ...).
+        try {
+          const why = leftMessage(reason);
+          if (why) sessionStorage.setItem("tessera-left", why);
+        } catch { /* storage unavailable */ }
+        location.reload();
+      });
     // In the room is its own history entry: Back (or Leave) returns to the join card.
     history.pushState({ inRoom: true }, "", location.href);
     for (const n of document.querySelectorAll("[data-room]")) n.textContent = channel;
@@ -106,6 +133,7 @@ function setStatus(state: ConnectionState): void {
 
 async function present(r: Room, name: string): Promise<void> {
   el("present").hidden = false;
+  watchScreenEnd(r);
   el("preview-name").textContent = `${name} (you)`;
   el("preview-avatar").textContent = name.charAt(0).toUpperCase();
   el("preview").classList.toggle("recorded", r.localParticipant.attributes?.recorded === "true");
@@ -150,6 +178,17 @@ async function setScreen(on: boolean): Promise<void> {
   stage.dataset.count = String(stage.querySelectorAll(".tile").length);
 }
 
+// The browser's own "Stop sharing" ends the share without our button.
+function watchScreenEnd(r: Room): void {
+  r.on(RoomEvent.LocalTrackUnpublished, (pub) => {
+    if (pub.source !== TrackSource.ScreenShare) return;
+    el("p-screen").setAttribute("aria-pressed", "false");
+    $("preview-screen")?.remove();
+    const stage = el("present-stage");
+    stage.dataset.count = String(stage.querySelectorAll(".tile").length);
+  });
+}
+
 const onClick = (id: string, fn: () => Promise<unknown>) =>
   el(id).addEventListener("click", () => void fn().catch((err) => toast(errText(err))));
 onClick("p-mic", () => setMic(!pressed("p-mic")));
@@ -161,6 +200,9 @@ onClick("p-leave", async () => leave());
 
 /** Identities being watched. Subscriptions follow this set. */
 const watched = new Set<string>();
+/** While the SDK reconnects, presenters may vanish and come back (a rejoin replays them):
+ *  that is not leaving, so watched tiles and replays are kept. */
+let rejoining = false;
 /** Once the viewer picks or drops someone, stop choosing for them. */
 let viewerChose = false;
 /** Presenters shown from their HLS recording instead of WebRTC, by identity. */
@@ -178,7 +220,9 @@ const tileId = (identity: string, screen = false) => `w-${identity}${screen ? "-
 function watchRoom(r: Room): void {
   el("watch").hidden = false;
   r.on(RoomEvent.ParticipantConnected, render)
-    .on(RoomEvent.ParticipantDisconnected, (p) => gone(p.identity))
+    .on(RoomEvent.ParticipantDisconnected, (p) => {
+      if (!rejoining) gone(p.identity);
+    })
     .on(RoomEvent.TrackPublished, (pub, p) => {
       if (watched.has(p.identity) && live(pub, p.identity)) pub.setSubscribed(true);
       render();
@@ -242,7 +286,7 @@ const MEDIA: [TrackSource, string][] = [
 /** Redraws the presenter list and the stage from room state. */
 function render(): void {
   const ps = presenters();
-  for (const id of watched) if (!ps.some((p) => p.identity === id)) gone(id);
+  if (!rejoining) for (const id of watched) if (!ps.some((p) => p.identity === id)) gone(id);
   // Until the viewer chooses, show the first presenter so the stage is never empty.
   const first = ps[0];
   if (!viewerChose && watched.size === 0 && first) return watch(first);

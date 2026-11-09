@@ -216,6 +216,16 @@ li.watching .presenter .go {
   font-weight: 700;
 }
 
+/* Several tiles keep a 16:9 shape and centre vertically; a single tile fills the stage. */
+.stage:not([data-count="0"]):not([data-count="1"]) {
+  align-content: center;
+  grid-auto-rows: auto;
+}
+.stage:not([data-count="0"]):not([data-count="1"]) .tile {
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+}
+
 @media (max-width: 720px) {
   .watch-body {
     flex-direction: column;
@@ -227,20 +237,18 @@ li.watching .presenter .go {
   }
   .stage[data-count="2"],
   .stage[data-count="3"],
-  .stage[data-count="4"] {
+  .stage[data-count="4"],
+  .stage[data-count="5"] {
     grid-template-columns: 1fr;
+  }
+  /* One column that scrolls: rows take each 16:9 tile's height (with auto rows sized from
+     min-content they were shorter than the tiles, which then overlapped). */
+  .stage:not([data-count="0"]):not([data-count="1"]) {
+    align-content: start;
+    grid-auto-rows: max-content;
   }
 }
 
-/* Several tiles keep a 16:9 shape and centre vertically; a single tile fills the stage. */
-.stage:not([data-count="0"]):not([data-count="1"]) {
-  align-content: center;
-  grid-auto-rows: auto;
-}
-.stage:not([data-count="0"]):not([data-count="1"]) .tile {
-  aspect-ratio: 16 / 9;
-  min-height: 0;
-}
 
 /* connection quality: a dot (live, or the recording's at the playhead) and the recording's
    timeline bar across the top of a rewinding tile */

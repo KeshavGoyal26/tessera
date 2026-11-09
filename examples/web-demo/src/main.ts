@@ -1,5 +1,6 @@
 import { ConnectionQuality, ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { Participant, RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
+import { leftMessage } from "./reasons";
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -200,7 +201,9 @@ function wire(r: Room): void {
     })
     .on(RoomEvent.Reconnecting, () => setStatus(ConnectionState.Reconnecting))
     .on(RoomEvent.Reconnected, () => setStatus(ConnectionState.Connected))
-    .on(RoomEvent.Disconnected, () => {
+    .on(RoomEvent.Disconnected, (reason) => {
+      const why = leftMessage(reason);
+      if (why) showError(new Error(why));
       grid.replaceChildren();
       room = undefined;
       for (const b of [micButton, camButton, screenButton]) b.setAttribute("aria-pressed", "false");
@@ -277,7 +280,10 @@ form.addEventListener("submit", (event) => {
 
 inviteButton.addEventListener("click", async () => {
   const link = new URL(location.href);
-  link.search = new URLSearchParams({ room: currentRoomName }).toString();
+  const q = new URLSearchParams({ room: currentRoomName });
+  const server = new URLSearchParams(location.search).get("url");
+  if (server) q.set("url", server); // the invitee must reach the same server
+  link.search = q.toString();
   try {
     await navigator.clipboard.writeText(link.toString());
     toast("Invite link copied");
