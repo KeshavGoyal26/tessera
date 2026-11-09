@@ -61,6 +61,7 @@ type Callbacks struct {
 	OnSpeakersChanged   func(s []*tesserav1.SpeakerInfo)
 	OnStreamStateUpdate func(u *tesserav1.StreamStateUpdate)
 	OnConnectionQuality func(u *tesserav1.ConnectionQualityUpdate)
+	OnRoomUpdate        func(r *tesserav1.Room)
 	OnDataPacket        func(p *tesserav1.DataPacket)
 	OnReconnecting      func()
 	OnReconnected       func()

@@ -514,6 +514,10 @@ func (c *client) handle(msg *tesserav1.SignalResponse) {
 		if cb.OnStreamStateUpdate != nil {
 			cb.OnStreamStateUpdate(m.StreamStateUpdate)
 		}
+	case *tesserav1.SignalResponse_RoomUpdate:
+		if cb.OnRoomUpdate != nil {
+			cb.OnRoomUpdate(m.RoomUpdate.GetRoom())
+		}
 	case *tesserav1.SignalResponse_ConnectionQuality:
 		if cb.OnConnectionQuality != nil {
 			cb.OnConnectionQuality(m.ConnectionQuality)

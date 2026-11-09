@@ -39,6 +39,7 @@ type Relays struct {
 	Rooms   interface {
 		room.RemotePublishers
 		ListParticipants(ctx context.Context, room string) ([]*tesserav1.ParticipantInfo, error)
+		UpdateRoomMetadata(ctx context.Context, room, metadata string) (*tesserav1.Room, error)
 	}
 	NodeID    string
 	APIKey    string
@@ -229,6 +230,7 @@ func (g *groupRelay) join(ctx context.Context, node, url string) error {
 		OnTrackUnsubscribed: g.onTrackGone,
 		OnParticipantUpdate: func(ps []*tesserav1.ParticipantInfo) { g.onParticipants(node, ps) },
 		OnConnectionQuality: func(u *tesserav1.ConnectionQualityUpdate) { g.onQuality(node, c, u) },
+		OnRoomUpdate:        func(r *tesserav1.Room) { g.syncMetadata(r) },
 		OnDisconnected: func(tesserav1.DisconnectReason) {
 			g.mu.Lock()
 			if g.sessions[node] == c {
@@ -241,6 +243,7 @@ func (g *groupRelay) join(ctx context.Context, node, url string) error {
 	if err := c.Connect(ctx, url, tok); err != nil {
 		return err
 	}
+	g.syncMetadata(c.Room())
 	g.mu.Lock()
 	if g.stopped {
 		g.mu.Unlock()
@@ -375,6 +378,17 @@ func (g *groupRelay) onTrackGone(remoteSID string) {
 	g.mu.Unlock()
 	if ok && cur.rp != nil {
 		cur.rp.UnpublishTrack(lt.sid)
+	}
+}
+
+// syncMetadata copies the media node's room metadata to this edge's room (set through
+// any edge or the media node, viewers here see it).
+func (g *groupRelay) syncMetadata(r *tesserav1.Room) {
+	if r == nil {
+		return
+	}
+	if _, err := g.r.Rooms.UpdateRoomMetadata(context.Background(), g.group, r.GetMetadata()); err != nil {
+		g.r.Logger.Debug("relay: room metadata not mirrored", "group", g.group, "err", err)
 	}
 }
 
