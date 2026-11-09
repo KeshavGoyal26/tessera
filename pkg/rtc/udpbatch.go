@@ -147,7 +147,7 @@ func (w *batchWriter) run() {
 			}
 			sent += m
 		}
-		stats.UDPOut.Add(bytes)
+		stats.UDPOut.AddN(n, bytes) // n datagrams, not one
 
 		w.mu.Lock()
 		w.head = (w.head + n) % batchSlots

@@ -133,3 +133,8 @@ export function nodeHealth(n: { down?: boolean; draining?: boolean; seen: number
   if (n.summary?.warnings) return { label: `${n.summary.warnings} warning${n.summary.warnings > 1 ? 's' : ''}`, kind: 'warn' };
   return { label: 'ok', kind: 'ok' };
 }
+
+/** decodeURIComponent that keeps a malformed escape as typed instead of throwing. */
+export function safeDecode(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
+}

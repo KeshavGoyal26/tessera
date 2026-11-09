@@ -55,6 +55,10 @@ class FakeSignal extends SignalClient {
   override send(body: SignalRequestBody) {
     this.sent.push(body);
   }
+  override request(body: SignalRequestBody) {
+    this.sent.push(body);
+    return Promise.resolve();
+  }
   override close() {
     this.closed = true;
   }

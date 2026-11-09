@@ -292,7 +292,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     const stream = new MediaStream([mst]);
     const entry: LocalEntry = { track, options, cid, sid: "", stream, transceiver: undefined, info: undefined };
     const published = this.#waitPublished(cid);
-    signal.sendAddTrack({
+    // A refusal (no publish permission, too many tracks) fails at once, not after 10 s.
+    void signal.sendAddTrack({
       cid,
       name: options.name ?? source,
       type: isVideo ? TrackType.VIDEO : TrackType.AUDIO,
@@ -303,6 +304,12 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       red: !isVideo && (options.red ?? true),
       source: trackSourceToProto(source),
       stream: stream.id,
+    }).catch((err: unknown) => {
+      const w = this.#waiters.get(cid);
+      if (!w) return;
+      clearTimeout(w.timer);
+      this.#waiters.delete(cid);
+      w.reject(err);
     });
     const info = await published;
     entry.sid = info.sid;

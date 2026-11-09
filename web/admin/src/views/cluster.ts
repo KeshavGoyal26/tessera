@@ -1,7 +1,7 @@
 import { clusterHistory, clusterRoom, clusterRooms, clusterState, session } from '../api';
 import { store } from '../store';
 import type { ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
-import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, matches, mergeRoom, nodeHealth, qualityBadge, table } from '../util';
+import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, matches, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
 import { handleAction, media } from './rooms';
 import { ChartGroup, filterBox, render, type View } from './view';
 
@@ -51,7 +51,7 @@ export class Cluster implements View {
     this.root = root;
     root.addEventListener('click', this.onClick);
     cluster.listeners.add(this.onState);
-    if (args[0] === 'room' && args[1]) return this.mountRoom(decodeURIComponent(args[1]));
+    if (args[0] === 'room' && args[1]) return this.mountRoom(safeDecode(args[1]));
     root.innerHTML = `<h2>Cluster</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div>
       <h3>Nodes</h3><div class="nodes"></div><h3>Last hour</h3><div class="grid charts"></div>
       <div class="view-head"><h3>Rooms</h3></div><div class="rooms"></div>`;

@@ -586,7 +586,9 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 			_ = t.AddICECandidate(c)
 		}
 	case *tesserav1.SignalRequest_AddTrack:
-		p.addTrack(id, m.AddTrack)
+		if !p.addTrack(id, m.AddTrack) {
+			return false // refused: the refusal was the answer
+		}
 	case *tesserav1.SignalRequest_Mute:
 		if p.room.m.cfg.Room.LockPublishedTracks {
 			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "published tracks are locked: mute is not allowed")
@@ -608,7 +610,10 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "published tracks are locked: unpublish is not allowed")
 			return false
 		}
-		p.unpublish(m.UnpublishTrack.GetTrackSid())
+		if !p.unpublish(m.UnpublishTrack.GetTrackSid()) {
+			p.respond(id, tesserav1.RequestResponse_REASON_NOT_FOUND, "no such track")
+			return false
+		}
 	case *tesserav1.SignalRequest_UpdateMetadata:
 		if !p.permission().GetCanUpdateMetadata() {
 			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "metadata update not allowed")
@@ -732,27 +737,28 @@ func metadataWithinLimits(u *tesserav1.UpdateParticipantMetadata) bool {
 	return n <= maxMetadataBytes
 }
 
-func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
+// addTrack registers a track to publish; false when it refused the request (answered).
+func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) bool {
 	if req.GetCid() == "" || req.GetType() == tesserav1.TrackType_TRACK_TYPE_UNSPECIFIED {
 		p.respond(reqID, tesserav1.RequestResponse_REASON_INVALID, "cid and type required")
-		return
+		return false
 	}
 	if !p.canPublishSource(req.GetSource()) {
 		p.respond(reqID, tesserav1.RequestResponse_REASON_NOT_ALLOWED, "publishing not allowed")
-		return
+		return false
 	}
 	if len(req.GetLayers()) > 1 || len(req.GetSimulcastCodecs()) > 0 {
 		// One stream per track (ADR-0012): the server negotiates no RID extensions,
 		// so a browser could not send simulcast anyway.
 		p.respond(reqID, tesserav1.RequestResponse_REASON_INVALID, "simulcast is not supported: publish one stream")
-		return
+		return false
 	}
 	p.mu.Lock()
 	t := p.pending[req.GetCid()]
 	if t == nil && len(p.pending) >= maxTracksPerParticipant {
 		p.mu.Unlock()
 		p.respond(reqID, tesserav1.RequestResponse_REASON_LIMIT_EXCEEDED, "too many tracks")
-		return
+		return false
 	}
 	if t == nil {
 		info := &tesserav1.TrackInfo{
@@ -768,6 +774,7 @@ func (p *Participant) addTrack(reqID uint32, req *tesserav1.AddTrackRequest) {
 	p.mu.Unlock()
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_TrackPublished{TrackPublished: &tesserav1.TrackPublishedResponse{
 		Cid: req.GetCid(), Track: info}}})
+	return true
 }
 
 // onTrack attaches an incoming track to its Receiver.
@@ -834,7 +841,7 @@ func (p *Participant) onTrack(tr *webrtc.TrackRemote, rr *webrtc.RTPReceiver) {
 	if created {
 		stats.TrackPublishes.Inc()
 		p.room.onTrackPublished(p, t)
-		go p.room.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_TRACK_PUBLISHED, p.room, p, t.info)
+		p.room.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_TRACK_PUBLISHED, p.room, p, t.info)
 	}
 }
 
@@ -871,16 +878,18 @@ func (p *Participant) onReceiverClosed(sid string, recv *rtc.ReceiverImpl) {
 		o.unsubscribe(sid)
 	}
 	p.room.broadcastParticipant(p)
-	go p.room.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_TRACK_UNPUBLISHED, p.room, p, t.info)
+	p.room.m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_TRACK_UNPUBLISHED, p.room, p, t.info)
 }
 
-func (p *Participant) unpublish(sid string) {
+// unpublish stops a published track; false if there is no such track.
+func (p *Participant) unpublish(sid string) bool {
 	p.mu.Lock()
 	t := p.tracks[sid]
 	p.mu.Unlock()
 	if t != nil {
 		t.recv.Close() // triggers onReceiverClosed
 	}
+	return t != nil
 }
 
 func (p *Participant) publishedTracks() []*pubTrack {

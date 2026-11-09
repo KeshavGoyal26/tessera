@@ -1,6 +1,6 @@
 import { store, type TrackPoint } from '../store';
 import type { Participant, Published, Room } from '../types';
-import { badge, esc, fmtBps, matches, table } from '../util';
+import { badge, esc, fmtBps, matches, table, safeDecode } from '../util';
 import { trackState } from './rooms';
 import { ChartGroup, filterBox, render, type View } from './view';
 
@@ -13,7 +13,7 @@ export class Quality implements View {
 
   mount(root: HTMLElement, args: string[]): void {
     this.root = root;
-    this.sid = decodeURIComponent(args[0] ?? '');
+    this.sid = safeDecode(args[0] ?? '');
     root.innerHTML = '<div class="view-head"><h2>Track quality</h2></div><div class="body"></div>';
     this.detail = root.querySelector('.body')!;
     if (!this.sid) this.filter = filterBox(root.querySelector('.view-head')!, 'Filter by room, presenter or track', () => this.update());

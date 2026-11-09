@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,6 +32,8 @@ type Coordinator struct {
 	order   []string // creation order
 	queue   []string // unclaimed job ids, FIFO
 	workers map[string]*workerState
+	active  map[string]int // recordings in progress per room (for active_recording)
+	flagMu  sync.Mutex     // orders syncRoomFlag calls
 	wake    chan struct{}
 
 	stop chan struct{}
@@ -76,7 +79,7 @@ func NewCoordinator(p CoordinatorParams) *Coordinator {
 		p.Config.HeartbeatTimeout = 15 * time.Second
 	}
 	c := &Coordinator{
-		p: p, now: time.Now, jobs: map[string]*job{}, workers: map[string]*workerState{},
+		p: p, now: time.Now, jobs: map[string]*job{}, workers: map[string]*workerState{}, active: map[string]int{},
 		wake: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if p.Now != nil {
@@ -155,6 +158,13 @@ func (c *Coordinator) StartRecording(ctx context.Context, req *tesserav1.StartRe
 		if req.GetParticipant().GetIdentity() == "" {
 			return nil, errs.New(errs.CodeInvalidArgument, "participant identity is required")
 		}
+		for _, s := range req.GetParticipant().GetSources() {
+			switch s {
+			case "camera", "microphone", "screen_share", "screen_share_audio":
+			default:
+				return nil, errs.New(errs.CodeInvalidArgument, "unknown source %q (camera, microphone, screen_share, screen_share_audio)", s)
+			}
+		}
 	case *tesserav1.StartRecordingRequest_RoomComposite:
 		return nil, errs.New(errs.CodeUnimplemented, "room composite recording is not supported yet")
 	default:
@@ -170,6 +180,11 @@ func (c *Coordinator) StartRecording(ctx context.Context, req *tesserav1.StartRe
 			return nil, errs.New(errs.CodeNotFound, "room %q not found", req.GetRoom())
 		}
 		roomSID = rooms[0].GetSid()
+		if id := req.GetParticipant().GetIdentity(); id != "" {
+			if _, err := c.p.Rooms.GetParticipant(ctx, req.GetRoom(), id); err != nil {
+				return nil, err
+			}
+		}
 		if t := req.GetTrack().GetTrackSid(); t != "" {
 			// Validate the track exists in the room.
 			found := false
@@ -196,6 +211,16 @@ func (c *Coordinator) StartRecording(ctx context.Context, req *tesserav1.StartRe
 		Request:     proto.Clone(req).(*tesserav1.StartRecordingRequest),
 	}
 	c.mu.Lock()
+	// The same target already being recorded: that recording is the answer (a second
+	// click on Record, or a request racing auto-record, must not record it twice).
+	for _, id := range c.order {
+		if j := c.jobs[id]; j != nil && !terminal(j.info.Status) && !j.stopWanted &&
+			j.info.Status != tesserav1.RecordingStatus_RECORDING_STATUS_ENDING && sameTarget(j.info.GetRequest(), req) {
+			out := proto.Clone(j.info).(*tesserav1.RecordingInfo)
+			c.mu.Unlock()
+			return out, nil
+		}
+	}
 	c.jobs[info.RecordingId] = &job{info: info}
 	c.order = append(c.order, info.RecordingId)
 	c.queue = append(c.queue, info.RecordingId)
@@ -203,6 +228,18 @@ func (c *Coordinator) StartRecording(ctx context.Context, req *tesserav1.StartRe
 	out := proto.Clone(info).(*tesserav1.RecordingInfo)
 	c.mu.Unlock()
 	return out, nil
+}
+
+// sameTarget reports whether two requests record the same thing in the same room.
+func sameTarget(a, b *tesserav1.StartRecordingRequest) bool {
+	if a.GetRoom() != b.GetRoom() {
+		return false
+	}
+	if t := a.GetTrack().GetTrackSid(); t != "" {
+		return t == b.GetTrack().GetTrackSid()
+	}
+	pa, pb := a.GetParticipant(), b.GetParticipant()
+	return pa != nil && pb != nil && pa.GetIdentity() == pb.GetIdentity() && slices.Equal(pa.GetSources(), pb.GetSources())
 }
 
 func (c *Coordinator) get(id string) (*job, error) {
@@ -218,6 +255,13 @@ func (c *Coordinator) finishLocked(j *job, st tesserav1.RecordingStatus, msg str
 	if terminal(j.info.Status) {
 		return nil
 	}
+	if j.started {
+		c.active[j.info.Room]--
+		if c.active[j.info.Room] <= 0 {
+			delete(c.active, j.info.Room)
+		}
+		go c.syncRoomFlag(j.info.Room)
+	}
 	j.info.Status = st
 	if msg != "" {
 		j.info.Error = msg
@@ -230,6 +274,21 @@ func (c *Coordinator) finishLocked(j *job, st tesserav1.RecordingStatus, msg str
 		}
 	}
 	return proto.Clone(j.info).(*tesserav1.RecordingInfo)
+}
+
+// syncRoomFlag sets the room's active_recording from the number of recordings in
+// progress there (read under the lock, so calls racing each other end on the latest).
+func (c *Coordinator) syncRoomFlag(room string) {
+	s, ok := c.p.Rooms.(interface{ SetRoomRecording(room string, on bool) })
+	if !ok {
+		return
+	}
+	c.flagMu.Lock()
+	defer c.flagMu.Unlock()
+	c.mu.Lock()
+	on := c.active[room] > 0
+	c.mu.Unlock()
+	s.SetRoomRecording(room, on)
 }
 
 // RecordingRecovered records a recording that a worker closed after a crash of the
@@ -467,6 +526,8 @@ func (c *Coordinator) UpdateJob(_ context.Context, req *tesserav1.UpdateJobReque
 		}
 		if !j.started {
 			j.started = true
+			c.active[j.info.Room]++
+			go c.syncRoomFlag(j.info.Room)
 			info := proto.Clone(j.info).(*tesserav1.RecordingInfo)
 			events = append(events, func() {
 				c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_STARTED, info)

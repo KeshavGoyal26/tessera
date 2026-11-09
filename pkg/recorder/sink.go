@@ -80,7 +80,7 @@ func (s *storageSink) loop(ctx context.Context) {
 			s.segs.Add(1)
 			s.durNs.Add(int64(u.dur))
 			if s.onSegmentDelay != nil {
-				s.onSegmentDelay(time.Since(u.endWall))
+				s.onSegmentDelay(max(0, time.Since(u.endWall))) // the end is an estimate: never negative
 			}
 		}
 		if u.isPlaylst {

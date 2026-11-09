@@ -450,6 +450,9 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		case <-h.stop:
 			return
 		case b := <-ch:
+			if h.session(r) == nil {
+				return // logged out or expired: the stream ends with the session
+			}
 			if !send(b) {
 				return
 			}

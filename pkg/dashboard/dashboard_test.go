@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -443,5 +444,31 @@ func TestRecordingsListBounded(t *testing.T) {
 	}
 	if out.Recordings[0].ID != "RC_3" || out.Recordings[len(out.Recordings)-1].ID != fmt.Sprintf("RC_%d", maxListedEnded+49) {
 		t.Fatalf("want the running one and the newest ended ones, oldest first: %v ... %v", out.Recordings[0], out.Recordings[len(out.Recordings)-1])
+	}
+}
+
+// TestEventsEndWithSession: logging out ends an open event stream.
+func TestEventsEndWithSession(t *testing.T) {
+	e := newEnv(t)
+	c, csrf := e.login(t)
+	req, _ := http.NewRequest("GET", e.srv.URL+"/admin/api/events", nil)
+	req.AddCookie(c)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, resp.Body) // returns when the server ends the stream
+		close(done)
+	}()
+	if r, _ := e.do(t, "POST", "/admin/api/logout", "{}", c, map[string]string{"X-CSRF-Token": csrf}); r.StatusCode != 200 {
+		t.Fatal(r.StatusCode)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the event stream kept going after logout")
 	}
 }

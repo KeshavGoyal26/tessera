@@ -167,6 +167,11 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 		r.Status != tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE {
 		t.Fatalf("live recording: %v", r)
 	}
+	roomRecording := func() bool {
+		rs, _ := mgr.ListRooms(ctx, []string{"auto"})
+		return len(rs) == 1 && rs[0].GetActiveRecording()
+	}
+	waitFor(t, "the room's active_recording flag", roomRecording)
 	<-sendDone
 
 	// Leaving ends the recording; nobody calls StopRecording.
@@ -182,6 +187,7 @@ func TestLiveAutoRecordOnJoin(t *testing.T) {
 		r, _ := coord.GetRecording(ctx, id)
 		return r.Status == tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE || r.Status == tesserav1.RecordingStatus_RECORDING_STATUS_FAILED
 	})
+	waitFor(t, "active_recording cleared after the recording ended", func() bool { return !roomRecording() })
 	got, _ := coord.GetRecording(ctx, id)
 	if got.Status != tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE || got.Error != "" || len(got.Outputs) != 2 {
 		t.Fatalf("%v", got)

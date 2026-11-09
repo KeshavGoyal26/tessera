@@ -138,7 +138,9 @@ func trackStats(t *pubTrack, now time.Time) stats.PublishedTrackStats {
 	}
 	var expected, lost uint64
 	if l, ok := t.recv.StreamStats(now); ok {
-		ts.SSRC, ts.Active = l.SSRC, l.PPS > 0
+		// A camera that sends only keepalive/padding (frozen sender, ~5-10 kbps) is not
+		// receiving video; a static screen share can legitimately be that low.
+		ts.SSRC, ts.Active = l.SSRC, l.PPS > 0 && (ts.Source != "camera" || l.BitrateBps >= minCameraBps)
 		ts.BitrateBps = l.BitrateBps
 		ts.PacketsRecv = l.Buffer.PacketsReceived
 		ts.PacketsLost = l.Buffer.PacketsLost
@@ -154,6 +156,9 @@ func trackStats(t *pubTrack, now time.Time) stats.PublishedTrackStats {
 	}
 	return ts
 }
+
+// minCameraBps is the bitrate below which a camera track counts as not receiving video.
+const minCameraBps = 15_000
 
 // qualityFrom derives a 1..5 score from loss and RTT.
 func qualityFrom(ps stats.ParticipantStats, subLoss float64) (string, float64) {

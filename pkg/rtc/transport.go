@@ -339,7 +339,9 @@ func (t *transport) Stats() TransportStats {
 	}
 	t.mu.Unlock()
 	if s.Connected {
-		if ice := t.iceTransport(); ice != nil {
+		// Only a live agent: a closed one (session dropped, waiting to resume) makes Pion log
+		// "the agent is closed" on every poll.
+		if ice := t.iceTransport(); ice != nil && iceUp(ice.State()) {
 			if pair, err := ice.GetSelectedCandidatePair(); err == nil && pair != nil {
 				s.CandidateType = candidateType(pair.Remote)
 			}
@@ -349,6 +351,10 @@ func (t *transport) Stats() TransportStats {
 		}
 	}
 	return s
+}
+
+func iceUp(st webrtc.ICETransportState) bool {
+	return st == webrtc.ICETransportStateConnected || st == webrtc.ICETransportStateCompleted || st == webrtc.ICETransportStateChecking
 }
 
 // iceTransport returns the PeerConnection's ICE transport (bundled: one for all).

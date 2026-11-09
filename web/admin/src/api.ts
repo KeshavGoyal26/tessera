@@ -45,6 +45,10 @@ export function action(name: string, body: Record<string, unknown>): Promise<unk
 export function stream(onUpdate: (u: Update) => void, onState: (connected: boolean) => void): () => void {
   const es = new EventSource(base + 'events', { withCredentials: true });
   es.addEventListener('update', (e) => { onState(true); onUpdate(JSON.parse((e as MessageEvent<string>).data) as Update); });
-  es.onerror = () => onState(false);
+  es.onerror = () => {
+    onState(false);
+    // A restart or logout ends the session: back to the login form instead of stale data.
+    void checkSession().then((ok) => { if (!ok) location.reload(); }).catch(() => undefined);
+  };
   return () => es.close();
 }

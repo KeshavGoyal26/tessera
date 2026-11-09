@@ -131,7 +131,12 @@ func newSID(prefix string) string {
 	return prefix + strings.ToLower(b32.EncodeToString(b[:]))
 }
 
+// notify queues a webhook event (Notify only enqueues, so callers send it inline and
+// events keep their order). Hidden participants (viewers, recorders) send none.
 func (m *manager) notify(t tesserav1.WebhookEventType, r *Room, p *Participant, tr *tesserav1.TrackInfo) {
+	if p != nil && p.permission().GetHidden() {
+		return
+	}
 	ev := &tesserav1.WebhookEvent{Type: t, Track: tr}
 	if r != nil {
 		ev.Room = r.ToProto()
@@ -192,7 +197,7 @@ func (m *manager) getOrCreateRoom(name string, rc *auth.RoomConfig, create bool)
 	}
 	r := newRoom(m, info)
 	m.rooms[name] = r
-	go m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_ROOM_STARTED, r, nil, nil)
+	m.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_ROOM_STARTED, r, nil, nil) // inline: before the first participant_joined
 	return r, nil
 }
 
@@ -267,6 +272,22 @@ func (m *manager) UpdateRoomMetadata(_ context.Context, name, metadata string) (
 	info := r.ToProto()
 	r.broadcast(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_RoomUpdate{RoomUpdate: &tesserav1.RoomUpdate{Room: info}}}, nil)
 	return info, nil
+}
+
+// SetRoomRecording sets the room's active_recording flag (the recording coordinator
+// calls it as recordings start and end) and tells the participants when it changes.
+func (m *manager) SetRoomRecording(name string, on bool) {
+	r := m.getRoom(name)
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	changed := r.info.ActiveRecording != on
+	r.info.ActiveRecording = on
+	r.mu.Unlock()
+	if changed {
+		r.broadcast(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_RoomUpdate{RoomUpdate: &tesserav1.RoomUpdate{Room: r.ToProto()}}}, nil)
+	}
 }
 
 // ListParticipants implements Admin.

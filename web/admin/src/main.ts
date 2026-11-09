@@ -96,7 +96,7 @@ function clusterShell(): void {
     pick.value = store.node;
   };
   cluster.listeners.add(fill);
-  pick.onchange = () => { store.setNode(pick.value); if (location.hash.startsWith('#/cluster')) location.hash = '#/overview'; };
+  pick.onchange = () => { store.setNode(pick.value); if (!location.hash || location.hash.startsWith('#/cluster')) location.hash = '#/overview'; };
   pick.onfocus = () => void refreshCluster();
   const scope = document.getElementById('scope')!;
   store.on(() => {

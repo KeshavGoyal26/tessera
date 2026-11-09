@@ -71,7 +71,12 @@ export class Recordings implements View {
       const dot = line.querySelector('.cq'), sum = line.querySelector('.qsum')!;
       this.stopTimeline = attachTimeline(video, line.querySelector('.qbar')!, timelineUrl(url), (l, s) => { setDot(dot, l, 'Connection at this moment'); sum.textContent = s; });
     }
-    if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; void video.play().catch(() => undefined); return; }
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.onerror = () => { msg.textContent = `Playback error: ${video.error?.message || 'the recording could not be loaded'}`; };
+      video.src = url;
+      void video.play().catch(() => undefined);
+      return;
+    }
     const { default: Hls } = await import('hls.js');
     if (!Hls.isSupported()) { msg.textContent = 'HLS playback is not supported in this browser.'; return; }
     const hls = new Hls();

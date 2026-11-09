@@ -1,7 +1,7 @@
 import { action } from '../api';
 import { store } from '../store';
 import type { Participant, Room } from '../types';
-import { badge, esc, fmtBps, fmtNum, matches, qualityBadge, role, roleCounts, table } from '../util';
+import { badge, esc, fmtBps, fmtNum, matches, qualityBadge, role, roleCounts, table, safeDecode } from '../util';
 import { filterBox, render, type View } from './view';
 
 const ACTION_DONE: Record<string, string> = {
@@ -18,7 +18,7 @@ export class Rooms implements View {
 
   mount(root: HTMLElement, args: string[]): void {
     this.root = root;
-    this.args = args.map(decodeURIComponent);
+    this.args = args.map(safeDecode);
     root.innerHTML = '<div class="view-head"><h2 class="crumbs"></h2></div><div class="body"></div>';
     this.crumbs = root.querySelector('.crumbs')!;
     this.body = root.querySelector('.body')!;

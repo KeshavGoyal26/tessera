@@ -3,6 +3,7 @@ package recorder
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -237,5 +238,34 @@ func TestCoordinatorAutoRecordJoinAndLeave(t *testing.T) {
 	all, _ := c.ListRecordings(ctx, &tesserav1.ListRecordingsRequest{Room: "r"})
 	if len(all) != 2 {
 		t.Fatalf("want a new recording after rejoin, got %d", len(all))
+	}
+}
+
+// TestStartRecordingDedupAndValidation: recording a target that is already being recorded
+// returns that recording; unknown sources are refused at once.
+func TestStartRecordingDedupAndValidation(t *testing.T) {
+	c, _, _ := newTestCoordinator(t)
+	ctx := context.Background()
+	part := func(sources ...string) *tesserav1.StartRecordingRequest {
+		return &tesserav1.StartRecordingRequest{Room: "r", Target: &tesserav1.StartRecordingRequest_Participant{
+			Participant: &tesserav1.ParticipantRecordingTarget{Identity: "alice", Sources: sources}}}
+	}
+	a, err := c.StartRecording(ctx, part())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := c.StartRecording(ctx, part()); b.GetRecordingId() != a.GetRecordingId() {
+		t.Fatal("a second request for the same participant must return the recording in progress")
+	}
+	if b, _ := c.StartRecording(ctx, part("camera")); b.GetRecordingId() == a.GetRecordingId() {
+		t.Fatal("other sources are another recording")
+	}
+	if _, err := c.StartRecording(ctx, part("TRACK_SOURCE_CAMERA")); err == nil || !strings.Contains(err.Error(), "unknown source") {
+		t.Fatalf("unknown source: %v", err)
+	}
+	if t1, _ := c.StartRecording(ctx, trackReq("r")); t1.GetRecordingId() == "" {
+		t.Fatal("track recording")
+	} else if t2, _ := c.StartRecording(ctx, trackReq("r")); t2.GetRecordingId() != t1.GetRecordingId() {
+		t.Fatal("same track twice must dedupe")
 	}
 }

@@ -215,8 +215,9 @@ export class SignalClient {
   }
 
   /** Announces a track before it is negotiated on the publisher PeerConnection. */
-  sendAddTrack(request: AddTrackInit): void {
-    this.send({ case: "addTrack", value: request });
+  /** Asks to publish a track; rejects with the server's reason when it refuses. */
+  sendAddTrack(request: AddTrackInit): Promise<void> {
+    return this.request({ case: "addTrack", value: request });
   }
 
   /** Mutes or unmutes a published track. */

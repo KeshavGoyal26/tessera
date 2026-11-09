@@ -66,3 +66,6 @@ a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid 
 .cq { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .cq[data-level="good"] { background: var(--q-good); } .cq[data-level="fair"] { background: var(--q-fair); }
 .cq[data-level="poor"] { background: var(--q-poor); } .cq[data-level="lost"] { background: var(--q-lost); }
+/* long identities and room names wrap or truncate instead of pushing buttons off-screen */
+.crumbs { overflow-wrap: anywhere; }
+td:not(.actions) { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; }
