@@ -62,7 +62,7 @@ type Summary struct {
 	BpsIn     float64 `json:"bps_in"`
 	BpsOut    float64 `json:"bps_out"`
 	Rooms     int     `json:"rooms"`
-	// Presenters publish on this node (on an edge: the relayed copies); viewers only watch.
+	// Presenters publish on this node (relayed copies on an edge are not counted); viewers only watch.
 	Presenters int     `json:"presenters"`
 	Viewers    int     `json:"viewers"`
 	Relays     int     `json:"relays"`
@@ -92,6 +92,8 @@ func roomRoles(r *stats.RoomStats) (presenters, viewers, relays int) {
 		case p.Kind == "relay":
 			relays++
 		case p.Kind == "recorder":
+		case len(p.Published) > 0 && p.ICECandidateType == "":
+			// a presenter relayed to this edge from its media node: counted there
 		case len(p.Published) > 0:
 			presenters++
 		default:
