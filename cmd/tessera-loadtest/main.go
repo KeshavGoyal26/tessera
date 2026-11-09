@@ -95,6 +95,7 @@ var magic = [2]byte{'L', 'T'}
 type Report struct {
 	Clients         int     `json:"clients"`
 	ConnectFailures int     `json:"connect_failures"`
+	Disconnects     int     `json:"disconnects"`
 	JoinMsP50       float64 `json:"join_ms_p50"`
 	JoinMsP95       float64 `json:"join_ms_p95"`
 	FirstPacketP95  float64 `json:"first_packet_ms_p95"`
@@ -109,7 +110,7 @@ type Report struct {
 
 type collector struct {
 	rxPkts, rxBytes, lost, expected atomic.Uint64
-	connectFail                     atomic.Int64
+	connectFail, disconnects        atomic.Int64
 	mu                              sync.Mutex
 	joins, firsts, latencies        []float64
 }
@@ -137,6 +138,9 @@ func run(ctx context.Context, p Params) error {
 	}
 	if p.VideoKbps <= 0 {
 		return errs.New(errs.CodeInvalidArgument, "--video-kbps must be positive")
+	}
+	if p.Rooms < 0 || p.Publishers < 0 || p.Subscribers < 0 || p.Duration <= 0 || p.ReportPeriod <= 0 {
+		return errs.New(errs.CodeInvalidArgument, "--rooms, --publishers and --subscribers must not be negative; --duration and --report must be positive")
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	col := &collector{}
@@ -206,7 +210,7 @@ loop:
 	dur := time.Since(measureStart).Seconds()
 	col.mu.Lock()
 	rep := Report{
-		Clients: len(clients), ConnectFailures: int(col.connectFail.Load()),
+		Clients: len(clients), ConnectFailures: int(col.connectFail.Load()), Disconnects: int(col.disconnects.Load()),
 		JoinMsP50: pct(col.joins, 0.5), JoinMsP95: pct(col.joins, 0.95), FirstPacketP95: pct(col.firsts, 0.95),
 		RxPackets: col.rxPkts.Load() - startPkts, LossPercent: lossPct(col),
 		LatencyMsP50: pct(col.latencies, 0.5), LatencyMsP99: pct(col.latencies, 0.99), DurationSec: dur,
@@ -215,6 +219,7 @@ loop:
 	rep.RxPPS = float64(rep.RxPackets) / dur
 	rep.RxMbps = float64(col.rxBytes.Load()-startBytes) * 8 / dur / 1e6
 	cancel()
+	measured := col.disconnects.Load() // before our own disconnects below
 	for _, c := range clients {
 		_ = c.Disconnect(context.Background())
 	}
@@ -225,6 +230,9 @@ loop:
 		if err := os.WriteFile(p.JSON, out, 0o644); err != nil {
 			return err
 		}
+	}
+	if rep.ConnectFailures > 0 || measured > 0 || rep.Clients == 0 {
+		return fmt.Errorf("%d clients failed to connect, %d were disconnected", rep.ConnectFailures, measured)
 	}
 	return nil
 }
@@ -264,7 +272,12 @@ func startClient(ctx context.Context, p Params, roomName, identity string, publi
 	c := client.New(opts)
 	t0 := time.Now()
 	var first atomic.Bool
-	c.SetCallbacks(client.Callbacks{OnTrackSubscribed: func(rt *client.RemoteTrack) {
+	c.SetCallbacks(client.Callbacks{OnDisconnected: func(reason tesserav1.DisconnectReason) {
+		if ctx.Err() == nil { // not our own shutdown
+			col.disconnects.Add(1)
+			logger.Warn("client disconnected", "identity", identity, "reason", reason)
+		}
+	}, OnTrackSubscribed: func(rt *client.RemoteTrack) {
 		go receive(rt, col, func() {
 			if first.CompareAndSwap(false, true) {
 				col.mu.Lock()
