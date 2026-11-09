@@ -56,6 +56,10 @@ func realMain() int {
 		}
 		return 0
 	}
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		fmt.Fprintf(os.Stderr, "unknown command %q (commands: create-token; see -h for flags)\n", os.Args[1])
+		return 2
+	}
 	configPath := flag.String("config", "", "path to tessera.yaml")
 	dev := flag.Bool("dev", false, "development mode: dev API key, text logs")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -356,6 +360,14 @@ func createToken(args []string) error {
 	adminGrants := fs.Bool("admin", false, "admin token (room_create, room_list, room_admin, room_record)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch {
+	case fs.NArg() > 0:
+		return fmt.Errorf("unexpected arguments: %v", fs.Args())
+	case *ttl <= 0:
+		return errors.New("--ttl must be positive")
+	case len(*secret) < config.MinSecretLength:
+		return fmt.Errorf("--secret is shorter than %d bytes: the server would not accept it outside --dev", config.MinSecretLength)
 	}
 	g := &auth.RoomGrant{Room: *roomName}
 	if *adminGrants {

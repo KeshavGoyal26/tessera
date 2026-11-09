@@ -8,7 +8,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -300,6 +302,9 @@ func LoadYAML(path string, dst any) error {
 	dec := yaml.NewDecoder(strings.NewReader(os.ExpandEnv(string(raw))))
 	dec.KnownFields(true)
 	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("config %s: the file is empty", path)
+		}
 		return fmt.Errorf("config %s: %w", path, err)
 	}
 	return nil
@@ -376,6 +381,39 @@ func (c *Config) Validate() error {
 		if _, ok := c.Keys[c.Webhook.APIKey]; !ok {
 			errs = append(errs, errors.New("webhook.api_key must name a configured key"))
 		}
+	}
+	// Values that used to be accepted silently (a typo then quietly did something else).
+	switch strings.ToLower(c.Recording.Storage.Kind) {
+	case "", "local", "s3":
+	default:
+		errs = append(errs, fmt.Errorf("recording.storage.kind %q: want local or s3", c.Recording.Storage.Kind))
+	}
+	if c.Logging.Level != "" {
+		var l slog.Level
+		if err := l.UnmarshalText([]byte(c.Logging.Level)); err != nil {
+			errs = append(errs, fmt.Errorf("logging.level %q: want debug, info, warn or error", c.Logging.Level))
+		}
+	}
+	for _, ip := range c.RTC.IPs {
+		if net.ParseIP(ip) == nil {
+			errs = append(errs, fmt.Errorf("rtc.ips: %q is not an IP address", ip))
+		}
+	}
+	for _, mt := range c.RTC.EnabledCodecs {
+		switch strings.ToLower(mt) {
+		case "audio/opus", "audio/red", "video/h264":
+		default:
+			errs = append(errs, fmt.Errorf("rtc.enabled_codecs: %q is not supported (audio/opus, audio/red, video/H264)", mt))
+		}
+	}
+	for name, d := range map[string]time.Duration{"room.empty_timeout": c.Room.EmptyTimeout, "room.departure_timeout": c.Room.DepartureTimeout,
+		"signal.ping_interval": c.Signal.PingInterval, "signal.ping_timeout": c.Signal.PingTimeout, "signal.resume_window": c.Signal.ResumeWindow} {
+		if d < 0 {
+			errs = append(errs, fmt.Errorf("%s must not be negative", name))
+		}
+	}
+	if c.Room.MaxParticipants < 0 || c.Limits.MaxRooms < 0 || c.Limits.MaxParticipants < 0 {
+		errs = append(errs, errors.New("participant and room limits must not be negative (0 = no limit)"))
 	}
 	return errors.Join(errs...)
 }
