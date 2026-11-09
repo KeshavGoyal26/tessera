@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -62,47 +63,32 @@ func TestPlacePresenter(t *testing.T) {
 	if _, err := c.PlacePresenter(ctx, "g1", "a"); !errors.Is(err, ErrNoMediaNode) {
 		t.Fatalf("no media node: err %v", err)
 	}
-	old := SpillSessions
-	SpillSessions = 10
-	t.Cleanup(func() { SpillSessions = old })
 	draining := media("m0", 0)
 	draining.Draining = true
 	for _, n := range []NodeInfo{draining, media("m1", 5), media("m2", 2), {ID: "e1", Role: config.RoleEdge}} {
 		_ = c.Heartbeat(ctx, n)
 	}
-	if n, err := c.PlacePresenter(ctx, "g0", "a"); err != nil || n.ID != "m2" {
-		t.Fatalf("first presenter: least-loaded live media node, got %+v err %v", n, err)
+	// Random over live media nodes, whatever the room: never a draining node or an edge.
+	seen := map[string]bool{}
+	for i := range 40 {
+		n, err := c.PlacePresenter(ctx, "g1", fmt.Sprint("p", i))
+		if err != nil || (n.ID != "m1" && n.ID != "m2") {
+			t.Fatalf("placed on %+v err %v", n, err)
+		}
+		seen[n.ID] = true
 	}
-	// The placement counts at once: before any heartbeat the group is hosted on m2 and
-	// m2 has one more session.
-	if ids, _ := c.RoomNodes(ctx, "g0"); len(ids) != 1 || ids[0] != "m2" {
-		t.Fatalf("g0 hosted on %v", ids)
+	if len(seen) != 2 {
+		t.Fatalf("one group should spread over both nodes, got %v", seen)
 	}
-	if n, _ := c.PlacePresenter(ctx, "g0", "b"); n.ID != "m2" {
-		t.Fatalf("same group before a heartbeat: got %s", n.ID)
+	if ids, _ := c.RoomNodes(ctx, "g1"); len(ids) != 2 {
+		t.Fatalf("g1 hosted on %v", ids)
 	}
-	if ns, _ := c.Nodes(ctx); sessionsOf(ns, "m2") != 4 {
-		t.Fatalf("m2 sessions %d, want 4", sessionsOf(ns, "m2"))
-	}
-	_ = c.Heartbeat(ctx, media("m2", 2))
-	if n, err := c.PlacePresenter(ctx, "g3", "a"); err != nil || n.ID != "m2" {
-		t.Fatalf("new group: least-loaded live media node, got %+v err %v", n, err)
-	}
-	// The group is hosted on m1 (under the spill threshold): the next presenter joins it
-	// there although m2 is less loaded.
-	if err := c.KeepRooms(ctx, "m1", map[string][]string{"g1": {}}); err != nil {
+	if _, err := c.PlacePresenter(ctx, "g3", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := c.PlacePresenter(ctx, "g1", "b"); n.ID != "m1" {
-		t.Fatalf("second presenter: the node already hosting the group, got %s", n.ID)
-	}
-	// m1 reaches the spill threshold: the next presenter goes to the least-loaded node.
-	_ = c.Heartbeat(ctx, media("m1", 10))
-	if n, _ := c.PlacePresenter(ctx, "g1", "c"); n.ID != "m2" {
-		t.Fatalf("spill: got %s", n.ID)
-	}
+	first, _ := c.PlacePresenter(ctx, "g3", "a")
 	// A placed presenter stays (a reconnect resumes there) until its node is gone.
-	if n, _ := c.PlacePresenter(ctx, "g3", "a"); n.ID != "m2" {
+	if n, _ := c.PlacePresenter(ctx, "g3", "a"); n.ID != first.ID {
 		t.Fatalf("placed presenter moved to %s", n.ID)
 	}
 	mr.FastForward(nodeTTL + time.Second)

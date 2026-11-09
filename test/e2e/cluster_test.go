@@ -96,13 +96,13 @@ func newEdge(t *testing.T, mr *miniredis.Miniredis) (edge *server, httpURL strin
 	return &server{URL: "ws://" + strings.TrimPrefix(h.URL, "http://"), Manager: local.Manager, cfg: local.cfg}, h.URL
 }
 
-// TestEdgeRelaysPresentersFromSeveralMediaNodes: a group spans two media nodes (the
-// first is past the spill threshold when the second presenter joins); a viewer on the
+// TestEdgeRelaysPresentersFromSeveralMediaNodes: a group spans two media nodes (placement
+// alternates nodes); a viewer on the
 // edge receives both presenters (ADR-0012 phase 2).
 func TestEdgeRelaysPresentersFromSeveralMediaNodes(t *testing.T) {
-	old := cluster.SpillSessions
-	cluster.SpillSessions = 1
-	t.Cleanup(func() { cluster.SpillSessions = old })
+	old, next := cluster.PickNode, 0
+	cluster.PickNode = func(n int) int { next++; return next % n } // alternate nodes
+	t.Cleanup(func() { cluster.PickNode = old })
 	mr := miniredis.RunT(t)
 	m1, _ := startMedia(t, mr, "m1")
 	m2, _ := startMedia(t, mr, "m2")

@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"math/rand/v2"
 	"sort"
 	"strconv"
 	"time"
@@ -129,21 +130,20 @@ func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	return out, nil
 }
 
+// PickNode picks the index of a presenter's media node among n candidates (random;
+// tests replace it).
+var PickNode = rand.IntN
+
 // ErrNoMediaNode is returned when no media node can take a presenter.
 var ErrNoMediaNode = errs.New(errs.CodeUnavailable, "no media server available")
-
-// SpillSessions is how many sessions a media node may hold before a group's next
-// presenter goes to another node instead of joining the group where it already is.
-var SpillSessions = 250
 
 func presKey(room, identity string) string { return keyPrefix + "pres:" + room + "\x00" + identity }
 func groupKey(room string) string          { return keyPrefix + "group:" + room }
 
 // PlacePresenter returns the media node for a presenter of room. A presenter stays
 // on its node while that node is alive (a reconnect resumes the session there).
-// Otherwise it goes to a live, not draining node that already hosts the room if that
-// node has fewer than SpillSessions sessions, else to the least-loaded node; one
-// group can span several nodes (ADR-0012). Concurrent placements agree.
+// Otherwise it goes to a random live, not draining media node, whatever its room;
+// one group can span several nodes (ADR-0012). Concurrent placements agree.
 func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (NodeInfo, error) {
 	nodes, err := c.Nodes(ctx)
 	if err != nil {
@@ -155,25 +155,15 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 			media[n.ID] = n
 		}
 	}
-	hosting, err := c.RoomNodes(ctx, room)
-	if err != nil {
-		return NodeInfo{}, err
+	var live []NodeInfo
+	for _, n := range media {
+		if !n.Draining {
+			live = append(live, n)
+		}
 	}
 	var best *NodeInfo
-	pick := func(n NodeInfo) {
-		if !n.Draining && (best == nil || n.Sessions < best.Sessions) {
-			best = &n
-		}
-	}
-	for _, id := range hosting {
-		if n, ok := media[id]; ok && n.Sessions < SpillSessions {
-			pick(n)
-		}
-	}
-	if best == nil {
-		for _, n := range media {
-			pick(n)
-		}
+	if len(live) > 0 {
+		best = &live[PickNode(len(live))]
 	}
 	key := presKey(room, identity)
 	for range 3 {
