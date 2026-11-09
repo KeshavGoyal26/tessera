@@ -82,6 +82,10 @@
   object-fit: contain;
   background: #000;
 }
+.tile-actions .icon-btn .ico {
+  height: 20px;
+  width: 20px;
+}
 .icon-btn.is-live .ico {
   fill: var(--bad);
 }
