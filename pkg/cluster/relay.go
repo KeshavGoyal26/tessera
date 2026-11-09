@@ -40,6 +40,7 @@ type Relays struct {
 		room.RemotePublishers
 		ListParticipants(ctx context.Context, room string) ([]*tesserav1.ParticipantInfo, error)
 		UpdateRoomMetadata(ctx context.Context, room, metadata string) (*tesserav1.Room, error)
+		DeleteRoom(ctx context.Context, room string) error
 	}
 	NodeID    string
 	APIKey    string
@@ -231,7 +232,11 @@ func (g *groupRelay) join(ctx context.Context, node, url string) error {
 		OnParticipantUpdate: func(ps []*tesserav1.ParticipantInfo) { g.onParticipants(node, ps) },
 		OnConnectionQuality: func(u *tesserav1.ConnectionQualityUpdate) { g.onQuality(node, c, u) },
 		OnRoomUpdate:        func(r *tesserav1.Room) { g.syncMetadata(r) },
-		OnDisconnected: func(tesserav1.DisconnectReason) {
+		OnDisconnected: func(reason tesserav1.DisconnectReason) {
+			if reason == tesserav1.DisconnectReason_DISCONNECT_REASON_ROOM_DELETED {
+				go g.roomDeleted() // ended by an admin: end it here too, do not rejoin
+				return
+			}
 			g.mu.Lock()
 			if g.sessions[node] == c {
 				delete(g.sessions, node) // joined again on a later tick if the node still hosts the group
@@ -379,6 +384,20 @@ func (g *groupRelay) onTrackGone(remoteSID string) {
 	if ok && cur.rp != nil {
 		cur.rp.UnpublishTrack(lt.sid)
 	}
+}
+
+// roomDeleted ends the group on this edge after a media node deleted the room (an admin
+// DeleteRoom through any edge): the relay stops and this edge's viewers are disconnected.
+func (g *groupRelay) roomDeleted() {
+	g.r.mu.Lock()
+	if g.r.groups[g.group] == g {
+		delete(g.r.groups, g.group)
+	}
+	g.r.mu.Unlock()
+	g.stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = g.r.Rooms.DeleteRoom(ctx, g.group)
 }
 
 // syncMetadata copies the media node's room metadata to this edge's room (set through
