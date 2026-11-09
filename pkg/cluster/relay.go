@@ -170,7 +170,9 @@ func (g *groupRelay) tick() bool {
 	g.mu.Lock()
 	var gone []string
 	for id := range g.sessions {
-		if !want[id] {
+		// Only a registered node that no longer hosts the group: right after a Redis restart
+		// the registry is empty for a moment, and a dead node's session ends on its own.
+		if urls[id] != "" && !want[id] {
 			gone = append(gone, id)
 		}
 	}
