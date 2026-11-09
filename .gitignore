@@ -28,3 +28,4 @@ examples/java-spring/target/
 # Binaries from `go build ./cmd/...` in the repo root
 /tessera
 /tessera-loadtest
+/.cluster/
