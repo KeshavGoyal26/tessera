@@ -44,13 +44,27 @@ const (
 	ContentTypeJSON     = "application/json"
 )
 
-// cleanKey rejects keys that would escape the storage root.
+// cleanKey rejects keys that would escape the storage root: a ".." path segment, not
+// two dots inside a name (a room called "a..b" is fine).
 func cleanKey(key string) (string, error) {
 	k := strings.TrimLeft(filepath.ToSlash(filepath.Clean("/"+key)), "/")
-	if k == "" || strings.Contains(key, "..") {
+	bad := k == ""
+	for _, seg := range strings.Split(filepath.ToSlash(key), "/") {
+		bad = bad || seg == ".."
+	}
+	if bad {
 		return "", errs.New(errs.CodeInvalidArgument, "invalid storage key %q", key)
 	}
 	return k, nil
+}
+
+// escapePath URL-escapes each segment of a key (room names may contain # ? % and spaces).
+func escapePath(key string) string {
+	segs := strings.Split(strings.TrimLeft(key, "/"), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
 }
 
 // LocalOption customises NewLocal.
@@ -132,7 +146,7 @@ func (l *local) URL(key string) string {
 	if l.baseURL == "" {
 		return ""
 	}
-	return l.baseURL + "/" + strings.TrimLeft(key, "/")
+	return l.baseURL + "/" + escapePath(key)
 }
 
 func (l *local) Check(context.Context) error {
@@ -320,7 +334,7 @@ func (s *s3store) URL(key string) string {
 	if err != nil || s.cfg.PublicBaseURL == "" {
 		return ""
 	}
-	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/" + k
+	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + "/" + escapePath(k)
 }
 
 func (s *s3store) Check(ctx context.Context) error {

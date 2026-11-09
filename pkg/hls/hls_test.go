@@ -356,6 +356,23 @@ v/index.m3u8
 	}
 }
 
+// TestMasterPlaylistOneVideo: camera and screen share are not quality levels of one
+// stream; the master lists the camera only. Quotes in a name do not break the quoted-string.
+func TestMasterPlaylistOneVideo(t *testing.T) {
+	b, _ := MasterPlaylist([]Rendition{
+		{URI: "scr/index.m3u8", Codecs: "avc1.42c01f", Bandwidth: 900000, Screen: true},
+		{URI: "cam/index.m3u8", Codecs: "avc1.42c01f", Bandwidth: 500000},
+		{URI: "a/index.m3u8", Codecs: "opus", Bandwidth: 32000, IsAudio: true, Name: `a",URI="x`},
+	})
+	pl := string(b)
+	if strings.Count(pl, "#EXT-X-STREAM-INF") != 1 || !strings.Contains(pl, "\ncam/index.m3u8") || strings.Contains(pl, "scr/") {
+		t.Fatalf("%s", pl)
+	}
+	if !strings.Contains(pl, `NAME="a',URI='x"`) {
+		t.Fatalf("name not sanitised:\n%s", pl)
+	}
+}
+
 func TestBoxGolden(t *testing.T) {
 	frag := Fragment(1, 7, 90000, []Sample{{Duration: 3600, KeyFrame: true, Data: []byte{1, 2, 3}}})
 	// moof(mfhd seq=7, traf(tfhd, tfdt=90000, trun 1 sample)) + mdat(1,2,3)

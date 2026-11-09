@@ -93,4 +93,6 @@ type Rendition struct {
 	AudioGroup string
 	Name       string
 	IsAudio    bool
+	// Screen marks a screen share: a master lists one video, the camera when there is one.
+	Screen bool
 }

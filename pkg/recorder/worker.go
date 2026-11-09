@@ -513,8 +513,10 @@ func (r *jobRun) liveMaster(ctx context.Context) {
 }
 
 func (t *recTrack) rendition(sid string) hls.Rendition {
-	return rendition(sid, t.ident, t.rec.codecString(), int(t.rec.stats.width.Load()), int(t.rec.stats.height.Load()),
+	r := rendition(sid, t.ident, t.rec.codecString(), int(t.rec.stats.width.Load()), int(t.rec.stats.height.Load()),
 		t.rec.codec == "Opus", t.sink.bytes.Load(), time.Duration(t.sink.durNs.Load()))
+	r.Screen = t.rec.tr.Source == "screen_share"
+	return r
 }
 
 func (r *jobRun) trackCount() int { r.mu.Lock(); defer r.mu.Unlock(); return len(r.tracks) }

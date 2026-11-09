@@ -229,3 +229,25 @@ func readBody(r *http.Request) []byte {
 	}
 	return out
 }
+
+// TestKeysAndURLsFromRoomNames: two dots inside a name are a valid key, a ".." segment is
+// not; URLs escape every segment (rooms may be called "q#1?x%y").
+func TestKeysAndURLsFromRoomNames(t *testing.T) {
+	for _, k := range []string{"a..b/RC_1/master.m3u8", "v1..2/x", "q#1?x%y/RC_1/master.m3u8"} {
+		if _, err := cleanKey(k); err != nil {
+			t.Errorf("%q rejected: %v", k, err)
+		}
+	}
+	for _, k := range []string{"../x", "a/../../x", ".."} {
+		if _, err := cleanKey(k); err == nil {
+			t.Errorf("%q accepted", k)
+		}
+	}
+	st, err := NewLocal(t.TempDir(), WithBaseURL("/recordings"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := st.URL("q#1?x%y/RC_1/master.m3u8"); u != "/recordings/q%231%3Fx%25y/RC_1/master.m3u8" {
+		t.Fatalf("url %q", u)
+	}
+}

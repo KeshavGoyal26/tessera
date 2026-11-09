@@ -75,3 +75,22 @@ func TestRemotePublisherQuality(t *testing.T) {
 		t.Fatalf("after the media node's update: %q", q)
 	}
 }
+
+// TestMergeAttributes: updates merge into the participant's attributes and an empty value
+// deletes a key (admin UpdateParticipant and the client's own update).
+func TestMergeAttributes(t *testing.T) {
+	cur := map[string]string{"role": "presenter", "hls_url": "/x", "k": "v"}
+	got := mergeAttributes(cur, map[string]string{"k": "", "new": "1"})
+	if len(got) != 3 || got["role"] != "presenter" || got["hls_url"] != "/x" || got["new"] != "1" || got["k"] != "" {
+		t.Fatalf("%v", got)
+	}
+	if _, ok := got["k"]; ok {
+		t.Fatal("an empty value must delete the key")
+	}
+	if cur["k"] != "v" {
+		t.Fatal("the current map must not be modified (it is shared with snapshots)")
+	}
+	if mergeAttributes(nil, nil) != nil {
+		t.Fatal("no update keeps nil")
+	}
+}

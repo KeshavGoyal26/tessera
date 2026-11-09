@@ -63,7 +63,9 @@ func TestOpusAndVideoAlignedHLS(t *testing.T) {
 	}
 
 	ap, _ := os.ReadFile(filepath.Join(dir, "audio", "index.m3u8"))
-	if !strings.Contains(string(ap), "2026-01-02T03:04:05.500Z") {
+	// The audio started 500 ms after the origin: its first frame is held from the origin
+	// (players need every rendition from 0), the next ones keep their times.
+	if !strings.Contains(string(ap), "2026-01-02T03:04:05.000Z") {
 		t.Fatalf("%s", ap)
 	}
 	pf := ffprobe(t, "-show_streams", "-show_packets", "-select_streams", "a:0", filepath.Join(dir, "audio", "index.m3u8"))
@@ -73,12 +75,15 @@ func TestOpusAndVideoAlignedHLS(t *testing.T) {
 	if len(pf.Packets) != len(frames) {
 		t.Fatalf("%d packets want %d", len(pf.Packets), len(frames))
 	}
-	var first float64
+	var first, second float64
 	if _, err := fmtSscan(pf.Packets[0].PTSTime, &first); err != nil {
 		t.Fatal(err)
 	}
-	if first < 0.49 || first > 0.51 {
-		t.Fatalf("audio starts at %v, want 0.5 (A/V offset)", first)
+	if _, err := fmtSscan(pf.Packets[1].PTSTime, &second); err != nil {
+		t.Fatal(err)
+	}
+	if first > 0.01 || second < 0.51 || second > 0.53 {
+		t.Fatalf("audio packets at %v, %v; want 0 (held from the origin) then 0.52 (A/V offset kept)", first, second)
 	}
 	// Audio-only decode has no errors.
 	if b, err := execFFmpegDecode(filepath.Join(dir, "audio", "index.m3u8")); err != nil || len(b) != 0 {

@@ -221,6 +221,9 @@ func writeHTTPError(w http.ResponseWriter, err error) {
 		status = http.StatusUpgradeRequired
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// Browsers cannot read a failed WebSocket upgrade: the SDK fetches the same URL to learn
+	// why (expired token, kicked, resume window over). The body is only the error.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(`{"code":` + strconv.Quote(string(code)) + `,"msg":` + strconv.Quote(err.Error()) + "}"))
 }

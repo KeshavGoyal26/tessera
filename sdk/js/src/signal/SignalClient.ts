@@ -443,6 +443,8 @@ export class SignalClient {
     } catch {
       /* unreachable, or blocked by CORS */
     }
-    return new ConnectionError(resuming ? "resume_failed" : "server_unreachable", "could not open the signaling connection");
+    // Unreachable (network down, server restarting): keep trying; only the server can say a
+    // session is gone (409 above).
+    return new ConnectionError("server_unreachable", "could not open the signaling connection");
   }
 }

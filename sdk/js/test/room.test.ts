@@ -312,6 +312,24 @@ describe("publishing", () => {
     expect(room.localParticipant.trackPublications.size).toBe(1);
   });
 
+  it("parallel enables of one source publish a single track", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    let n = 0;
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ ...mst("audio"), id: `cid-mic-${++n}` }] })) } });
+    const s = sig();
+    const a = room.localParticipant.setMicrophoneEnabled(true);
+    const b = room.localParticipant.setMicrophoneEnabled(true); // a double click
+    await vi.waitFor(() => expect(s.sent.some((x) => x?.case === "addTrack")).toBe(true));
+    s.emit({ case: "trackPublished", value: { cid: "cid-mic-1", track: create(TrackInfoSchema, { sid: "TR_m", type: TrackType.AUDIO, source: PTrackSource.MICROPHONE }) } });
+    const [pa, pb] = await Promise.all([a, b]);
+    expect(pa?.trackSid).toBe("TR_m");
+    expect(pb).toBe(pa);
+    expect(s.sent.filter((x) => x?.case === "addTrack")).toHaveLength(1);
+    expect(n).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
   it("sends mute to the server", async () => {
     const room = newRoom();
     await room.connect("ws://h", "t");

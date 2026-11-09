@@ -102,6 +102,18 @@ func (g *RoomGrant) ToPermission() *tesserav1.ParticipantPermission {
 	return p
 }
 
+// WithPermission returns a copy of g carrying perm (the inverse of ToPermission), so a
+// token re-signed after an admin changed the participant's permission keeps the change.
+func (g RoomGrant) WithPermission(perm *tesserav1.ParticipantPermission) RoomGrant {
+	g.CanPublish, g.CanSubscribe, g.CanPublishData = Bool(perm.GetCanPublish()), Bool(perm.GetCanSubscribe()), Bool(perm.GetCanPublishData())
+	g.Hidden, g.Recorder, g.Relay, g.CanUpdateOwnMetadata = perm.GetHidden(), perm.GetRecorder(), perm.GetRelay(), perm.GetCanUpdateMetadata()
+	g.CanPublishSources = nil
+	for _, s := range perm.GetCanPublishSources() {
+		g.CanPublishSources = append(g.CanPublishSources, strings.ToLower(strings.TrimPrefix(s.String(), "TRACK_SOURCE_")))
+	}
+	return g
+}
+
 // Claims are the JWT claims of an access token.
 type Claims struct {
 	Issuer     string            `json:"iss"`

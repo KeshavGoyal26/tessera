@@ -78,6 +78,10 @@ const defaultDeps: RoomDeps = {
  * Delay before reconnect attempt `attempt` (0-based): 300 ms doubling up to 5 s, scaled by
  * 0.5-1.5 from `random` so clients of a restarted server do not all retry at once.
  */
+function iceConfig(servers: JoinResponse["iceServers"]): RTCIceServer[] {
+  return servers.map((s) => ({ urls: s.urls, ...(s.username ? { username: s.username, credential: s.credential } : {}) }));
+}
+
 export function reconnectDelay(attempt: number, random = 0.5): number {
   return Math.round(Math.min(300 * 2 ** attempt, 5000) * (0.5 + random));
 }
@@ -428,10 +432,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
 
   #createTransports(iceServers: JoinResponse["iceServers"], cfg: ClientConfiguration | undefined): void {
     const config: RTCConfiguration = {
-      iceServers: iceServers.map((s) => ({
-        urls: s.urls,
-        ...(s.username ? { username: s.username, credential: s.credential } : {}),
-      })),
+      iceServers: iceConfig(iceServers),
       iceTransportPolicy: cfg?.forceRelay ? "relay" : "all",
       bundlePolicy: "max-bundle",
     };
@@ -802,6 +803,8 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     this.emit(RoomEvent.Reconnecting);
     const max = this.options.maxReconnectAttempts ?? 10;
     let full = forceFull;
+    // The server keeps the session for resume_window seconds: resume until then, rejoin after.
+    const resumeUntil = Date.now() + (this.#join?.resumeWindow || 15) * 1000;
     try {
       for (let attempt = 0; attempt < max; attempt++) {
         if (this.#intentional) return;
@@ -816,7 +819,7 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
             if (err.code === "not_allowed" || err.code === "unsupported_protocol" || err.code === "not_found") break;
             if (err.code === "resume_failed") full = true;
           }
-          if (attempt === 1) full = true; // resume keeps failing: rejoin
+          if (Date.now() > resumeUntil) full = true;
           await this.#deps.sleep(reconnectDelay(attempt, this.#deps.random?.() ?? 0.5));
         }
       }
@@ -833,7 +836,13 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
     this.#signal = signal;
     signal.onMessage = (m) => this.#onSignal(m);
     signal.onClose = (info) => this.#onSignalClose(info);
-    await signal.resume(this.#url, this.#token, { autoSubscribe: this.options.autoSubscribe ?? true, sid: this.localParticipant.sid });
+    const res = await signal.resume(this.#url, this.#token, { autoSubscribe: this.options.autoSubscribe ?? true, sid: this.localParticipant.sid });
+    // Fresh TURN credentials: the ones from the join may have expired, and an ICE restart
+    // below (or later) would fail with them.
+    if (res.iceServers.length) {
+      const servers = iceConfig(res.iceServers);
+      for (const t of [this.#pub, this.#sub]) t?.pc.setConfiguration({ ...t.pc.getConfiguration(), iceServers: servers });
+    }
     signal.startPing(this.#join?.pingInterval ?? 5, this.#join?.pingTimeout ?? 15);
     // Restart ICE only when a connection is dead: a restart briefly interrupts media, and a
     // plain signaling drop leaves healthy connections alone.
@@ -885,16 +894,23 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
   #watchNetwork(): void {
     this.#unwatchNetwork();
     const g = globalThis as unknown as {
-      addEventListener?: (t: string, f: () => void) => void;
-      removeEventListener?: (t: string, f: () => void) => void;
+      addEventListener?: (t: string, f: (e?: unknown) => void) => void;
+      removeEventListener?: (t: string, f: (e?: unknown) => void) => void;
       navigator?: { connection?: { addEventListener?: (t: string, f: () => void) => void; removeEventListener?: (t: string, f: () => void) => void } };
     };
     const onChange = () => void this.restartIce();
+    // Leaving the page (reload, close, navigation): say so, or the server keeps the session
+    // for its resume window and others see a frozen participant for 15 s.
+    const onHide = (e?: unknown) => {
+      if (!(e as { persisted?: boolean } | undefined)?.persisted) void this.disconnect();
+    };
     const conn = g.navigator?.connection;
     g.addEventListener?.("online", onChange);
+    g.addEventListener?.("pagehide", onHide);
     conn?.addEventListener?.("change", onChange);
     this.#netCleanup = () => {
       g.removeEventListener?.("online", onChange);
+      g.removeEventListener?.("pagehide", onHide);
       conn?.removeEventListener?.("change", onChange);
     };
   }

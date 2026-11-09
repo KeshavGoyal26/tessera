@@ -2,6 +2,7 @@ package room
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -406,7 +407,16 @@ func (p *Participant) refreshToken() {
 	if !ok {
 		return
 	}
+	// The participant as it is now: an admin may have changed its permission, name,
+	// metadata or attributes, and a rejoin with this token must not undo that.
 	c := p.claims
+	p.mu.Lock()
+	if c.Grants != nil {
+		g := c.Grants.WithPermission(p.perm)
+		c.Grants = &g
+	}
+	c.Name, c.Metadata, c.Attributes = p.name, p.metadata, maps.Clone(p.attributes)
+	p.mu.Unlock()
 	now := time.Now()
 	c.NotBefore, c.Expiry = now.Unix(), now.Add(p.tokenTTL()).Unix()
 	tok, err := auth.Sign(&c, secret)
@@ -608,14 +618,21 @@ func (p *Participant) handle(req *tesserav1.SignalRequest) bool {
 			p.respond(id, tesserav1.RequestResponse_REASON_LIMIT_EXCEEDED, "metadata too large")
 			return false
 		}
+		// Only what the client sends changes (empty fields are left alone); attributes merge,
+		// and the server's own attributes cannot be set by clients.
+		upd := m.UpdateMetadata
+		if _, ok := upd.GetAttributes()[PlaylistAttribute]; ok {
+			p.respond(id, tesserav1.RequestResponse_REASON_NOT_ALLOWED, PlaylistAttribute+" is set by the server")
+			return false
+		}
 		p.mu.Lock()
-		if m.UpdateMetadata.GetName() != "" {
-			p.name = m.UpdateMetadata.GetName()
+		if upd.GetName() != "" {
+			p.name = upd.GetName()
 		}
-		p.metadata = m.UpdateMetadata.GetMetadata()
-		if len(m.UpdateMetadata.GetAttributes()) > 0 {
-			p.attributes = m.UpdateMetadata.GetAttributes()
+		if upd.GetMetadata() != "" {
+			p.metadata = upd.GetMetadata()
 		}
+		p.attributes = mergeAttributes(p.attributes, upd.GetAttributes())
 		p.mu.Unlock()
 		p.room.broadcastParticipant(p)
 	case *tesserav1.SignalRequest_SyncState:
@@ -1053,6 +1070,29 @@ func (p *Participant) updateTrackSettings(s *tesserav1.UpdateTrackSettings) {
 	}
 }
 
+// PlaylistAttribute carries the master playlist URL of the participant's live recording
+// (set by the recorder, removed when it ends; clients cannot set it).
+const PlaylistAttribute = "hls_url"
+
+// mergeAttributes returns cur with upd merged in: an empty value deletes the key.
+func mergeAttributes(cur, upd map[string]string) map[string]string {
+	if len(upd) == 0 {
+		return cur
+	}
+	out := maps.Clone(cur)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for k, v := range upd {
+		if v == "" {
+			delete(out, k)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func (p *Participant) update(req *tesserav1.UpdateParticipantRequest) {
 	p.mu.Lock()
 	if req.Metadata != nil {
@@ -1061,9 +1101,7 @@ func (p *Participant) update(req *tesserav1.UpdateParticipantRequest) {
 	if req.Name != nil {
 		p.name = req.GetName()
 	}
-	if len(req.GetAttributes()) > 0 {
-		p.attributes = req.GetAttributes()
-	}
+	p.attributes = mergeAttributes(p.attributes, req.GetAttributes())
 	var unpublish, unsubscribe bool
 	if req.GetPermission() != nil {
 		unpublish = p.perm.GetCanPublish() && !req.GetPermission().GetCanPublish()

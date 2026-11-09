@@ -68,12 +68,32 @@ export class LocalParticipant extends Participant {
 
   /** Captures and publishes, or mutes, the microphone. */
   setMicrophoneEnabled(enabled: boolean): Promise<LocalTrackPublication | undefined> {
-    return this.#setSourceEnabled(TrackSource.Microphone, enabled);
+    return this.#serial(TrackSource.Microphone, () => this.#setSourceEnabled(TrackSource.Microphone, enabled));
   }
 
   /** Captures and publishes, or mutes, the camera. */
   setCameraEnabled(enabled: boolean): Promise<LocalTrackPublication | undefined> {
-    return this.#setSourceEnabled(TrackSource.Camera, enabled);
+    return this.#serial(TrackSource.Camera, () => this.#setSourceEnabled(TrackSource.Camera, enabled));
+  }
+
+  #queues = new Map<TrackSource, Promise<unknown>>();
+
+  /** Runs fn after the previous operation on the same source: a double click or parallel
+   *  calls must see the first one's publication, not publish a second track. */
+  #serial<T>(source: TrackSource, fn: () => Promise<T>): Promise<T> {
+    const next = (this.#queues.get(source) ?? Promise.resolve()).catch(() => undefined).then(fn);
+    this.#queues.set(source, next);
+    return next;
+  }
+
+  #videoConstraints(deviceId?: string): MediaTrackConstraints {
+    const preset = this.#need().videoPreset;
+    return {
+      width: { ideal: preset.width },
+      height: { ideal: preset.height },
+      frameRate: { ideal: preset.maxFramerate },
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    };
   }
 
   async #setSourceEnabled(source: TrackSource, enabled: boolean): Promise<LocalTrackPublication | undefined> {
@@ -88,14 +108,7 @@ export class LocalParticipant extends Participant {
     const isCam = source === TrackSource.Camera;
     const preset = engine.videoPreset;
     const constraints: MediaStreamConstraints = isCam
-      ? {
-          video: {
-            width: { ideal: preset.width },
-            height: { ideal: preset.height },
-            frameRate: { ideal: preset.maxFramerate },
-            ...(this.activeDevices.videoinput ? { deviceId: { exact: this.activeDevices.videoinput } } : {}),
-          },
-        }
+      ? { video: this.#videoConstraints(this.activeDevices.videoinput) }
       : {
           audio: {
             echoCancellation: true,
@@ -111,7 +124,11 @@ export class LocalParticipant extends Participant {
   }
 
   /** Starts or stops screen sharing (video, plus audio when the browser offers it). */
-  async setScreenShareEnabled(enabled: boolean): Promise<LocalTrackPublication | undefined> {
+  setScreenShareEnabled(enabled: boolean): Promise<LocalTrackPublication | undefined> {
+    return this.#serial(TrackSource.ScreenShare, () => this.#setScreenShare(enabled));
+  }
+
+  async #setScreenShare(enabled: boolean): Promise<LocalTrackPublication | undefined> {
     const engine = this.#need();
     const existing = this.getTrackPublication(TrackSource.ScreenShare) as LocalTrackPublication | undefined;
     if (!enabled) {
@@ -125,8 +142,8 @@ export class LocalParticipant extends Participant {
     const v = stream.getVideoTracks()[0];
     if (!v) throw new TesseraError("screen capture returned no video");
     const track = new LocalTrack(v, TrackSource.ScreenShare);
-    // The browser's "stop sharing" button ends the track.
-    v.addEventListener("ended", () => void this.unpublishTrack(track, false).catch(() => undefined));
+    // The browser's "stop sharing" button ends the track: stop the whole share (video and audio).
+    v.addEventListener("ended", () => void this.setScreenShareEnabled(false).catch(() => undefined));
     const pub = await engine.publishTrack(track, { name: "screen" });
     const a = stream.getAudioTracks()[0];
     if (a) {
@@ -141,8 +158,8 @@ export class LocalParticipant extends Participant {
    * renegotiation; for `audiooutput` the sink of all attached elements is changed.
    */
   async switchActiveDevice(kind: MediaDeviceKind, deviceId: string): Promise<void> {
-    this.activeDevices[kind] = deviceId;
     if (kind === "audiooutput") {
+      this.activeDevices[kind] = deviceId;
       for (const el of document.querySelectorAll<HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }>("audio, video")) {
         await el.setSinkId?.(deviceId);
       }
@@ -150,15 +167,21 @@ export class LocalParticipant extends Participant {
     }
     const engine = this.#need();
     const source = kind === "audioinput" ? TrackSource.Microphone : TrackSource.Camera;
-    const pub = this.getTrackPublication(source) as LocalTrackPublication | undefined;
-    if (!pub) return;
-    const stream = await navigator.mediaDevices.getUserMedia(
-      kind === "audioinput" ? { audio: { deviceId: { exact: deviceId } } } : { video: { deviceId: { exact: deviceId } } },
-    );
-    const next = stream.getTracks()[0];
-    if (!next) throw new TesseraError("no media track captured");
-    next.enabled = !pub.track.isMuted;
-    await engine.replaceTrack(pub.track, next);
+    return this.#serial(source, async () => {
+      const pub = this.getTrackPublication(source) as LocalTrackPublication | undefined;
+      if (!pub) {
+        this.activeDevices[kind] = deviceId; // used by the next capture
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia(
+        kind === "audioinput" ? { audio: { deviceId: { exact: deviceId } } } : { video: this.#videoConstraints(deviceId) },
+      );
+      const next = stream.getTracks()[0];
+      if (!next) throw new TesseraError("no media track captured");
+      next.enabled = !pub.track.isMuted;
+      await engine.replaceTrack(pub.track, next);
+      this.activeDevices[kind] = deviceId; // only once the device actually works
+    });
   }
 
   /** Sends application data to other participants over a data channel. */

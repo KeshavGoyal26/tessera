@@ -335,6 +335,7 @@ func (m *manager) UpdateParticipant(_ context.Context, req *tesserav1.UpdatePart
 		return nil, err
 	}
 	p.update(req)
+	p.refreshToken() // a rejoin with the client's stored token must keep the change
 	r.broadcastParticipant(p)
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Update{Update: &tesserav1.ParticipantUpdate{Participants: []*tesserav1.ParticipantInfo{p.ToProto()}}}})
 	return p.ToProto(), nil

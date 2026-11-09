@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
-	"maps"
 	"sync"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
+	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
 
@@ -242,7 +243,7 @@ func (c *Coordinator) RecordingRecovered(info *tesserav1.RecordingInfo) {
 		c.evictFinishedLocked()
 	}
 	c.mu.Unlock()
-	c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, info)
+	c.ended(info)
 }
 
 // OnStopWanted registers f, called with the id of a claimed recording that should
@@ -279,7 +280,7 @@ func (c *Coordinator) StopRecording(_ context.Context, id string) (*tesserav1.Re
 		onStop(id)
 	}
 	if ended != nil {
-		c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, ended)
+		c.ended(ended)
 	}
 	return out, nil
 }
@@ -382,29 +383,41 @@ func (c *Coordinator) token(room, recordingID string) (string, error) {
 
 // PlaylistAttribute is the participant attribute that carries the master playlist
 // URL of the participant's live recording, so everyone in the room can play it.
-const PlaylistAttribute = "hls_url"
+const PlaylistAttribute = room.PlaylistAttribute
 
-// announcePlaylist sets PlaylistAttribute on the recorded participant.
+// announcePlaylist sets PlaylistAttribute on the recorded participant (attributes merge).
 func (c *Coordinator) announcePlaylist(info *tesserav1.RecordingInfo) {
+	c.setPlaylistAttr(info, info.GetMasterPlaylistUrl())
+}
+
+// ended sends RECORDING_ENDED and removes the participant's PlaylistAttribute if it
+// still points at this recording (a newer one may have replaced it).
+func (c *Coordinator) ended(info *tesserav1.RecordingInfo) {
+	c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, info)
+	if u := info.GetMasterPlaylistUrl(); u != "" {
+		go c.setPlaylistAttr(info, "", u)
+	}
+}
+
+// setPlaylistAttr sets the attribute to url ("" removes it); with onlyIf, only while the
+// participant's current value is onlyIf.
+func (c *Coordinator) setPlaylistAttr(info *tesserav1.RecordingInfo, url string, onlyIf ...string) {
 	target := info.GetRequest().GetParticipant()
 	if target == nil || c.p.Rooms == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	p, err := c.p.Rooms.GetParticipant(ctx, info.GetRoom(), target.GetIdentity())
-	if err != nil {
-		return // left already
+	if len(onlyIf) > 0 {
+		p, err := c.p.Rooms.GetParticipant(ctx, info.GetRoom(), target.GetIdentity())
+		if err != nil || p.GetAttributes()[PlaylistAttribute] != onlyIf[0] {
+			return // left, or another recording's playlist now
+		}
 	}
-	attrs := maps.Clone(p.GetAttributes())
-	if attrs == nil {
-		attrs = map[string]string{}
-	}
-	attrs[PlaylistAttribute] = info.GetMasterPlaylistUrl()
 	if _, err := c.p.Rooms.UpdateParticipant(ctx, &tesserav1.UpdateParticipantRequest{
-		Room: info.GetRoom(), Identity: target.GetIdentity(), Attributes: attrs,
-	}); err != nil {
-		c.p.Logger.Warn("could not announce the recording playlist", "recording", info.GetRecordingId(), "err", err)
+		Room: info.GetRoom(), Identity: target.GetIdentity(), Attributes: map[string]string{PlaylistAttribute: url},
+	}); err != nil && !errors.Is(err, errs.ErrNotFound) {
+		c.p.Logger.Warn("could not update the recording playlist attribute", "recording", info.GetRecordingId(), "err", err)
 	}
 }
 
@@ -445,7 +458,7 @@ func (c *Coordinator) UpdateJob(_ context.Context, req *tesserav1.UpdateJobReque
 	case terminal(st):
 		if ended := c.finishLocked(j, st, req.GetError()); ended != nil {
 			events = append(events, func() {
-				c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, ended)
+				c.ended(ended)
 			})
 		}
 	case st == tesserav1.RecordingStatus_RECORDING_STATUS_ACTIVE:
@@ -546,7 +559,7 @@ func (c *Coordinator) Reap() {
 	c.evictFinishedLocked()
 	c.mu.Unlock()
 	for _, e := range ended {
-		c.notify(tesserav1.WebhookEventType_WEBHOOK_EVENT_TYPE_RECORDING_ENDED, e)
+		c.ended(e)
 	}
 }
 

@@ -84,7 +84,12 @@ func MasterPlaylist(renditions []Rendition) ([]byte, error) {
 			video = append(video, r)
 		}
 	}
-	sort.SliceStable(video, func(i, j int) bool { return video[i].Bandwidth > video[j].Bandwidth })
+	// One video: players take several STREAM-INF entries for quality levels of the same
+	// content and would switch between camera and screen share. The camera wins.
+	sort.SliceStable(video, func(i, j int) bool { return !video[i].Screen && video[j].Screen })
+	if len(video) > 1 {
+		video = video[:1]
+	}
 	var b bytes.Buffer
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	group := "audio"
@@ -102,11 +107,12 @@ func MasterPlaylist(renditions []Rendition) ([]byte, error) {
 		if name == "" {
 			name = fmt.Sprintf("audio%d", i+1)
 		}
+		name = strings.NewReplacer(`"`, "'", "\n", " ", "\r", " ").Replace(name) // a quoted-string has no escapes
 		def := "NO"
 		if i == 0 {
 			def = "YES"
 		}
-		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=%q,NAME=%q,DEFAULT=%s,AUTOSELECT=YES,URI=%q\n", group, name, def, a.URI)
+		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=%q,NAME=\"%s\",DEFAULT=%s,AUTOSELECT=YES,URI=%q\n", group, name, def, a.URI)
 	}
 	for _, v := range video {
 		codecs := v.Codecs

@@ -45,6 +45,7 @@ type Muxer struct {
 	curDTSOut int64
 	curPDT    time.Time
 	segEnd    int64 // output DTS where the last written segment ends
+	lead      int64 // output ticks from the origin to the first sample, added to that sample
 	nextSpec  *TrackSpec
 	frag      uint32
 	segN      int
@@ -133,6 +134,14 @@ func (m *Muxer) commitPending() error {
 	m.prevEnd = p.DTS + int64(p.Duration)
 	if len(m.cur) == 0 {
 		m.curDTSOut = p.DTS - m.baseIn + m.baseOut
+		if m.lead > 0 {
+			// A track that starts after the recording's origin (camera turned on late) holds
+			// its first sample back to the origin: players need every rendition from 0, or
+			// they skip what the other tracks recorded meanwhile.
+			m.curDTSOut -= m.lead
+			p.Duration += uint32(m.lead)
+			m.lead = 0
+		}
 		m.curPDT = m.wall(m.curDTSOut)
 	}
 	m.cur = append(m.cur, p)
@@ -166,6 +175,7 @@ func (m *Muxer) WriteSample(ctx context.Context, s Sample) error {
 		m.baseIn = s.DTS
 		if !m.cfg.Origin.IsZero() && !m.cfg.StartTime.IsZero() && m.cfg.StartTime.After(m.cfg.Origin) {
 			m.baseOut = m.ticks(m.cfg.StartTime.Sub(m.cfg.Origin))
+			m.lead = m.baseOut
 		}
 		m.firstDTS = s.DTS
 		m.pending = &s
