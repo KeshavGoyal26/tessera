@@ -82,9 +82,18 @@
   object-fit: contain;
   background: #000;
 }
+/* Tile buttons scale with the tile (container query units), within readable limits. */
+.stage .tile {
+  container-type: inline-size;
+}
+.tile-actions .icon-btn {
+  height: clamp(28px, 6cqw, 48px);
+  min-width: clamp(28px, 6cqw, 48px);
+  padding: 0;
+}
 .tile-actions .icon-btn .ico {
-  height: 20px;
-  width: 20px;
+  height: 60%;
+  width: 60%;
 }
 .icon-btn.is-live .ico {
   fill: var(--bad);
