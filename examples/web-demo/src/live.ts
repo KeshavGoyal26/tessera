@@ -208,8 +208,8 @@ let viewerChose = false;
 /** Presenters shown from their HLS recording instead of WebRTC, by identity. */
 const ico = (d: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 const ICON = {
-  sound: ico("M4 9h4l5-4v14l-5-4H4V9Zm12.5 3a4 4 0 0 0-2-3.5v7a4 4 0 0 0 2-3.5Z"),
-  muted: ico("M4 9h4l5-4v14l-5-4H4V9Zm11.3.3 1.4-1.4L19 10.2l2.3-2.3 1.4 1.4-2.3 2.3 2.3 2.3-1.4 1.4-2.3-2.3-2.3 2.3-1.4-1.4 2.3-2.3-2.3-2.3Z"),
+  sound: ico("M3 9h4l5-4v14l-5-4H3V9Zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4ZM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6Z"),
+  muted: ico("M3 9h4l5-4v14l-5-4H3V9Zm13.6 3-2.3-2.3 1.4-1.4 2.3 2.3 2.3-2.3 1.4 1.4-2.3 2.3 2.3 2.3-1.4 1.4-2.3-2.3-2.3 2.3-1.4-1.4 2.3-2.3Z"),
   rewind: ico("M11 6v12l-8-6 8-6Zm10 0v12l-8-6 8-6Z"),
   live: ico("M12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z"),
 };

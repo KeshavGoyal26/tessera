@@ -117,6 +117,7 @@
   font-size: 0.85rem;
   height: 30px;
   min-width: 30px;
+  padding: 0;
 }
 .icon-btn:hover {
   background: var(--panel-2);
