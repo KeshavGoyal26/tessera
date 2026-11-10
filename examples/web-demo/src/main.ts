@@ -1,5 +1,6 @@
 import { ConnectionQuality, ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
 import type { Participant, RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
+import { toggle } from "./toggle";
 import { leftMessage } from "./reasons";
 
 function el<T extends HTMLElement>(id: string): T {
@@ -282,7 +283,7 @@ form.addEventListener("submit", (event) => {
 inviteButton.addEventListener("click", async () => {
   const link = new URL(location.href);
   const q = new URLSearchParams({ room: currentRoomName });
-  const server = new URLSearchParams(location.search).get("url");
+  const server = field("url").value.trim();
   if (server) q.set("url", server); // the invitee must reach the same server
   link.search = q.toString();
   try {
@@ -293,44 +294,23 @@ inviteButton.addEventListener("click", async () => {
   }
 });
 
-micButton.addEventListener("click", async () => {
-  try {
-    const on = micButton.getAttribute("aria-pressed") !== "true";
-    await room?.localParticipant.setMicrophoneEnabled(on);
-    micButton.setAttribute("aria-pressed", String(on));
-    refresh();
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err));
-  }
-});
-
-camButton.addEventListener("click", async () => {
-  try {
-    if (!room) return;
-    const on = camButton.getAttribute("aria-pressed") !== "true";
-    const pub = await room.localParticipant.setCameraEnabled(on);
-    camButton.setAttribute("aria-pressed", String(on));
-    if (pub && on && pub.track.attachedElements.length === 0) {
-      tileFor(room.localParticipant).prepend(pub.track.attach());
-    }
-    refresh();
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err));
-  }
-});
-
-screenButton.addEventListener("click", async () => {
-  try {
-    if (!room) return;
-    const on = screenButton.getAttribute("aria-pressed") !== "true";
-    const pub = await room.localParticipant.setScreenShareEnabled(on);
-    screenButton.setAttribute("aria-pressed", String(on));
-    if (on && pub) tileFor(room.localParticipant, true).prepend(pub.track.attach());
-    if (!on) document.getElementById(`tile-${room.localParticipant.identity}-screen`)?.remove();
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err));
-  }
-});
+const toastErr = (err: unknown) => toast(err instanceof Error ? err.message : String(err));
+toggle(micButton, async (on) => {
+  await room?.localParticipant.setMicrophoneEnabled(on);
+  refresh();
+}, toastErr);
+toggle(camButton, async (on) => {
+  if (!room) return;
+  const pub = await room.localParticipant.setCameraEnabled(on);
+  if (pub && on && pub.track.attachedElements.length === 0) tileFor(room.localParticipant).prepend(pub.track.attach());
+  refresh();
+}, toastErr);
+toggle(screenButton, async (on) => {
+  if (!room) return;
+  const pub = await room.localParticipant.setScreenShareEnabled(on);
+  if (on && pub) tileFor(room.localParticipant, true).prepend(pub.track.attach());
+  if (!on) document.getElementById(`tile-${room.localParticipant.identity}-screen`)?.remove();
+}, toastErr);
 
 function stopStats(): void {
   window.clearInterval(statsTimer);

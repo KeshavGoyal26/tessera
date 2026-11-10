@@ -850,6 +850,10 @@ export class Room extends EventEmitter<RoomEventMap> implements LocalEngine, Rem
       const servers = iceConfig(res.iceServers);
       for (const t of [this.#pub, this.#sub]) t?.pc.setConfiguration({ ...t.pc.getConfiguration(), iceServers: servers });
     }
+    // Updates sent while we were away are lost: whoever is no longer in the room has left.
+    const present = new Set(res.otherParticipants.map((p) => p.identity));
+    for (const id of [...this.remoteParticipants.keys()]) if (!present.has(id)) this.#removeRemote(id);
+    for (const info of res.otherParticipants) this.#onParticipantInfo(info);
     signal.startPing(this.#join?.pingInterval ?? 5, this.#join?.pingTimeout ?? 15);
     // Restart ICE only when a connection is dead: a restart briefly interrupts media, and a
     // plain signaling drop leaves healthy connections alone.

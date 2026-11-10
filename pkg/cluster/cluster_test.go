@@ -110,10 +110,17 @@ func sessionsOf(ns []NodeInfo, id string) int {
 func TestRoomNodes(t *testing.T) {
 	c, mr := newTestClient(t)
 	ctx := context.Background()
+	_ = c.Heartbeat(ctx, media("m1", 0))
+	_ = c.Heartbeat(ctx, media("m2", 0))
 	_ = c.KeepRooms(ctx, "m2", map[string][]string{"g1": {"a"}})
 	_ = c.KeepRooms(ctx, "m1", map[string][]string{"g1": {"b"}, "g2": {}})
 	if ids, err := c.RoomNodes(ctx, "g1"); err != nil || len(ids) != 2 || ids[0] != "m1" || ids[1] != "m2" {
 		t.Fatalf("g1 nodes %v err %v", ids, err)
+	}
+	// A node whose heartbeat expired is dropped at once, not after roomTTL.
+	mr.Del(nodeKey("m2"))
+	if ids, _ := c.RoomNodes(ctx, "g1"); len(ids) != 1 || ids[0] != "m1" {
+		t.Fatalf("dead node still listed: %v", ids)
 	}
 	// RoomNodes filters by refresh time against the wall clock; miniredis only
 	// expires keys, so a stale member is checked through the presenter key instead.

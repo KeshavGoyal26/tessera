@@ -202,15 +202,31 @@ func (c *Client) PlacePresenter(ctx context.Context, room, identity string) (Nod
 	return NodeInfo{}, errs.New(errs.CodeUnavailable, "cluster: could not place a presenter of %q", room)
 }
 
-// RoomNodes returns the media nodes hosting room (refreshed within roomTTL), by id.
+// RoomNodes returns the live media nodes hosting room (refreshed within roomTTL), by id.
+// A node whose heartbeat expired is left out at once, not only after roomTTL.
 func (c *Client) RoomNodes(ctx context.Context, room string) ([]string, error) {
 	min := strconv.FormatInt(time.Now().Add(-roomTTL).UnixMilli(), 10)
 	ids, err := c.rdb.ZRangeByScore(ctx, groupKey(room), &redis.ZRangeBy{Min: min, Max: "+inf"}).Result()
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(ids)
-	return ids, nil
+	alive := make([]*redis.IntCmd, len(ids))
+	if _, err := c.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range ids {
+			alive[i] = p.Exists(ctx, nodeKey(id))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	live := ids[:0]
+	for i, id := range ids {
+		if alive[i].Val() > 0 {
+			live = append(live, id)
+		}
+	}
+	sort.Strings(live)
+	return live, nil
 }
 
 // KeepRooms records that node hosts these rooms and renews its presenters' placement

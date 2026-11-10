@@ -227,12 +227,7 @@ func (p *Participant) start() error {
 		p.mu.Unlock()
 		alloc.Start()
 	}
-	var others []*tesserav1.ParticipantInfo
-	for _, o := range p.room.Participants() {
-		if o != p && !o.permission().GetHidden() {
-			others = append(others, o.ToProto())
-		}
-	}
+	others := p.others()
 	var codecs []*tesserav1.Codec
 	for _, c := range m.cfg.RTC.EnabledCodecs {
 		if !strings.EqualFold(c, "audio/red") {
@@ -456,6 +451,17 @@ func (p *Participant) onConnLost(gen uint64) {
 }
 
 // resume attaches a new signaling connection (PROTOCOL.md 2.6).
+// others are the visible participants of the room besides p, as the client sees them.
+func (p *Participant) others() []*tesserav1.ParticipantInfo {
+	var out []*tesserav1.ParticipantInfo
+	for _, o := range p.room.Participants() {
+		if o != p && !o.permission().GetHidden() {
+			out = append(out, o.ToProto())
+		}
+	}
+	return out
+}
+
 func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	p.mu.Lock()
 	if p.closed {
@@ -480,7 +486,7 @@ func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	}
 	p.lastSeen.Store(time.Now().UnixNano())
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Reconnect{Reconnect: &tesserav1.ReconnectResponse{
-		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(),
+		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(), OtherParticipants: p.others(),
 		ClientConfiguration: p.room.m.clientConfiguration()}}})
 	return p.run(ctx)
 }

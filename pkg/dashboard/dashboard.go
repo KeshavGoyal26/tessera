@@ -611,7 +611,7 @@ func (h *Handler) action(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 	if s := h.session(r); s != nil {
-		h.log.Info("dashboard action", "action", name, "room", b.Room, "identity", b.Identity, "api_key", s.apiKey)
+		h.log.Info("dashboard action", "action", name, "room", b.Room, "identity", b.Identity, "track", b.TrackSID, "recording", b.Recording, "api_key", s.apiKey)
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

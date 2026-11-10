@@ -252,6 +252,10 @@ message ReconnectResponse {
   ClientConfiguration client_configuration = 2;
   // Current participant state as known by the server.
   ParticipantInfo participant = 3;
+  // The other participants now in the room, as in JoinResponse. Updates sent while the
+  // client was disconnected are lost, so the client reconciles with this list (someone
+  // missing from it has left).
+  repeated ParticipantInfo other_participants = 4;
 }
 
 // SyncState is sent by the client after a resume so the server can reconcile.

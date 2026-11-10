@@ -2246,9 +2246,13 @@ type ReconnectResponse struct {
 	IceServers          []*ICEServer           `protobuf:"bytes,1,rep,name=ice_servers,json=iceServers,proto3" json:"ice_servers,omitempty"`
 	ClientConfiguration *ClientConfiguration   `protobuf:"bytes,2,opt,name=client_configuration,json=clientConfiguration,proto3" json:"client_configuration,omitempty"`
 	// Current participant state as known by the server.
-	Participant   *ParticipantInfo `protobuf:"bytes,3,opt,name=participant,proto3" json:"participant,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Participant *ParticipantInfo `protobuf:"bytes,3,opt,name=participant,proto3" json:"participant,omitempty"`
+	// The other participants now in the room, as in JoinResponse. Updates sent while the
+	// client was disconnected are lost, so the client reconciles with this list (someone
+	// missing from it has left).
+	OtherParticipants []*ParticipantInfo `protobuf:"bytes,4,rep,name=other_participants,json=otherParticipants,proto3" json:"other_participants,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ReconnectResponse) Reset() {
@@ -2298,6 +2302,13 @@ func (x *ReconnectResponse) GetClientConfiguration() *ClientConfiguration {
 func (x *ReconnectResponse) GetParticipant() *ParticipantInfo {
 	if x != nil {
 		return x.Participant
+	}
+	return nil
+}
+
+func (x *ReconnectResponse) GetOtherParticipants() []*ParticipantInfo {
+	if x != nil {
+		return x.OtherParticipants
 	}
 	return nil
 }
@@ -3489,12 +3500,13 @@ const file_tessera_v1_signal_proto_rawDesc = "" +
 	"\x16enabled_publish_codecs\x18\n" +
 	" \x03(\v2\x11.tessera.v1.CodecR\x14enabledPublishCodecs\x12!\n" +
 	"\ffast_publish\x18\v \x01(\bR\vfastPublish\x12#\n" +
-	"\rresume_window\x18\f \x01(\rR\fresumeWindow\"\xde\x01\n" +
+	"\rresume_window\x18\f \x01(\rR\fresumeWindow\"\xaa\x02\n" +
 	"\x11ReconnectResponse\x126\n" +
 	"\vice_servers\x18\x01 \x03(\v2\x15.tessera.v1.ICEServerR\n" +
 	"iceServers\x12R\n" +
 	"\x14client_configuration\x18\x02 \x01(\v2\x1f.tessera.v1.ClientConfigurationR\x13clientConfiguration\x12=\n" +
-	"\vparticipant\x18\x03 \x01(\v2\x1b.tessera.v1.ParticipantInfoR\vparticipant\"\x9f\x03\n" +
+	"\vparticipant\x18\x03 \x01(\v2\x1b.tessera.v1.ParticipantInfoR\vparticipant\x12J\n" +
+	"\x12other_participants\x18\x04 \x03(\v2\x1b.tessera.v1.ParticipantInfoR\x11otherParticipants\"\x9f\x03\n" +
 	"\tSyncState\x126\n" +
 	"\x06answer\x18\x01 \x01(\v2\x1e.tessera.v1.SessionDescriptionR\x06answer\x12B\n" +
 	"\fsubscription\x18\x02 \x01(\v2\x1e.tessera.v1.UpdateSubscriptionR\fsubscription\x12I\n" +
@@ -3734,31 +3746,32 @@ var file_tessera_v1_signal_proto_depIdxs = []int32{
 	56, // 54: tessera.v1.ReconnectResponse.ice_servers:type_name -> tessera.v1.ICEServer
 	24, // 55: tessera.v1.ReconnectResponse.client_configuration:type_name -> tessera.v1.ClientConfiguration
 	52, // 56: tessera.v1.ReconnectResponse.participant:type_name -> tessera.v1.ParticipantInfo
-	9,  // 57: tessera.v1.SyncState.answer:type_name -> tessera.v1.SessionDescription
-	18, // 58: tessera.v1.SyncState.subscription:type_name -> tessera.v1.UpdateSubscription
-	13, // 59: tessera.v1.SyncState.publish_tracks:type_name -> tessera.v1.TrackPublishedResponse
-	28, // 60: tessera.v1.SyncState.data_channels:type_name -> tessera.v1.DataChannelInfo
-	9,  // 61: tessera.v1.SyncState.offer:type_name -> tessera.v1.SessionDescription
-	0,  // 62: tessera.v1.DataChannelInfo.target:type_name -> tessera.v1.SignalTarget
-	57, // 63: tessera.v1.SpeakersChanged.speakers:type_name -> tessera.v1.SpeakerInfo
-	54, // 64: tessera.v1.RoomUpdate.room:type_name -> tessera.v1.Room
-	58, // 65: tessera.v1.ConnectionQualityInfo.quality:type_name -> tessera.v1.ConnectionQuality
-	31, // 66: tessera.v1.ConnectionQualityUpdate.updates:type_name -> tessera.v1.ConnectionQualityInfo
-	1,  // 67: tessera.v1.StreamStateInfo.state:type_name -> tessera.v1.StreamState
-	33, // 68: tessera.v1.StreamStateUpdate.stream_states:type_name -> tessera.v1.StreamStateInfo
-	50, // 69: tessera.v1.SubscribedQuality.quality:type_name -> tessera.v1.VideoQuality
-	35, // 70: tessera.v1.SubscribedCodec.qualities:type_name -> tessera.v1.SubscribedQuality
-	35, // 71: tessera.v1.SubscribedQualityUpdate.subscribed_qualities:type_name -> tessera.v1.SubscribedQuality
-	36, // 72: tessera.v1.SubscribedQualityUpdate.subscribed_codecs:type_name -> tessera.v1.SubscribedCodec
-	2,  // 73: tessera.v1.ErrorResponse.code:type_name -> tessera.v1.ErrorCode
-	5,  // 74: tessera.v1.RequestResponse.reason:type_name -> tessera.v1.RequestResponse.Reason
-	3,  // 75: tessera.v1.SubscriptionResponse.err:type_name -> tessera.v1.SubscriptionError
-	6,  // 76: tessera.v1.DataPacket.kind:type_name -> tessera.v1.DataPacket.Kind
-	77, // [77:77] is the sub-list for method output_type
-	77, // [77:77] is the sub-list for method input_type
-	77, // [77:77] is the sub-list for extension type_name
-	77, // [77:77] is the sub-list for extension extendee
-	0,  // [0:77] is the sub-list for field type_name
+	52, // 57: tessera.v1.ReconnectResponse.other_participants:type_name -> tessera.v1.ParticipantInfo
+	9,  // 58: tessera.v1.SyncState.answer:type_name -> tessera.v1.SessionDescription
+	18, // 59: tessera.v1.SyncState.subscription:type_name -> tessera.v1.UpdateSubscription
+	13, // 60: tessera.v1.SyncState.publish_tracks:type_name -> tessera.v1.TrackPublishedResponse
+	28, // 61: tessera.v1.SyncState.data_channels:type_name -> tessera.v1.DataChannelInfo
+	9,  // 62: tessera.v1.SyncState.offer:type_name -> tessera.v1.SessionDescription
+	0,  // 63: tessera.v1.DataChannelInfo.target:type_name -> tessera.v1.SignalTarget
+	57, // 64: tessera.v1.SpeakersChanged.speakers:type_name -> tessera.v1.SpeakerInfo
+	54, // 65: tessera.v1.RoomUpdate.room:type_name -> tessera.v1.Room
+	58, // 66: tessera.v1.ConnectionQualityInfo.quality:type_name -> tessera.v1.ConnectionQuality
+	31, // 67: tessera.v1.ConnectionQualityUpdate.updates:type_name -> tessera.v1.ConnectionQualityInfo
+	1,  // 68: tessera.v1.StreamStateInfo.state:type_name -> tessera.v1.StreamState
+	33, // 69: tessera.v1.StreamStateUpdate.stream_states:type_name -> tessera.v1.StreamStateInfo
+	50, // 70: tessera.v1.SubscribedQuality.quality:type_name -> tessera.v1.VideoQuality
+	35, // 71: tessera.v1.SubscribedCodec.qualities:type_name -> tessera.v1.SubscribedQuality
+	35, // 72: tessera.v1.SubscribedQualityUpdate.subscribed_qualities:type_name -> tessera.v1.SubscribedQuality
+	36, // 73: tessera.v1.SubscribedQualityUpdate.subscribed_codecs:type_name -> tessera.v1.SubscribedCodec
+	2,  // 74: tessera.v1.ErrorResponse.code:type_name -> tessera.v1.ErrorCode
+	5,  // 75: tessera.v1.RequestResponse.reason:type_name -> tessera.v1.RequestResponse.Reason
+	3,  // 76: tessera.v1.SubscriptionResponse.err:type_name -> tessera.v1.SubscriptionError
+	6,  // 77: tessera.v1.DataPacket.kind:type_name -> tessera.v1.DataPacket.Kind
+	78, // [78:78] is the sub-list for method output_type
+	78, // [78:78] is the sub-list for method input_type
+	78, // [78:78] is the sub-list for extension type_name
+	78, // [78:78] is the sub-list for extension extendee
+	0,  // [0:78] is the sub-list for field type_name
 }
 
 func init() { file_tessera_v1_signal_proto_init() }

@@ -136,7 +136,7 @@ func (v *hmacVerifier) Verify(token string) (*Claims, error) {
 		Alg string `json:"alg"`
 	}
 	if err := json.Unmarshal(hdrRaw, &hdr); err != nil || hdr.Alg != "HS256" {
-		return nil, unauthenticated("unsupported token algorithm")
+		return nil, unauthenticated("invalid token")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {

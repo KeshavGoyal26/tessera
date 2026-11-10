@@ -155,7 +155,7 @@ sequenceDiagram
   participant S as Server
   Note over C,S: WebSocket drops (network change). Server keeps the session for resume_window (15 s).
   C->>S: WebSocket upgrade ?reconnect=1&sid=PA_x&access_token=<refreshed token>
-  S-->>C: reconnect: ReconnectResponse(ice_servers, participant)
+  S-->>C: reconnect: ReconnectResponse(ice_servers, participant, other_participants)
   alt PeerConnections still connected
     C->>S: sync_state(answer, offer, subscription, publish_tracks, data_channels)
   else ICE failed or disconnected

@@ -41,7 +41,7 @@ export interface RecorderStats {
   segment_delay_ms: number; segment_delay_max_ms: number; finished_total: number
   recordings: { recording_id: string; room: string; status: string; started_at: string; duration_ms: number; tracks: RecTrack[] }[]
   finished: { recording_id: string; room: string; status: string; error?: string; ended_at: string; duration_ms: number; master_playlist?: string; master_url?: string
-    outputs: { track_sid: string; participant: string; playlist_url?: string; playlist_location: string; segments: number; duration_ms: number }[] }[]
+    outputs: null | { track_sid: string; participant: string; playlist_url?: string; playlist_location: string; segments: number; duration_ms: number }[] }[]
 }
 export interface RecorderStatus { url: string; ok: boolean; error?: string; stats?: RecorderStats }
 export interface Update { snapshot: Snapshot; recorders: RecorderStatus[]; alerts: Alert[]; point: Point }

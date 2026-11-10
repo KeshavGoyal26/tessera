@@ -115,7 +115,8 @@ export class Recordings implements View {
       .sort((x, y) => rank(x.t) - rank(y.t) || x.a.recording_id.localeCompare(y.a.recording_id) || x.t.track_sid.localeCompare(y.t.track_sid));
     const activeRows = tracks.map(({ a, t }) => `<tr><td>${esc(a.recording_id)}</td><td>${esc(a.room)}</td><td>${esc(t.participant)}/${esc(t.track_sid)} ${esc(t.kind)}</td><td>${esc(t.codec)}${t.width ? ` ${t.width}×${t.height}` : ''}</td>
       <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${t.last_packet_age_ms > 3000 ? badge(`${(t.last_packet_age_ms / 1000).toFixed(0)}s`, 'warn') : `${(t.last_packet_age_ms / 1000).toFixed(1)}s`}</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : badge('ok', 'ok')}</td></tr>`);
-    const fin = recs.flatMap((r) => r.stats?.finished ?? []).filter((f) => matches(q, f.recording_id, f.room, ...f.outputs.map((o) => o.participant))).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
+    const fin = recs.flatMap((r) => r.stats?.finished ?? []).map((f) => ({ ...f, outputs: f.outputs ?? [] })) // null when aborted before any media
+      .filter((f) => matches(q, f.recording_id, f.room, ...f.outputs.map((o) => o.participant))).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
     const finRows = fin.map((f) => {
       const who = [...new Set(f.outputs.map((o) => o.participant).filter(Boolean))].join(', ') || '—';
       const title = `${who} · ${f.room} · ${new Date(f.ended_at).toLocaleString()}`;

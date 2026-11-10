@@ -7,6 +7,7 @@
 // A recorded presenter's live recording is announced in their `hls_url` attribute: a viewer can
 // switch that tile to the HLS player (Rewind) to scrub back, then return to WebRTC (Live).
 import { ConnectionState, Room, RoomEvent, TrackSource } from "@tessera/client";
+import { toggle } from "./toggle";
 import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "@tessera/client";
 import { attachTimeline, liveLevel, setDot, timelineUrl } from "./quality";
 import { leftMessage } from "./reasons";
@@ -142,8 +143,6 @@ async function present(r: Room, name: string): Promise<void> {
   await setMic(true).catch((err) => toast(`Microphone: ${errText(err)}`));
 }
 
-const pressed = (id: string) => el(id).getAttribute("aria-pressed") === "true";
-
 async function setMic(on: boolean): Promise<void> {
   await room?.localParticipant.setMicrophoneEnabled(on);
   el("p-mic").setAttribute("aria-pressed", String(on));
@@ -191,9 +190,10 @@ function watchScreenEnd(r: Room): void {
 
 const onClick = (id: string, fn: () => Promise<unknown>) =>
   el(id).addEventListener("click", () => void fn().catch((err) => toast(errText(err))));
-onClick("p-mic", () => setMic(!pressed("p-mic")));
-onClick("p-cam", () => setCam(!pressed("p-cam")));
-onClick("p-screen", () => setScreen(!pressed("p-screen")));
+const toastErr = (err: unknown) => toast(errText(err));
+toggle(el("p-mic"), setMic, toastErr);
+toggle(el("p-cam"), setCam, toastErr);
+toggle(el("p-screen"), setScreen, toastErr);
 onClick("p-leave", async () => leave());
 
 // ---- viewer ----------------------------------------------------------------
