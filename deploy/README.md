@@ -11,10 +11,14 @@
 | `grafana/` | Prometheus scrape config and a Grafana dashboard, for use with your own Prometheus/Grafana |
 
 ```bash
-cp deploy/.env.example deploy/.env
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build           # single server
-docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up --build   # cluster
+scripts/docker.sh start            # cluster: build if needed, start, wait, print URLs
+scripts/docker.sh start single     # single server
+scripts/docker.sh stop [single]    # also: build, status, logs [service]
 ```
+
+The script creates `deploy/.env` from `.env.example` on first run (with this machine's LAN IP) and
+removes the images a rebuild replaces. Plain compose works too:
+`docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up -d --build`.
 
 | | Single | Cluster |
 |---|---|---|
