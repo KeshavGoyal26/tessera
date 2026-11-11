@@ -2251,8 +2251,11 @@ type ReconnectResponse struct {
 	// client was disconnected are lost, so the client reconciles with this list (someone
 	// missing from it has left).
 	OtherParticipants []*ParticipantInfo `protobuf:"bytes,4,rep,name=other_participants,json=otherParticipants,proto3" json:"other_participants,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// True when other_participants is filled in (servers before it was added leave it false,
+	// and their empty list must not be read as "everyone left").
+	HasOtherParticipants bool `protobuf:"varint,5,opt,name=has_other_participants,json=hasOtherParticipants,proto3" json:"has_other_participants,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ReconnectResponse) Reset() {
@@ -2311,6 +2314,13 @@ func (x *ReconnectResponse) GetOtherParticipants() []*ParticipantInfo {
 		return x.OtherParticipants
 	}
 	return nil
+}
+
+func (x *ReconnectResponse) GetHasOtherParticipants() bool {
+	if x != nil {
+		return x.HasOtherParticipants
+	}
+	return false
 }
 
 // SyncState is sent by the client after a resume so the server can reconcile.
@@ -3500,13 +3510,14 @@ const file_tessera_v1_signal_proto_rawDesc = "" +
 	"\x16enabled_publish_codecs\x18\n" +
 	" \x03(\v2\x11.tessera.v1.CodecR\x14enabledPublishCodecs\x12!\n" +
 	"\ffast_publish\x18\v \x01(\bR\vfastPublish\x12#\n" +
-	"\rresume_window\x18\f \x01(\rR\fresumeWindow\"\xaa\x02\n" +
+	"\rresume_window\x18\f \x01(\rR\fresumeWindow\"\xe0\x02\n" +
 	"\x11ReconnectResponse\x126\n" +
 	"\vice_servers\x18\x01 \x03(\v2\x15.tessera.v1.ICEServerR\n" +
 	"iceServers\x12R\n" +
 	"\x14client_configuration\x18\x02 \x01(\v2\x1f.tessera.v1.ClientConfigurationR\x13clientConfiguration\x12=\n" +
 	"\vparticipant\x18\x03 \x01(\v2\x1b.tessera.v1.ParticipantInfoR\vparticipant\x12J\n" +
-	"\x12other_participants\x18\x04 \x03(\v2\x1b.tessera.v1.ParticipantInfoR\x11otherParticipants\"\x9f\x03\n" +
+	"\x12other_participants\x18\x04 \x03(\v2\x1b.tessera.v1.ParticipantInfoR\x11otherParticipants\x124\n" +
+	"\x16has_other_participants\x18\x05 \x01(\bR\x14hasOtherParticipants\"\x9f\x03\n" +
 	"\tSyncState\x126\n" +
 	"\x06answer\x18\x01 \x01(\v2\x1e.tessera.v1.SessionDescriptionR\x06answer\x12B\n" +
 	"\fsubscription\x18\x02 \x01(\v2\x1e.tessera.v1.UpdateSubscriptionR\fsubscription\x12I\n" +

@@ -30,6 +30,7 @@ class FakeSignal extends SignalClient {
   static all: FakeSignal[] = [];
   static failResume = 0;
   static failConnect = 0;
+  static resumeWith: MessageInitShape<typeof ReconnectResponseSchema> = {};
   sent: SignalRequestBody[] = [];
   closed = false;
   constructor() {
@@ -49,7 +50,7 @@ class FakeSignal extends SignalClient {
   }
   override async resume() {
     if (FakeSignal.failResume-- > 0) throw new ConnectionError("resume_failed", "gone");
-    return create(ReconnectResponseSchema, {});
+    return create(ReconnectResponseSchema, FakeSignal.resumeWith);
   }
   override startPing() {}
   override send(body: SignalRequestBody) {
@@ -124,6 +125,7 @@ const sig = () => FakeSignal.all[FakeSignal.all.length - 1]!;
 
 beforeEach(() => {
   FakeSignal.all = [];
+  FakeSignal.resumeWith = {};
   FakeSignal.failResume = 0;
   FakeSignal.failConnect = 0;
   transports = [];
@@ -402,6 +404,28 @@ describe("reconnect", () => {
     expect(FakeSignal.all).toHaveLength(2);
     expect(sig().cases()).toContain("syncState");
     expect(transports).toHaveLength(2); // transports are kept on resume
+  });
+
+  it("applies leaves and joins missed while away from the resume's participant list", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    const ev: string[] = [];
+    room.on(RoomEvent.ParticipantConnected, (p) => ev.push(`join:${p.identity}`));
+    room.on(RoomEvent.ParticipantDisconnected, (p) => ev.push(`leave:${p.identity}`));
+    FakeSignal.resumeWith = { hasOtherParticipants: true, otherParticipants: [create(ParticipantInfoSchema, { sid: "PA_c", identity: "carol" })] };
+    sig().onClose?.({ code: 1006, reason: "", local: false });
+    await vi.waitFor(() => expect(room.state).toBe(ConnectionState.Connected));
+    expect(ev).toEqual(["leave:bob", "join:carol"]);
+    expect([...room.remoteParticipants.keys()]).toEqual(["carol"]);
+  });
+
+  it("keeps participants when an older server's resume carries no list", async () => {
+    const room = newRoom();
+    await room.connect("ws://h", "t");
+    FakeSignal.resumeWith = {}; // has_other_participants unset
+    sig().onClose?.({ code: 1006, reason: "", local: false });
+    await vi.waitFor(() => expect(room.state).toBe(ConnectionState.Connected));
+    expect([...room.remoteParticipants.keys()]).toEqual(["bob"]);
   });
 
   it("falls back to a full rejoin when resume is impossible", async () => {

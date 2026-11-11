@@ -486,7 +486,7 @@ func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	}
 	p.lastSeen.Store(time.Now().UnixNano())
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Reconnect{Reconnect: &tesserav1.ReconnectResponse{
-		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(), OtherParticipants: p.others(),
+		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(), OtherParticipants: p.others(), HasOtherParticipants: true,
 		ClientConfiguration: p.room.m.clientConfiguration()}}})
 	return p.run(ctx)
 }

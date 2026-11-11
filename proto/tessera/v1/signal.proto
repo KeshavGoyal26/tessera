@@ -256,6 +256,9 @@ message ReconnectResponse {
   // client was disconnected are lost, so the client reconciles with this list (someone
   // missing from it has left).
   repeated ParticipantInfo other_participants = 4;
+  // True when other_participants is filled in (servers before it was added leave it false,
+  // and their empty list must not be read as "everyone left").
+  bool has_other_participants = 5;
 }
 
 // SyncState is sent by the client after a resume so the server can reconcile.
