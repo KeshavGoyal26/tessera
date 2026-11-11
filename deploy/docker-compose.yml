@@ -1,7 +1,7 @@
 # Single server (with built-in recording) and the web demo.
 #   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
 #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
-# Web demo http://localhost:8080/?url=ws://localhost:7880; dashboard http://localhost:7880/admin/
+# Web demo http://localhost:5173/?url=ws://localhost:7880; dashboard http://localhost:7880/admin/
 # (devkey / TESSERA_DEV_SECRET). Recordings play from http://localhost:7880/recordings/.
 name: tessera
 
@@ -18,5 +18,5 @@ services:
 
   web-demo:
     build: { context: .., dockerfile: deploy/docker/Dockerfile, target: web-demo }
-    ports: ["8080:80"]
+    ports: ["5173:80"]
     restart: unless-stopped

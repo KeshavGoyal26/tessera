@@ -18,7 +18,7 @@ docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up --
 
 | | Single | Cluster |
 |---|---|---|
-| Web demo | http://localhost:8080/?url=ws://localhost:7880 | http://localhost:8080/?url=ws://localhost:7930 (or 7940) |
+| Web demo | http://localhost:5173/?url=ws://localhost:7880 | http://localhost:5173/?url=ws://localhost:7930 (or 7940) |
 | Dashboard | http://localhost:7880/admin/ | http://localhost:7930/admin/ |
 | Recordings | served by the server on 7880 | each media node serves its own (6791, 6792) |
 

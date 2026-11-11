@@ -2,7 +2,7 @@
 # 2 public edges (viewers) and the web demo.
 #   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
 #   docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up --build
-# Web demo http://localhost:8080/?url=ws://localhost:7930 (or :7940); dashboard
+# Web demo http://localhost:5173/?url=ws://localhost:7930 (or :7940); dashboard
 # http://localhost:7930/admin/ (devkey / TESSERA_DEV_SECRET). Without TURN presenters reach the
 # media nodes' ports directly, so those are published too (production keeps them private).
 name: tessera-cluster
@@ -57,7 +57,7 @@ services:
       context: ..
       dockerfile: deploy/docker/Dockerfile
       target: web-demo
-    ports: ["8080:80"]
+    ports: ["5173:80"]
     restart: unless-stopped
 
 
