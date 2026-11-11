@@ -217,6 +217,9 @@ type RecordingStorage struct {
 		Secret         string `yaml:"secret"`
 		ForcePathStyle bool   `yaml:"force_path_style"`
 		Prefix         string `yaml:"prefix"`
+		// PublicURL is the base of the playlist URLs handed to players (a CDN, or the
+		// bucket as browsers reach it); default: endpoint + "/" + bucket.
+		PublicURL string `yaml:"public_url"`
 	} `yaml:"s3"`
 }
 

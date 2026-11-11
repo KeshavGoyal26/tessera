@@ -1,0 +1,17 @@
+# Allowlist: Docker builds only see what the images are built from (deploy/docker/Dockerfile).
+# Everything else (.git, .cluster/.demo recordings, node_modules, test output) stays out, so a
+# build sends a few MB instead of gigabytes. Add a path here when the Dockerfile needs it.
+*
+!go.mod
+!go.sum
+!cmd
+!pkg
+!gen
+!sdk/js
+!examples/web-demo
+**/node_modules
+cmd/tessera-loadtest/tessera-loadtest
+sdk/js/dist
+sdk/js/test-results
+sdk/js/playwright-report
+examples/web-demo/dist

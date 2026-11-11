@@ -1,0 +1,33 @@
+# One config for every cluster node (deploy/docker-compose.cluster.yml); each service sets the
+# environment: NODE_ID, ROLE (media|edge), PORT (signalling; media on PORT+1 tcp, PORT+2 udp)
+# RECORDING (true on media nodes, false on edges) and REC_PORT (host port of the
+# metrics listener, which serves a media node's recordings). See ADR-0012.
+development: true
+node_id: ${NODE_ID}
+port: ${PORT}
+keys:
+  devkey: ${TESSERA_DEV_SECRET}
+rtc:
+  udp_port: ${UDP_PORT}
+  tcp_port: ${TCP_PORT}
+  node_ip: ${TESSERA_NODE_IP}
+room:
+  auto_create: true
+  empty_timeout: 5m
+recording:
+  enabled: ${RECORDING}
+  storage:
+    kind: local
+    local_root: /tmp/recordings
+    # Served by this node's metrics listener (REC_PORT on the host), so players reach the
+    # recording on the media node that made it.
+    local_base_url: http://${TESSERA_NODE_IP}:${REC_PORT}/recordings
+metrics:
+  addr: ":6789"
+logging:
+  level: info
+cluster:
+  role: ${ROLE}
+  private_url: http://${NODE_ID}:${PORT}
+  redis:
+    addr: redis:6379

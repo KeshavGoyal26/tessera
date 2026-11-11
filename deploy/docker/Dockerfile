@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Multi-stage build for tessera (media server with built-in recording) and tessera-loadtest.
 #   docker build -f deploy/docker/Dockerfile --target tessera  -t tessera .
 #   docker build -f deploy/docker/Dockerfile --target web-demo -t tessera-web-demo .
@@ -7,11 +6,12 @@ ARG GO_VERSION=1.27.3
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY . .
+RUN go mod download
+COPY cmd cmd
+COPY pkg pkg
+COPY gen gen
 ARG VERSION=dev
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X github.com/KeshavGoyal26/tessera/pkg/version.Version=${VERSION}" \
       -o /out/ ./cmd/tessera ./cmd/tessera-loadtest
 

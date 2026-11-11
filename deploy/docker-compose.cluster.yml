@@ -1,0 +1,63 @@
+# Local cluster (ADR-0012): Redis, 2 private media nodes (presenters, recording, each serving its own recordings),
+# 2 public edges (viewers) and the web demo.
+#   cp deploy/.env.example deploy/.env        # then edit TESSERA_NODE_IP
+#   docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up --build
+# Web demo http://localhost:8080/?url=ws://localhost:7930 (or :7940); dashboard
+# http://localhost:7930/admin/ (devkey / TESSERA_DEV_SECRET). Without TURN presenters reach the
+# media nodes' ports directly, so those are published too (production keeps them private).
+name: tessera-cluster
+
+x-node: &node
+  image: tessera:local # built once by m1
+  pull_policy: never  # a local image, never on a registry
+  command: ["--config", "/etc/tessera/tessera.yaml"]
+  volumes:
+    - ./config/cluster-node.yaml:/etc/tessera/tessera.yaml:ro
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+x-env: &env
+  TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
+  TESSERA_NODE_IP: ${TESSERA_NODE_IP}
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 10
+
+  m1:
+    <<: *node
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera }
+    environment: { <<: *env, NODE_ID: m1, ROLE: media, RECORDING: "true", PORT: 7910, TCP_PORT: 7911, UDP_PORT: 7912, REC_PORT: 6791 }
+    ports: ["7910:7910/tcp", "7911:7911/tcp", "7912:7912/udp", "6791:6789/tcp"]
+  m2:
+    <<: *node
+    depends_on: { m1: { condition: service_started } }
+    environment: { <<: *env, NODE_ID: m2, ROLE: media, RECORDING: "true", PORT: 7920, TCP_PORT: 7921, UDP_PORT: 7922, REC_PORT: 6792 }
+    ports: ["7920:7920/tcp", "7921:7921/tcp", "7922:7922/udp", "6792:6789/tcp"]
+  e1:
+    <<: *node
+    depends_on: { m1: { condition: service_started } }
+    environment: { <<: *env, NODE_ID: e1, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7930, TCP_PORT: 7931, UDP_PORT: 7932 }
+    ports: ["7930:7930/tcp", "7931:7931/tcp", "7932:7932/udp"]
+  e2:
+    <<: *node
+    depends_on: { m1: { condition: service_started } }
+    environment: { <<: *env, NODE_ID: e2, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7940, TCP_PORT: 7941, UDP_PORT: 7942 }
+    ports: ["7940:7940/tcp", "7941:7941/tcp", "7942:7942/udp"]
+
+  web-demo:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: web-demo
+    ports: ["8080:80"]
+    restart: unless-stopped
+
+

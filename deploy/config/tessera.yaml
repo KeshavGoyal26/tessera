@@ -1,4 +1,4 @@
-# Example tessera server configuration (docker-compose). See pkg/config for all options.
+# Example tessera server configuration (deploy/docker-compose.yml). See pkg/config for all options.
 development: true
 port: 7880
 keys:
@@ -23,14 +23,9 @@ recording:
   enabled: true # recorded inside the server; no separate recorder
   # capacity: default 150 units per CPU (one unit per recorded track)
   storage:
-    kind: s3
-    s3:
-      bucket: recordings
-      region: us-east-1
-      endpoint: http://minio:9000
-      access_key: ${MINIO_ROOT_USER}
-      secret: ${MINIO_ROOT_PASSWORD}
-      force_path_style: true
+    kind: local
+    local_root: /tmp/recordings
+    local_base_url: /recordings # served on the HTTP port (7880); use s3 in production
   hls:
     segment_duration: 4s
     audio_codec: opus

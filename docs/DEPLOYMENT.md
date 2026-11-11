@@ -211,5 +211,6 @@ Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single
 
 ## 8. Docker Compose
 
-`deploy/docker-compose.yml` runs the full demo stack (server, recorder, MinIO, web demo, Prometheus,
-Grafana). It is for evaluation, not production; see `deploy/README.md` for what has been verified.
+`deploy/docker-compose.yml` (single server + web demo) and `deploy/docker-compose.cluster.yml`
+(Redis, 2 media nodes, 2 edges, web demo) are for local evaluation, not production; see
+`deploy/README.md`.

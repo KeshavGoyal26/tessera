@@ -106,7 +106,7 @@ func (w *Worker) buildDefaultStorage() (storage.Storage, error) {
 	if sc.Kind == "s3" {
 		return storage.NewS3FromConfig(context.Background(), storage.S3Config{
 			Bucket: sc.S3.Bucket, Region: sc.S3.Region, Endpoint: sc.S3.Endpoint, AccessKey: sc.S3.AccessKey,
-			Secret: sc.S3.Secret, Prefix: sc.S3.Prefix, ForcePathStyle: sc.S3.ForcePathStyle,
+			Secret: sc.S3.Secret, Prefix: sc.S3.Prefix, ForcePathStyle: sc.S3.ForcePathStyle, PublicBaseURL: sc.S3.PublicURL,
 		})
 	}
 	return storage.NewLocal(sc.LocalRoot, storage.WithBaseURL(sc.LocalBaseURL))
