@@ -10,7 +10,7 @@ name: tessera-cluster
 x-node: &node
   image: tessera:local # built once by m1
   pull_policy: never  # a local image, never on a registry
-  command: ["--config", "/etc/tessera/tessera.yaml"]
+  command: ["--dev", "--config", "/etc/tessera/tessera.yaml"] # --dev: /dev/token for the web demo
   volumes:
     - ./config/cluster-node.yaml:/etc/tessera/tessera.yaml:ro
   depends_on:
