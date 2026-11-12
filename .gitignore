@@ -31,5 +31,6 @@ examples/java-spring/target/
 /.cluster/
 /cmd/tessera-loadtest/tessera-loadtest
 
-# Extra CA certificates for Docker builds (deploy/docker/certs/README.md)
-/deploy/docker/certs/*.crt
+# Machine-specific Docker build inputs (deploy/docker/local/README.md)
+/deploy/docker/local/*
+!/deploy/docker/local/README.md

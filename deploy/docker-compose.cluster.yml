@@ -33,7 +33,7 @@ services:
 
   m1:
     <<: *node
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera, args: { GOPROXY: "${GOPROXY:-}" } }
     environment: { <<: *env, NODE_ID: m1, ROLE: media, RECORDING: "true", PORT: 7910, TCP_PORT: 7911, UDP_PORT: 7912, REC_PORT: 6791 }
     ports: ["7910:7910/tcp", "7911:7911/tcp", "7912:7912/udp", "6791:6789/tcp"]
   m2:
@@ -53,10 +53,7 @@ services:
     ports: ["7940:7940/tcp", "7941:7941/tcp", "7942:7942/udp"]
 
   web-demo:
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile
-      target: web-demo
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: web-demo, args: { NPM_REGISTRY: "${NPM_REGISTRY:-}" } }
     ports: ["5173:80"]
     restart: unless-stopped
 

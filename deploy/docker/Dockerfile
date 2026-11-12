@@ -1,15 +1,19 @@
 # Multi-stage build for tessera (media server with built-in recording) and tessera-loadtest.
 #   docker build -f deploy/docker/Dockerfile --target tessera  -t tessera .
 #   docker build -f deploy/docker/Dockerfile --target web-demo -t tessera-web-demo .
-# Behind a proxy that re-signs HTTPS (company network, VPN, antivirus), put its root
-# certificate in deploy/docker/certs/*.crt; the Go and npm downloads then trust it.
+# Machine-specific build inputs (git-ignored) go in deploy/docker/local/: *.crt, the root
+# certificate of a proxy that re-signs HTTPS, trusted by the Go and npm downloads; .npmrc,
+# used by npm (scripts/docker.sh copies it there from NPMRC=<path>). GOPROXY and
+# NPM_REGISTRY (build args, e.g. from deploy/.env) pick other download mirrors.
 ARG GO_VERSION=1.27.3
 
 FROM golang:${GO_VERSION}-bookworm AS build
-COPY deploy/docker/certs/ /usr/local/share/ca-certificates/
+COPY deploy/docker/local/ /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 WORKDIR /src
 COPY go.mod go.sum ./
+ARG GOPROXY
+ENV GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}
 RUN go mod download
 COPY cmd cmd
 COPY pkg pkg
@@ -31,11 +35,14 @@ ENTRYPOINT ["/usr/local/bin/tessera-loadtest"]
 
 # Web demo: build the browser SDK and the demo, serve the static bundle.
 FROM node:22-bookworm-slim AS web-build
-COPY deploy/docker/certs/ /certs/
+COPY deploy/docker/local/ /local/
 WORKDIR /src
 COPY sdk/js sdk/js
 COPY examples/web-demo examples/web-demo
-RUN if ls /certs/*.crt >/dev/null 2>&1; then cat /certs/*.crt > /certs/all.pem; export NODE_EXTRA_CA_CERTS=/certs/all.pem; fi \
+ARG NPM_REGISTRY
+RUN if ls /local/*.crt >/dev/null 2>&1; then cat /local/*.crt > /local/all.pem; export NODE_EXTRA_CA_CERTS=/local/all.pem; fi \
+    && if [ -f /local/.npmrc ]; then cp /local/.npmrc /root/.npmrc; fi \
+    && if [ -n "$NPM_REGISTRY" ]; then export npm_config_registry="$NPM_REGISTRY"; fi \
     && cd sdk/js && npm ci && npm run build \
     && cd ../../examples/web-demo && npm ci && npm run build
 

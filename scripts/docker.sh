@@ -7,6 +7,11 @@
 #   scripts/docker.sh status [cluster|single]
 #   scripts/docker.sh logs   [cluster|single] [service]
 #
+# Build settings, on the command line or in deploy/.env:
+#   NPMRC=~/.npmrc        npm config for the web demo build (registry, auth)
+#   NPM_REGISTRY=<url>    npm registry (overrides the one in NPMRC)
+#   GOPROXY=<url>         Go module proxy
+#
 # Default: cluster (Redis, media m1 m2, edges e1 e2, web demo). The ports are those of
 # scripts/cluster-start.sh and scripts/start.sh, so run one setup at a time.
 set -euo pipefail
@@ -30,6 +35,19 @@ ip=$(sed -n 's/^TESSERA_NODE_IP=//p' deploy/.env)
 secret=$(sed -n 's/^TESSERA_DEV_SECRET=//p' deploy/.env)
 compose() { docker compose -f "$file" --env-file deploy/.env "$@"; }
 
+# The build only sees files inside the project: copy the given .npmrc into the git-ignored
+# deploy/docker/local/ (and drop a copy from an earlier run when none is given).
+use_npmrc() {
+  local f=${NPMRC:-$(sed -n 's/^NPMRC=//p' deploy/.env)}
+  f=${f/#\~/$HOME}
+  if [ -n "$f" ]; then
+    [ -f "$f" ] || { echo "NPMRC: no file at $f"; exit 1; }
+    cp "$f" deploy/docker/local/.npmrc
+  else
+    rm -f deploy/docker/local/.npmrc
+  fi
+}
+
 urls() {
   cat <<TXT
 
@@ -48,10 +66,12 @@ TXT
 
 case $cmd in
   build)
+    use_npmrc
     compose build
     docker image prune -f >/dev/null # the images this build replaced
     ;;
   start)
+    use_npmrc
     compose up -d --build
     docker image prune -f >/dev/null
     printf "waiting for the servers"
@@ -67,5 +87,5 @@ case $cmd in
   stop) compose down ;;
   status) compose ps ;;
   logs) compose logs -f --tail 100 "${@:3}" ;;
-  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

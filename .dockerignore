@@ -9,7 +9,7 @@
 !gen
 !sdk/js
 !examples/web-demo
-!deploy/docker/certs
+!deploy/docker/local
 **/node_modules
 cmd/tessera-loadtest/tessera-loadtest
 sdk/js/dist

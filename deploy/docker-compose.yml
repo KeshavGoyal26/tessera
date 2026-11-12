@@ -7,7 +7,7 @@ name: tessera
 
 services:
   tessera:
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera, args: { GOPROXY: "${GOPROXY:-}" } }
     command: ["--dev", "--config", "/etc/tessera/tessera.yaml"] # --dev: /dev/token for the web demo
     environment:
       TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
@@ -17,6 +17,6 @@ services:
     restart: unless-stopped
 
   web-demo:
-    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: web-demo }
+    build: { context: .., dockerfile: deploy/docker/Dockerfile, target: web-demo, args: { NPM_REGISTRY: "${NPM_REGISTRY:-}" } }
     ports: ["5173:80"]
     restart: unless-stopped
