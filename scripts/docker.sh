@@ -25,13 +25,19 @@ case $mode in
   *) echo "unknown setup '$mode' (cluster or single)"; exit 2 ;;
 esac
 
-# First run: deploy/.env from the example, with this machine's LAN IP for media.
+# deploy/.env: created from the example on first run; TESSERA_NODE_IP (the address browsers
+# send media to) follows this machine's LAN IP when the saved one is no longer its own.
+lan=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
 if [ ! -f deploy/.env ]; then
-  ip=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
-  sed "s/^TESSERA_NODE_IP=.*/TESSERA_NODE_IP=${ip:-127.0.0.1}/" deploy/.env.example > deploy/.env
-  echo "created deploy/.env (TESSERA_NODE_IP=${ip:-127.0.0.1})"
+  sed "s/^TESSERA_NODE_IP=.*/TESSERA_NODE_IP=${lan:-127.0.0.1}/" deploy/.env.example > deploy/.env
+  echo "created deploy/.env (TESSERA_NODE_IP=${lan:-127.0.0.1})"
 fi
 ip=$(sed -n 's/^TESSERA_NODE_IP=//p' deploy/.env)
+if [ -n "$lan" ] && [ "$ip" != "$lan" ] && [ "$ip" != 127.0.0.1 ] && ! ifconfig 2>/dev/null | grep -q "inet $ip "; then
+  sed -i.bak "s/^TESSERA_NODE_IP=.*/TESSERA_NODE_IP=$lan/" deploy/.env && rm -f deploy/.env.bak
+  echo "this machine's IP changed: TESSERA_NODE_IP $ip -> $lan (deploy/.env)"
+  ip=$lan
+fi
 secret=$(sed -n 's/^TESSERA_DEV_SECRET=//p' deploy/.env)
 compose() { docker compose -f "$file" --env-file deploy/.env "$@"; }
 
