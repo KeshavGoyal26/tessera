@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -328,6 +329,27 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TESSERA_NODE_IP"); v != "" {
 		cfg.RTC.NodeIP = v
+	}
+	// TURN servers handed to clients: TESSERA_TURN_URLS="turn:h:3478?transport=tcp,turns:h:443"
+	// with either TESSERA_TURN_SECRET (shared secret: per-session credentials, rtc.turn_relay)
+	// or TESSERA_TURN_USERNAME/TESSERA_TURN_CREDENTIAL (fixed credentials, rtc.ice_servers).
+	if v := os.Getenv("TESSERA_TURN_URLS"); v != "" {
+		var urls []string
+		for _, u := range strings.Split(v, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				urls = append(urls, u)
+			}
+		}
+		if secret := os.Getenv("TESSERA_TURN_SECRET"); secret != "" {
+			cfg.RTC.TURNRelay.URLs, cfg.RTC.TURNRelay.Secret = urls, secret
+		} else {
+			cfg.RTC.ICEServers = append(cfg.RTC.ICEServers, ICEServerConfig{URLs: urls,
+				Username: os.Getenv("TESSERA_TURN_USERNAME"), Credential: os.Getenv("TESSERA_TURN_CREDENTIAL")})
+		}
+	}
+	// TESSERA_FORCE_RELAY=true: clients use only relayed (TURN) connections.
+	if v, err := strconv.ParseBool(os.Getenv("TESSERA_FORCE_RELAY")); err == nil {
+		cfg.RTC.TURNRelay.Force = v
 	}
 }
 

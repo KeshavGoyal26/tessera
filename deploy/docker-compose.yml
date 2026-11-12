@@ -12,6 +12,11 @@ services:
     environment:
       TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
       TESSERA_NODE_IP: ${TESSERA_NODE_IP}
+      TESSERA_TURN_URLS: ${TURN_URLS:-}
+      TESSERA_TURN_USERNAME: ${TURN_USERNAME:-}
+      TESSERA_TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      TESSERA_TURN_SECRET: ${TURN_SECRET:-}
+      TESSERA_FORCE_RELAY: ${FORCE_RELAY:-}
     volumes: [./config/tessera.yaml:/etc/tessera/tessera.yaml:ro]
     ports: ["7880:7880/tcp", "7881:7881/tcp", "7882:7882/udp", "127.0.0.1:6789:6789/tcp"]
     restart: unless-stopped

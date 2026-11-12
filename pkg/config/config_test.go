@@ -73,6 +73,34 @@ func TestEnvKeys(t *testing.T) {
 	}
 }
 
+func TestEnvTURN(t *testing.T) {
+	t.Setenv("TESSERA_TURN_URLS", "turn:t.example:3478?transport=tcp, turns:t.example:443")
+	t.Setenv("TESSERA_TURN_USERNAME", "u")
+	t.Setenv("TESSERA_TURN_CREDENTIAL", "p")
+	t.Setenv("TESSERA_FORCE_RELAY", "true")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.RTC.ICEServers; len(s) != 1 || len(s[0].URLs) != 2 || s[0].URLs[1] != "turns:t.example:443" || s[0].Username != "u" || s[0].Credential != "p" {
+		t.Fatalf("ice servers %+v", s)
+	}
+	if !cfg.RTC.TURNRelay.Force || len(cfg.RTC.TURNRelay.URLs) != 0 {
+		t.Fatalf("turn relay %+v", cfg.RTC.TURNRelay)
+	}
+
+	// With a shared secret the URLs go to turn_relay (per-session credentials).
+	t.Setenv("TESSERA_TURN_SECRET", "shared")
+	t.Setenv("TESSERA_FORCE_RELAY", "")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.RTC.TURNRelay; len(r.URLs) != 2 || r.Secret != "shared" || r.Force || len(cfg.RTC.ICEServers) != 0 {
+		t.Fatalf("turn relay %+v ice %+v", r, cfg.RTC.ICEServers)
+	}
+}
+
 func TestValidateClusterRoles(t *testing.T) {
 	base := func() *Config {
 		cfg := Default()

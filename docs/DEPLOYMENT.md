@@ -28,6 +28,11 @@ The server must advertise an address the browser can reach.
   recommended setting; do not rely on STUN discovery behind NAT.
 - **Docker**: publish `7882/udp` and `7881/tcp` and set `TESSERA_NODE_IP` to the host's reachable IP. On Linux
   production hosts prefer `network_mode: host` (avoids docker-proxy and conntrack cost on UDP).
+- **TURN from the environment** (overrides the config file, e.g. in Docker): `TESSERA_TURN_URLS`
+  (comma-separated) with `TESSERA_TURN_SECRET` (shared secret, per-session credentials) or
+  `TESSERA_TURN_USERNAME`/`TESSERA_TURN_CREDENTIAL` (fixed); `TESSERA_FORCE_RELAY=true` makes clients
+  use only TURN. With only `?transport=tcp`/`turns:` URLs that is TURN over TCP. The compose files
+  pass `TURN_URLS`, `TURN_SECRET`, `TURN_USERNAME`, `TURN_CREDENTIAL` and `FORCE_RELAY` from `deploy/.env`.
 - **Kubernetes**: use `hostNetwork: true` or a `hostPort` DaemonSet-style deployment per node; a Service of
   type LoadBalancer with UDP works but adds a hop and cannot pin a client to one node. No Helm chart yet.
 
