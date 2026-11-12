@@ -30,3 +30,6 @@ examples/java-spring/target/
 /tessera-loadtest
 /.cluster/
 /cmd/tessera-loadtest/tessera-loadtest
+
+# Extra CA certificates for Docker builds (deploy/docker/certs/README.md)
+/deploy/docker/certs/*.crt

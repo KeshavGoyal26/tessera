@@ -1,9 +1,13 @@
 # Multi-stage build for tessera (media server with built-in recording) and tessera-loadtest.
 #   docker build -f deploy/docker/Dockerfile --target tessera  -t tessera .
 #   docker build -f deploy/docker/Dockerfile --target web-demo -t tessera-web-demo .
+# Behind a proxy that re-signs HTTPS (company network, VPN, antivirus), put its root
+# certificate in deploy/docker/certs/*.crt; the Go and npm downloads then trust it.
 ARG GO_VERSION=1.27.3
 
 FROM golang:${GO_VERSION}-bookworm AS build
+COPY deploy/docker/certs/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -27,10 +31,12 @@ ENTRYPOINT ["/usr/local/bin/tessera-loadtest"]
 
 # Web demo: build the browser SDK and the demo, serve the static bundle.
 FROM node:22-bookworm-slim AS web-build
+COPY deploy/docker/certs/ /certs/
 WORKDIR /src
 COPY sdk/js sdk/js
 COPY examples/web-demo examples/web-demo
-RUN cd sdk/js && npm ci && npm run build \
+RUN if ls /certs/*.crt >/dev/null 2>&1; then cat /certs/*.crt > /certs/all.pem; export NODE_EXTRA_CA_CERTS=/certs/all.pem; fi \
+    && cd sdk/js && npm ci && npm run build \
     && cd ../../examples/web-demo && npm ci && npm run build
 
 FROM nginx:1.27-alpine AS web-demo
