@@ -1,4 +1,4 @@
-import { clusterHistory, clusterRoom, clusterState, session } from '../api';
+import { clusterHistory, clusterRoom, clusterState, session, userSessions } from '../api';
 import { store } from '../store';
 import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
 import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
@@ -84,10 +84,13 @@ export class Cluster implements View {
     if (args[0] === 'room' && args[1]) return this.mountRoom(safeDecode(args[1]));
     root.innerHTML = `<h2>Cluster</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div>
       <h3>Nodes</h3><div class="nodes"></div><h3>Last hour</h3><div class="grid charts"></div>
+      <h3>Capacity</h3><div class="cards capacity"></div>
       <h3>Balance</h3><div class="grid balance"></div>
+      <div class="view-head"><h3>Past sessions of a user</h3><form class="usearch"><input name="u" placeholder="Identity (exact)" aria-label="Identity"> <button>Look up</button></form></div><div class="uresult"></div>
       <div class="view-head"><h3>Search participants</h3></div><div class="psearch"></div>
       <h3>Worst 50 participants</h3><div class="worst"></div>
       <div class="view-head rooms-head"><h3>Rooms</h3></div><div class="rooms"></div>`;
+    root.querySelector('.usearch')!.addEventListener('submit', (e) => { e.preventDefault(); void this.lookup((root.querySelector('input[name=u]') as HTMLInputElement).value.trim()); });
     // Every list below is searched, sorted and paged on the server (cluster/<endpoint>), merged from all nodes.
     this.lists.push(clusterList<ClusterParticipantBrief>({
       endpoint: 'participants', head: root.querySelector('.view-head')!, body: root.querySelector('.psearch')!, filterLabel: 'Search identity, name, room or session',
@@ -133,6 +136,19 @@ export class Cluster implements View {
     void handleAction(e);
   }
 
+  /** Past sessions from the cluster session store: works after the node that saw them is gone. */
+  private async lookup(id: string): Promise<void> {
+    const out = this.root.querySelector<HTMLElement>('.uresult')!;
+    if (!id) { render(out, ''); return; }
+    try {
+      const r = await userSessions(id);
+      const rows = r.items.map((s) => `<tr><td>${esc(s.room)}</td><td>${esc(s.role)}</td><td>${new Date(s.started_at).toLocaleString()}</td><td>${fmtDur(s.duration_ms)}</td>
+        <td>${qualityBadge(s.quality)}</td><td>${(100 * (s.share.poor + s.share.lost)).toFixed(0)}%</td><td>${fmtNum(s.max_rtt_ms)} ms</td><td>${s.max_loss_percent.toFixed(1)}%</td>
+        <td>${esc(s.events.slice(0, 3).map((e) => `${e.kind}: ${e.detail}`).join(' · '))}</td></tr>`);
+      render(out, table(['Room', 'Role', 'Started', 'Duration', 'Last quality', 'Poor/lost', 'Max RTT', 'Max loss', 'Last events'], rows, `No saved sessions for "${esc(id)}" in the last 24 h.`));
+    } catch (e) { render(out, `<p class="error" role="alert">${esc((e as Error).message)}</p>`); }
+  }
+
   update(): void {
     if (this.room) return this.updateRoom();
     const st = cluster.state;
@@ -156,6 +172,9 @@ export class Cluster implements View {
       : '<p class="ok-line">No active alerts.</p>'));
     render(this.root.querySelector('.nodes')!, nodesTable(nodes, st.time));
     this.charts?.update(this.points.map((x) => x.t / 1000), this.points.length);
+    const capEl = this.root.querySelector<HTMLElement>('.capacity');
+    if (capEl) render(capEl, Object.entries(st.capacity ?? {}).map(([role, c]) =>
+      `<div class="card ${c.n1 ? '' : 'warn'}"><div class="label">${esc(role)} nodes: ${c.n1 ? 'can lose one' : 'cannot lose one'}</div><div class="value">${(100 * c.avg_load).toFixed(0)}% avg</div><div class="sub">${c.nodes} up · busiest ${esc(c.busiest ?? '–')} ${(100 * c.max_load).toFixed(0)}% · ${esc(c.note)}</div></div>`).join('') || '<p class="muted">No node summaries yet.</p>');
     render(this.root.querySelector('.balance')!,
       balance('Presenters per media node', nodes.filter((n) => n.role !== 'edge' && !n.down).map((n) => [n.id, n.summary?.presenters ?? 0]), fmtNum) +
       balance('Viewers per edge', nodes.filter((n) => n.role === 'edge' && !n.down).map((n) => [n.id, n.summary?.viewers ?? 0]), fmtNum) +

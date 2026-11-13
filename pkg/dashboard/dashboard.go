@@ -82,6 +82,7 @@ type Handler struct {
 
 	hist    *ring
 	journal *Journal
+	saveCh  chan SessionDetail // ended sessions for the cluster session store
 	// day is 24 h of history at dayStep: each point is the maximum of its window, so peaks
 	// stay visible (about 1.3 MB).
 	day    *ring
@@ -184,6 +185,10 @@ func New(p Params) (*Handler, error) {
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	h.cl = clusterData{last: map[string]NodeView{}, alertAt: map[string]time.Time{}, cache: map[string]cached{}}
+	if p.Cluster != nil && p.Cluster.Sessions != nil {
+		h.saveCh = make(chan SessionDetail, 1024)
+		go h.sessionWriter()
+	}
 	h.tick() // initial snapshot so the first request has data
 	go h.loop()
 	if p.Cluster != nil {

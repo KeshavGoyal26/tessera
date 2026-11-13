@@ -113,7 +113,8 @@ export interface ClusterPoint {
   t: number; media: number; edges: number; down: number; presenters: number; viewers: number; bps_in: number; bps_out: number
   cpu_max: number; cpu_avg: number; recordings: number; rec_used: number; rec_cap: number; loss_max: number
 }
-export interface ClusterState { self: string; time: number; error?: string; nodes: NodeView[] | null; alerts: Alert[] | null; point?: ClusterPoint }
+export interface Capacity { nodes: number; avg_load: number; max_load: number; busiest?: string; n1: boolean; note: string }
+export interface ClusterState { self: string; time: number; error?: string; nodes: NodeView[] | null; alerts: Alert[] | null; point?: ClusterPoint; capacity?: Record<string, Capacity> }
 /** A page merged from every reachable node (cluster/rooms, cluster/participants, …). */
 export interface ClusterPage<T> { total: number; offset: number; items: T[]; errors: string[] | null; truncated?: boolean }
 export type ClusterParticipantBrief = ParticipantBrief & { node: string }

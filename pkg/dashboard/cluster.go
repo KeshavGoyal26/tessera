@@ -36,6 +36,12 @@ type ClusterParams struct {
 	// APIKey/Secret sign this dashboard's requests to other nodes; Verifier checks theirs.
 	APIKey, Secret string
 	Verifier       auth.Verifier
+	// Sessions stores ended sessions cluster-wide (Redis) for support lookups by identity;
+	// nil keeps them only in this node's journal.
+	Sessions interface {
+		SaveSession(ctx context.Context, identity, sid string, data []byte) error
+		UserSessions(ctx context.Context, identity string) ([][]byte, error)
+	}
 	// KeepHistory samples the cluster every clusterEvery even when nobody looks (edges,
 	// where operators open the dashboard); other nodes sample for an hour after a visit.
 	KeepHistory bool
@@ -307,12 +313,13 @@ type NodeView struct {
 
 // ClusterState is GET /admin/api/cluster.
 type ClusterState struct {
-	Self   string        `json:"self"`
-	Time   int64         `json:"time"`
-	Error  string        `json:"error,omitempty"`
-	Nodes  []NodeView    `json:"nodes"`
-	Alerts []Alert       `json:"alerts"`
-	Point  *ClusterPoint `json:"point,omitempty"`
+	Capacity map[string]Capacity `json:"capacity,omitempty"` // per role: media, edge
+	Self     string              `json:"self"`
+	Time     int64               `json:"time"`
+	Error    string              `json:"error,omitempty"`
+	Nodes    []NodeView          `json:"nodes"`
+	Alerts   []Alert             `json:"alerts"`
+	Point    *ClusterPoint       `json:"point,omitempty"`
 }
 
 type clusterData struct {
@@ -457,6 +464,7 @@ func (h *Handler) sampleCluster() *ClusterState {
 	})
 	st.Alerts = stamp(cur, c.alertAt, now)
 	st.Point = &pt
+	st.Capacity = capacityOf(st.Nodes)
 	if len(c.hist) < clusterHistory {
 		c.hist = append(c.hist, pt)
 	} else {
@@ -609,6 +617,79 @@ func (h *Handler) fanOut(ctx context.Context, query string, each func(n NodeView
 	wg.Wait()
 }
 
+// Capacity is the headroom of one role's nodes: load is the busier of CPU (share of all
+// cores) and recording capacity used; N+1 holds when the others can take the busiest node's
+// load and stay under capacityLimit.
+type Capacity struct {
+	Nodes   int     `json:"nodes"`
+	AvgLoad float64 `json:"avg_load"`
+	MaxLoad float64 `json:"max_load"`
+	Busiest string  `json:"busiest,omitempty"`
+	N1      bool    `json:"n1"`
+	Note    string  `json:"note"`
+}
+
+const capacityLimit = 0.8
+
+func capacityOf(nodes []NodeView) map[string]Capacity {
+	out := map[string]Capacity{}
+	sum := map[string]float64{}
+	for _, n := range nodes {
+		if n.Down || n.Draining || n.Summary == nil {
+			continue
+		}
+		load := n.Summary.CPU / 100
+		if n.Summary.RecCap > 0 {
+			load = max(load, float64(n.Summary.RecUsed)/float64(n.Summary.RecCap))
+		}
+		c := out[n.Role]
+		c.Nodes++
+		sum[n.Role] += load
+		if load >= c.MaxLoad {
+			c.MaxLoad, c.Busiest = load, n.ID
+		}
+		out[n.Role] = c
+	}
+	for role, c := range out {
+		c.AvgLoad = sum[role] / float64(c.Nodes)
+		switch {
+		case c.Nodes < 2:
+			c.Note = "a single node: losing it stops this role"
+		default:
+			after := sum[role] / float64(c.Nodes-1) // the busiest node's load spread over the others
+			c.N1 = after <= capacityLimit
+			c.Note = fmt.Sprintf("without one node the others run at %.0f%% (limit %.0f%%)", 100*after, 100*capacityLimit)
+		}
+		out[role] = c
+	}
+	return out
+}
+
+// userSessions returns the saved sessions of ?identity= (cluster session store), newest first.
+func (h *Handler) userSessions(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("identity"))
+	st := h.p.Cluster.Sessions
+	switch {
+	case id == "":
+		jsonErr(w, http.StatusBadRequest, "identity required")
+		return
+	case st == nil:
+		jsonErr(w, http.StatusNotImplemented, "no cluster session store")
+		return
+	}
+	raw, err := st.UserSessions(r.Context(), id)
+	if err != nil {
+		jsonErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	items := []json.RawMessage{}
+	for _, b := range raw {
+		items = append(items, b)
+	}
+	b, _ := json.Marshal(map[string]any{"identity": id, "items": items})
+	writeBody(w, r, b)
+}
+
 // fanOutMax nodes are asked at the same time.
 const fanOutMax = 16
 
@@ -698,6 +779,8 @@ func (h *Handler) clusterAPI(w http.ResponseWriter, r *http.Request, route strin
 		_, _ = w.Write(b)
 	case "cluster/rooms":
 		h.clusterRoomsPage(w, r)
+	case "cluster/user": // past sessions of one identity, from the cluster's session store
+		h.userSessions(w, r)
 	case "cluster/participants":
 		v := r.URL.Query()
 		if v.Get("sort") == "" {
@@ -734,83 +817,83 @@ func (h *Handler) writeCached(w http.ResponseWriter, kind, key string, get func(
 	_, _ = w.Write(b)
 }
 
-// clusterRooms merges the nodes' room indexes: presenters from media nodes, viewers
-// from every node.
-func (h *Handler) clusterRooms(ctx context.Context) map[string]any {
-	byName := map[string]*ClusterRoom{}
-	var errs []string
-	truncated := false
-	h.fanOut(ctx, "rooms", func(n NodeView, b []byte, err error) {
-		var idx struct {
-			Rooms []RoomBrief `json:"rooms"`
-			Total int         `json:"total"`
-		}
-		if err == nil {
-			err = json.Unmarshal(b, &idx)
-		}
-		if err != nil {
-			errs = append(errs, n.ID+": "+err.Error())
-			return
-		}
-		truncated = truncated || idx.Total > len(idx.Rooms)
-		for _, rb := range idx.Rooms {
-			cr := byName[rb.Name]
-			if cr == nil {
-				cr = &ClusterRoom{Name: rb.Name, Media: []string{}, Edges: []string{}}
-				byName[rb.Name] = cr
-			}
-			cr.Viewers += rb.Viewers
-			cr.Recording = cr.Recording || rb.Recording
-			if n.Role == config.RoleEdge {
-				cr.Edges = append(cr.Edges, n.ID)
-			} else {
-				cr.Presenters += rb.Presenters
-				cr.Media = append(cr.Media, n.ID)
-			}
-		}
-	})
-	out := make([]*ClusterRoom, 0, len(byName))
-	for _, cr := range byName {
-		sort.Strings(cr.Media)
-		sort.Strings(cr.Edges)
-		out = append(out, cr)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	sort.Strings(errs)
-	return map[string]any{"rooms": out, "errors": errs, "truncated": truncated}
-}
-
-// clusterRoomsPage searches, sorts and pages the cluster room index (built at most every
-// few seconds from the nodes, cached).
+// clusterRoomsPage searches, sorts and pages the cluster's rooms. Each node returns only its
+// first offset+limit rooms for the query (searched and sorted there); the rooms are merged by
+// name across nodes. Exact for the name order; for presenter/viewer order the counts of a room
+// that one node did not return in its slice are missing (close enough to find big rooms). The
+// cost is O(nodes x page), not O(rooms), and the answer is cached a few seconds per query.
 func (h *Handler) clusterRoomsPage(w http.ResponseWriter, r *http.Request) {
-	b, err := h.cachedFetch("rooms", "rooms", func() ([]byte, error) { return json.Marshal(h.clusterRooms(r.Context())) })
+	v := r.URL.Query()
+	p := pageOf(v)
+	key := "rooms?" + v.Encode()
+	b, err := h.cachedFetch("rooms", key, func() ([]byte, error) {
+		q := url.Values{"api": {"rooms"}, "q": {v.Get("q")}, "offset": {"0"}, "limit": {fmt.Sprint(min(p.offset+p.limit, pageMax))}}
+		if p.sort != "" {
+			q.Set("sort", p.sort)
+		}
+		if p.desc {
+			q.Set("desc", "1")
+		}
+		byName := map[string]*ClusterRoom{}
+		var errs []string
+		total := 0
+		h.fanOut(r.Context(), q.Encode(), func(n NodeView, b []byte, err error) {
+			var pg struct {
+				Total int       `json:"total"`
+				Items []RoomRow `json:"items"`
+			}
+			if err == nil {
+				err = json.Unmarshal(b, &pg)
+			}
+			if err != nil {
+				errs = append(errs, n.ID+": "+err.Error())
+				return
+			}
+			total = max(total, pg.Total) // rooms span nodes: the largest node count is a lower bound
+			for _, rr := range pg.Items {
+				cr := byName[rr.Name]
+				if cr == nil {
+					cr = &ClusterRoom{Name: rr.Name, Media: []string{}, Edges: []string{}}
+					byName[rr.Name] = cr
+				}
+				cr.Viewers += rr.Viewers
+				cr.Recording = cr.Recording || rr.Recording
+				if n.Role == config.RoleEdge {
+					cr.Edges = append(cr.Edges, n.ID)
+				} else {
+					cr.Presenters += rr.Presenters
+					cr.Media = append(cr.Media, n.ID)
+				}
+			}
+		})
+		all := make([]ClusterRoom, 0, len(byName))
+		for _, cr := range byName {
+			sort.Strings(cr.Media)
+			sort.Strings(cr.Edges)
+			all = append(all, *cr)
+		}
+		var cmpFn func(a, b *ClusterRoom) int
+		switch p.sort {
+		case "presenters":
+			cmpFn = func(a, b *ClusterRoom) int {
+				return cmp.Or(cmp.Compare(a.Presenters, b.Presenters), strings.Compare(a.Name, b.Name))
+			}
+		case "viewers":
+			cmpFn = func(a, b *ClusterRoom) int {
+				return cmp.Or(cmp.Compare(a.Viewers, b.Viewers), strings.Compare(a.Name, b.Name))
+			}
+		default:
+			cmpFn = func(a, b *ClusterRoom) int { return strings.Compare(a.Name, b.Name) }
+		}
+		_, items := page(p, all, func(*ClusterRoom) bool { return true }, cmpFn)
+		sort.Strings(errs)
+		return json.Marshal(map[string]any{"total": max(total, len(all)), "offset": p.offset, "items": items, "errors": errs, "truncated": false})
+	})
 	if err != nil {
 		jsonErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	var all struct {
-		Rooms     []ClusterRoom `json:"rooms"`
-		Errors    []string      `json:"errors"`
-		Truncated bool          `json:"truncated"`
-	}
-	_ = json.Unmarshal(b, &all)
-	p := pageOf(r.URL.Query())
-	var cmpFn func(a, b *ClusterRoom) int
-	switch p.sort {
-	case "presenters":
-		cmpFn = func(a, b *ClusterRoom) int {
-			return cmp.Or(cmp.Compare(a.Presenters, b.Presenters), strings.Compare(a.Name, b.Name))
-		}
-	case "viewers":
-		cmpFn = func(a, b *ClusterRoom) int {
-			return cmp.Or(cmp.Compare(a.Viewers, b.Viewers), strings.Compare(a.Name, b.Name))
-		}
-	default:
-		cmpFn = func(a, b *ClusterRoom) int { return strings.Compare(a.Name, b.Name) }
-	}
-	total, items := page(p, all.Rooms, func(cr *ClusterRoom) bool { return p.match(cr.Name) }, cmpFn)
-	out, _ := json.Marshal(map[string]any{"total": total, "offset": p.offset, "items": items, "errors": all.Errors, "truncated": all.Truncated})
-	writeBody(w, r, out)
+	writeBody(w, r, b)
 }
 
 // clusterRoom returns every node's part of a room (nodes without it are left out).

@@ -221,7 +221,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		// The cluster view; actions and the recordings list go through the admin
 		// forwarder on an edge, as admin API calls do.
 		dashCluster = &dashboard.ClusterParams{Nodes: cc, Self: cfg.NodeID, Role: cfg.Cluster.Role,
-			APIKey: recKey, Secret: recSecret, Verifier: verifier, KeepHistory: cfg.Cluster.Role == config.RoleEdge}
+			APIKey: recKey, Secret: recSecret, Verifier: verifier, KeepHistory: cfg.Cluster.Role == config.RoleEdge, Sessions: cc}
 	}
 	dashParams := dashboard.Params{
 		Stats: rooms, Keys: keys, Rooms: adminRooms, Recordings: adminRecordings,

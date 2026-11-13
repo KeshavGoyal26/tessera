@@ -118,8 +118,9 @@ func (s *session0) add(e SessionEvent) {
 }
 
 // Observe updates the journal from one sample: joins, leaves, quality and ICE changes,
-// published tracks, time per quality and the worst RTT and loss.
-func (j *Journal) Observe(s *stats.Snapshot, now time.Time) {
+// published tracks, time per quality and the worst RTT and loss. It returns the sessions that
+// ended in this sample (for the cluster's session store).
+func (j *Journal) Observe(s *stats.Snapshot, now time.Time) (ended []SessionDetail) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for ri := range s.Rooms {
@@ -173,12 +174,16 @@ func (j *Journal) Observe(s *stats.Snapshot, now time.Time) {
 			ses.brief.State, ses.brief.EndedAt = "ended", &end
 			ses.add(SessionEvent{T: end, Kind: EvLeft, Detail: "left (" + ses.brief.Quality + ")"})
 			delete(j.active, sid)
+			ev := slices.Clone(ses.events)
+			slices.Reverse(ev)
+			ended = append(ended, SessionDetail{SessionBrief: ses.row(now), Events: ev})
 			j.ended = append(j.ended, ses)
 			if len(j.ended) > journalEnded {
 				j.ended = j.ended[1:]
 			}
 		}
 	}
+	return ended
 }
 
 // snapshot copies the list rows (active, then ended newest first), finalising times as of now.

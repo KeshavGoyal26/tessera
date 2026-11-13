@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,6 +88,40 @@ func (h *Handler) addDay(pt Point) {
 	}
 }
 
+// saveSessions hands ended sessions to the writer of the cluster session store; when it
+// falls behind (Redis slow) they stay only in this node's journal.
+func (h *Handler) saveSessions(ended []SessionDetail) {
+	if h.saveCh == nil {
+		return
+	}
+	for _, s := range ended {
+		select {
+		case h.saveCh <- s:
+		default:
+		}
+	}
+}
+
+func (h *Handler) sessionWriter() {
+	st := h.p.Cluster.Sessions
+	for {
+		select {
+		case <-h.stop:
+			return
+		case s := <-h.saveCh:
+			b, err := json.Marshal(s)
+			if err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				err = st.SaveSession(ctx, s.Identity, s.SID, b)
+				cancel()
+			}
+			if err != nil {
+				h.log.Debug("dashboard: session not saved", "sid", s.SID, "err", err)
+			}
+		}
+	}
+}
+
 func pointOf(s *stats.Snapshot, recordings int) Point {
 	n := s.Node
 	p := Point{
@@ -139,7 +174,7 @@ func (h *Handler) tick() {
 			active += r.Stats.ActiveRecordings
 		}
 	}
-	h.journal.Observe(snap, snap.Time)
+	h.saveSessions(h.journal.Observe(snap, snap.Time))
 	pt := pointOf(snap, active)
 	alerts := h.alerts(snap, recs)
 	u := &Update{Snapshot: snap, Recorders: recs, Alerts: alerts, Point: pt}

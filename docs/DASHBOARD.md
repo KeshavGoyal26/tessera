@@ -170,3 +170,18 @@ Nothing the dashboard sends grows with the number of participants:
 - **Recordings** (`api/recordings`): searched (id, room, identity), filtered by status and paged.
 - **Webhooks**: delivery health (sent, failed, retried, dropped, queued, last error) on Overview.
 - **Export**: every list exports its current page as CSV or JSON.
+
+## Cluster at scale (phase 3)
+
+- **Session store**: when a session ends, its summary and timeline are written once to Redis
+  (`tessera:sess:<sid>`, 24 h) and indexed per identity (`tessera:user:<identity>`, last 20).
+  Cluster page › "Past sessions of a user" (`api/cluster/user?identity=`) answers "what happened
+  to user X" even after the node that saw it is gone. Writes are asynchronous and dropped when
+  Redis falls behind (the node's own journal keeps them).
+- **Capacity** (Cluster page, `capacity` in `api/cluster`): per role the average and busiest
+  node load (the higher of CPU and recording capacity) and whether the others could take the
+  busiest node's load and stay under 80 % (N+1).
+- **Room list at 100k**: each node returns only the slice of rooms the page needs (searched and
+  sorted there) and the rooms are merged by name; cost O(nodes × page), cached a few seconds.
+  Exact for name order; for presenter/viewer order a room's counts from a node that did not
+  return it in its slice are missing.

@@ -52,6 +52,8 @@ export const clusterState = (): Promise<ClusterState> => req('cluster');
 export const clusterHistory = (): Promise<{ interval_ms: number; points: ClusterPoint[] }> => req('cluster/history');
 /** Any cluster-wide paged list ('rooms', 'participants', later 'sessions', …): merged from every node by the server. */
 export const clusterPage = <T>(endpoint: string, p: Params = {}): Promise<ClusterPage<T>> => get(`cluster/${endpoint}`, p);
+/** Past sessions of one identity from the cluster session store (last 20, 24 h), newest first. */
+export const userSessions = (identity: string): Promise<{ identity: string; items: SessionDetail[] }> => req(`cluster/user?identity=${encodeURIComponent(identity)}`);
 export const clusterRoom = (name: string): Promise<{ name: string; nodes: NodeRoom[] }> => req(`cluster/room?name=${encodeURIComponent(name)}`);
 export const nodeUpdate = (id: string): Promise<Live> => req(`cluster/node?id=${encodeURIComponent(id)}`);
 export const nodeHistory = (id: string): Promise<{ interval_ms: number; points: Point[] }> => req(`cluster/node?id=${encodeURIComponent(id)}&history`);

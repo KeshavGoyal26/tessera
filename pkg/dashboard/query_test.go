@@ -221,7 +221,7 @@ func TestJournalSessions(t *testing.T) {
 	j.Observe(snapAt(stats.QualityGood, true), t0)
 	j.Observe(snapAt(stats.QualityGood, true), t0.Add(30*time.Second))
 	j.Observe(snapAt(stats.QualityPoor, true), t0.Add(40*time.Second)) // 40 s good, then poor
-	j.Observe(snapAt("", false), t0.Add(50*time.Second))                // gone: ended at 40 s
+	j.Observe(snapAt("", false), t0.Add(50*time.Second))               // gone: ended at 40 s
 	rows := j.rows(t0.Add(time.Minute))
 	if len(rows) != 1 || rows[0].State != "ended" || rows[0].DurationMs != 40000 || rows[0].Share.Good != 1 || rows[0].MaxRTTMs != 80 {
 		t.Fatalf("row %+v", rows)
@@ -234,5 +234,21 @@ func TestJournalSessions(t *testing.T) {
 	}
 	if !ok || b.Events != 4 || strings.Join(kinds, ",") != "leave_reason,left,quality,joined" {
 		t.Fatalf("events %v (%d)", kinds, b.Events)
+	}
+}
+
+func TestCapacityN1(t *testing.T) {
+	n := func(id, role string, cpu float64) NodeView {
+		return NodeView{ID: id, Role: role, Summary: &NodeSummary{CPU: cpu}}
+	}
+	c := capacityOf([]NodeView{n("m1", "media", 60), n("m2", "media", 40), n("m3", "media", 50), n("e1", "edge", 70)})
+	if m := c["media"]; m.Nodes != 3 || !m.N1 || m.Busiest != "m1" || m.MaxLoad != 0.6 { // 150% over two nodes = 75 %
+		t.Fatalf("media %+v", m)
+	}
+	if e := c["edge"]; e.N1 || e.Nodes != 1 {
+		t.Fatalf("a single edge cannot be lost: %+v", e)
+	}
+	if m := capacityOf([]NodeView{n("m1", "media", 80), n("m2", "media", 70)})["media"]; m.N1 { // 150% on one node
+		t.Fatalf("overloaded after a loss: %+v", m)
 	}
 }

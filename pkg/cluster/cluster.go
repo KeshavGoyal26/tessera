@@ -262,3 +262,49 @@ return 0`)
 func (c *Client) releaseIf(ctx context.Context, key, node string) error {
 	return releaseIf.Run(ctx, c.rdb, []string{key}, node).Err()
 }
+
+// Ended sessions are kept for support ("what happened to user X") after the node that saw
+// them is gone: one summary per session, and per identity its last userSessions session ids.
+const (
+	sessionTTL   = 24 * time.Hour
+	userSessions = 20
+)
+
+func sessKey(sid string) string      { return keyPrefix + "sess:" + sid }
+func userKey(identity string) string { return keyPrefix + "user:" + identity }
+
+// SaveSession stores an ended session's summary (JSON) for sessionTTL. Written once per
+// session, so the Redis load follows the session end rate, not the number of users.
+func (c *Client) SaveSession(ctx context.Context, identity, sid string, data []byte) error {
+	_, err := c.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, sessKey(sid), data, sessionTTL)
+		p.LPush(ctx, userKey(identity), sid)
+		p.LTrim(ctx, userKey(identity), 0, userSessions-1)
+		p.Expire(ctx, userKey(identity), sessionTTL)
+		return nil
+	})
+	return err
+}
+
+// UserSessions returns the saved sessions of identity, newest first.
+func (c *Client) UserSessions(ctx context.Context, identity string) ([][]byte, error) {
+	sids, err := c.rdb.LRange(ctx, userKey(identity), 0, userSessions-1).Result()
+	if err != nil || len(sids) == 0 {
+		return nil, err
+	}
+	keys := make([]string, len(sids))
+	for i, s := range sids {
+		keys[i] = sessKey(s)
+	}
+	vals, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	var out [][]byte
+	for _, v := range vals {
+		if s, ok := v.(string); ok {
+			out = append(out, []byte(s))
+		}
+	}
+	return out, nil
+}
