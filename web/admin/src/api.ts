@@ -1,4 +1,4 @@
-import type { ClusterPage, ClusterPoint, ClusterState, CoordRecordingPage, Live, NodeRoom, Page, ParticipantDetail, ParticipantPage, Point, RecorderStatus, RoomBrief, SessionBrief, SessionDetail, TrackBrief, TrackDetail } from './types';
+import type { AlertEvent, ClusterPage, ClusterPoint, ClusterState, CoordRecordingPage, Live, NodeRoom, Page, ParticipantDetail, ParticipantPage, Point, RecorderStatus, RoomBrief, SessionBrief, SessionDetail, TrackBrief, TrackDetail } from './types';
 import { qs, type Params } from './util';
 
 const base = location.pathname.replace(/[^/]*$/, '') + 'api/';
@@ -43,6 +43,8 @@ export const track = (p: Params): Promise<TrackDetail> => get('track', p);
 /** Coordinator recordings, newest first; p: q, status (active|ended|failed), offset, limit. */
 export const recordings = (p: Params = {}): Promise<CoordRecordingPage> => get('recordings', p);
 /** p: q, state, room, role, quality, sort, desc, offset, limit. */
+/** The alert history (raised and cleared, last 24 h), newest first. */
+export const alertHistory = (p: Params = {}): Promise<Page<AlertEvent>> => get('alerts', p);
 export const sessions = (p: Params = {}): Promise<Page<SessionBrief>> => get('sessions', p);
 /** p: sid. */
 export const sessionDetail = (p: Params): Promise<SessionDetail> => get('session-detail', p);

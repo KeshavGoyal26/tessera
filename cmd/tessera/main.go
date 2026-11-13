@@ -149,16 +149,23 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	// The coordinator needs the room manager, and the manager triggers recordings
 	// through the coordinator, so the trigger is bound once both exist.
 	autoRec := &lateRecordingTrigger{}
+	// Leave reasons go to the dashboard's session journal, created further down.
+	var journal atomic.Pointer[dashboard.Journal]
 	rooms, err := room.NewManager(room.Params{
 		Config: cfg, Engine: engine, Notifier: notifier, Keys: keys, Registry: reg, Logger: logger,
 		Recording: autoRec,
+		OnLeave: func(sid, reason string) {
+			if j := journal.Load(); j != nil {
+				j.Record(sid, dashboard.SessionEvent{T: time.Now(), Kind: "leave_reason", Detail: reason})
+			}
+		},
 	})
 	if err != nil {
 		return err
 	}
 	defer rooms.Close()
 
-	metrics.HandleExtra(stats.Path, stats.Handler(rooms))
+	metrics.HandleExtra(stats.Path, stats.Handler(rooms.SharedStats()))
 
 	var cc *cluster.Client
 	if cfg.Cluster.Role != config.RoleSingle {
@@ -224,7 +231,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			APIKey: recKey, Secret: recSecret, Verifier: verifier, KeepHistory: cfg.Cluster.Role == config.RoleEdge, Sessions: cc}
 	}
 	dashParams := dashboard.Params{
-		Stats: rooms, Keys: keys, Rooms: adminRooms, Recordings: adminRecordings,
+		Stats: rooms.SharedStats(), Keys: keys, Rooms: adminRooms, Recordings: adminRecordings,
 		RecorderURLs: recorderURLs, Logger: logger, Cluster: dashCluster,
 	}
 	if sp, ok := notifier.(webhook.StatsProvider); ok {
@@ -235,6 +242,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		return err
 	}
 	defer dash.Close()
+	journal.Store(dash.Journal())
 
 	mux := http.NewServeMux()
 	var rtcHandler http.Handler = signalSrv

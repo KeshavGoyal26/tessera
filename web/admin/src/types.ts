@@ -137,3 +137,5 @@ export interface Hops {
 }
 /** The contract's SessionBrief & { events: SessionEvent[] }: here `events` is the list, not the count. */
 export type SessionDetail = Omit<SessionBrief, 'events'> & { events: SessionEvent[]; hops?: Hops }
+
+export interface AlertEvent { t: string; state: 'raised' | 'cleared'; id: string; kind?: string; severity?: string; message?: string }

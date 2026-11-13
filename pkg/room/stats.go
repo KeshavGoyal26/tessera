@@ -11,8 +11,17 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
-// Snapshot implements stats.Provider. It takes only control-plane locks.
-func (m *manager) Snapshot() *stats.Snapshot {
+// snapShare: the observers (dashboard, Prometheus, /stats) share a snapshot this recent
+// instead of each building one.
+const snapShare = 900 * time.Millisecond
+
+// SharedStats is the provider for observers: one snapshot per snapShare, read-only.
+func (m *manager) SharedStats() stats.Provider { return m.shared }
+
+// Snapshot implements stats.Provider: always a fresh snapshot. It takes only control-plane locks.
+func (m *manager) Snapshot() *stats.Snapshot { return m.buildSnapshot() }
+
+func (m *manager) buildSnapshot() *stats.Snapshot {
 	now := time.Now()
 	s := &stats.Snapshot{Time: now, Node: m.sampler.Sample(now)}
 	if c, ok := m.engine.(rtc.PeerConnectionCounter); ok {

@@ -14,6 +14,7 @@
 package stats
 
 import (
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,27 @@ import (
 // enough to call every second with thousands of tracks.
 type Provider interface {
 	Snapshot() *Snapshot
+}
+
+// Shared wraps p so that callers within ttl of the last snapshot get that snapshot again
+// (read-only) instead of a new one: several observers sampling the same node build it once.
+func Shared(p Provider, ttl time.Duration) Provider { return &shared{p: p, ttl: ttl} }
+
+type shared struct {
+	p    Provider
+	ttl  time.Duration
+	mu   sync.Mutex
+	last *Snapshot
+	at   time.Time
+}
+
+func (s *shared) Snapshot() *Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil || time.Since(s.at) >= s.ttl {
+		s.last, s.at = s.p.Snapshot(), time.Now()
+	}
+	return s.last
 }
 
 // ProviderFunc adapts a function to Provider.

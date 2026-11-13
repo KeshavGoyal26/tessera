@@ -514,6 +514,9 @@ func (p *Participant) close(reason tesserav1.DisconnectReason, sendLeave bool) b
 	subs := p.subs
 	p.subs = map[string]*subscription{}
 	p.mu.Unlock()
+	if f := p.room.m.onLeave; f != nil {
+		f(p.sid, strings.ToLower(strings.TrimPrefix(reason.String(), "DISCONNECT_REASON_")))
+	}
 	for _, s := range subs {
 		s.dt.Close()
 	}

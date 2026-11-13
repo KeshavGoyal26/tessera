@@ -107,6 +107,7 @@ type Handler struct {
 	cl        clusterData
 	subs      map[chan []byte]struct{}
 	alertAt   map[string]time.Time
+	alertLog  []AlertEvent // raised and cleared, oldest first
 	rec       []RecorderStatus
 	recAt     time.Time
 

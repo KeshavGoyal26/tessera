@@ -393,6 +393,16 @@ func (h *Handler) queryLocal(route string, v url.Values) (any, error) {
 		return h.sessionsPage(v), nil
 	case "session-detail":
 		return h.sessionDetail(v)
+	case "alerts": // the alert history, newest first; state=raised|cleared, kind=…
+		h.mu.Lock()
+		log := slices.Clone(h.alertLog)
+		h.mu.Unlock()
+		slices.Reverse(log)
+		state, kind := v.Get("state"), v.Get("kind")
+		total, items := page(p, log, func(e *AlertEvent) bool {
+			return (state == "" || e.State == state) && (kind == "" || e.Kind == kind) && p.match(e.ID, e.Message)
+		}, nil)
+		return map[string]any{"version": ix.version, "total": total, "offset": p.offset, "items": items}, nil
 	case "live":
 		h.mu.Lock()
 		l := h.live
@@ -405,7 +415,7 @@ func (h *Handler) queryLocal(route string, v url.Values) (any, error) {
 var errUnknown = errors.New("unknown endpoint")
 
 // queryRoutes are the GET routes answered by queryLocal (and forwarded with node=).
-var queryRoutes = map[string]bool{"sessions": true, "session-detail": true, "rooms": true, "participants": true, "tracks": true, "participant": true, "track": true, "recorders": true, "live": true}
+var queryRoutes = map[string]bool{"alerts": true, "sessions": true, "session-detail": true, "rooms": true, "participants": true, "tracks": true, "participant": true, "track": true, "recorders": true, "live": true}
 
 // serveQuery answers a query route, on this node or forwarded to node=<id>, cached per
 // sample (per query string).

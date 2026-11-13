@@ -16,6 +16,8 @@ export interface ChartDef {
   zero?: boolean;
   /** Whole-number y ticks (counts, ms), so small ranges do not repeat a rounded label. */
   int?: boolean;
+  /** Vertical marker lines (times in seconds, colour as a CSS variable), e.g. alerts raised. */
+  markers?: () => { t: number; color: string }[];
 }
 
 const INT_INCRS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6, 2e6, 5e6, 1e7];
@@ -40,6 +42,23 @@ export class Chart {
         height: 160,
         legend: { show: true, live: true },
         cursor: { drag: { x: false, y: false } },
+        hooks: {
+          draw: [(u: uPlot) => {
+            const marks = def.markers?.() ?? [];
+            if (!marks.length) return;
+            const { ctx, bbox } = u;
+            ctx.save();
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            for (const m of marks) {
+              const x = Math.round(u.valToPos(m.t, 'x', true));
+              if (x < bbox.left || x > bbox.left + bbox.width) continue;
+              ctx.strokeStyle = cssVar(m.color);
+              ctx.beginPath(); ctx.moveTo(x, bbox.top); ctx.lineTo(x, bbox.top + bbox.height); ctx.stroke();
+            }
+            ctx.restore();
+          }],
+        },
         scales: { x: { time: true }, y: { range: (_u, min, max) => [def.zero === false ? min : 0, Math.max(max * 1.1, def.zero === false ? max + 1 : 1)] } },
         axes: [
           { stroke: fg, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },

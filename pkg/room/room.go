@@ -52,6 +52,8 @@ type Manager interface {
 	Admin
 	signal.SessionHandler
 	stats.Provider
+	// SharedStats serves observers (dashboard, /stats): snapshots shared for a moment.
+	SharedStats() stats.Provider
 	// Drain refuses new joins and asks clients to reconnect elsewhere.
 	Drain(ctx context.Context) error
 	// Ready reports readiness (false while draining).
@@ -72,6 +74,9 @@ type Params struct {
 	// Recording, if set, records participants who join with the auto_record grant (or
 	// into a room created with recording_enabled) and is told when participants leave.
 	Recording RecordingTrigger
+	// OnLeave, if set, is called once per participant that leaves, with why (the disconnect
+	// reason, e.g. "client_initiated"), for observers such as the dashboard's session journal.
+	OnLeave func(sid, reason string)
 }
 
 // RecordingTrigger starts and stops participant recordings as participants come and go.
@@ -82,12 +87,15 @@ type RecordingTrigger interface {
 }
 
 type manager struct {
+	// shared serves observers one snapshot per snapShare (stats.go).
+	shared    stats.Provider
 	cfg       *config.Config
 	engine    rtc.Engine
 	notifier  webhook.Notifier
 	recording RecordingTrigger
 	keys      auth.KeyProvider // signs refreshed participant tokens; nil disables refresh
 	logger    *slog.Logger
+	onLeave   func(sid, reason string)
 	sampler   *stats.NodeSampler
 
 	mu       sync.RWMutex
@@ -113,12 +121,13 @@ func NewManager(p Params) (Manager, error) {
 		rtc.NegotiationDebounce = cfg.Signal.NegotiationDebounce
 	}
 	m := &manager{
-		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, keys: p.Keys, logger: p.Logger,
+		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, keys: p.Keys, logger: p.Logger, onLeave: p.OnLeave,
 		sampler: stats.NewNodeSampler(cfg.NodeID),
 		rooms:   map[string]*Room{}, bySID: map[string]*Participant{},
 	}
+	m.shared = stats.Shared(m, snapShare)
 	if p.Registry != nil {
-		_ = p.Registry.Register(stats.NewCollector(m))
+		_ = p.Registry.Register(stats.NewCollector(m.shared))
 	}
 	return m, nil
 }

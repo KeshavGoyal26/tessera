@@ -341,7 +341,43 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 	group(cur)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	for id, a := range cur {
+		if _, ok := h.alertAt[id]; !ok {
+			h.logAlert(AlertEvent{T: now, State: "raised", ID: id, Kind: a.Kind, Severity: a.Severity, Message: a.Message})
+		}
+	}
+	for id := range h.alertAt {
+		if _, ok := cur[id]; !ok {
+			h.logAlert(AlertEvent{T: now, State: "cleared", ID: id})
+		}
+	}
 	return stamp(cur, h.alertAt, now)
+}
+
+// AlertEvent is an alert raised or cleared, kept for alertLogFor (at most alertLogMax).
+type AlertEvent struct {
+	T        time.Time `json:"t"`
+	State    string    `json:"state"` // raised, cleared
+	ID       string    `json:"id"`
+	Kind     string    `json:"kind,omitempty"`
+	Severity string    `json:"severity,omitempty"`
+	Message  string    `json:"message,omitempty"`
+}
+
+const (
+	alertLogFor = 24 * time.Hour
+	alertLogMax = 1000
+)
+
+// logAlert appends to the alert history, dropping entries older than alertLogFor or beyond
+// alertLogMax. The caller holds h.mu.
+func (h *Handler) logAlert(e AlertEvent) {
+	h.alertLog = append(h.alertLog, e)
+	drop := 0
+	for drop < len(h.alertLog) && (len(h.alertLog)-drop > alertLogMax || e.T.Sub(h.alertLog[drop].T) > alertLogFor) {
+		drop++
+	}
+	h.alertLog = h.alertLog[drop:]
 }
 
 // groupAt: more participants than this with the same kind of alert become one alert.

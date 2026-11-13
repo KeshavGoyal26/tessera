@@ -185,3 +185,12 @@ Nothing the dashboard sends grows with the number of participants:
   sorted there) and the rooms are merged by name; cost O(nodes × page), cached a few seconds.
   Exact for name order; for presenter/viewer order a room's counts from a node that did not
   return it in its slice are missing.
+
+## Also
+
+- **Shared snapshots**: the dashboard, Prometheus and `/stats` read one shared snapshot per
+  ~1 s (`stats.Shared`) instead of each building their own; `Snapshot()` itself stays fresh.
+- **Leave reasons**: the room manager reports why each participant left (`room.Params.OnLeave`),
+  shown as a `leave_reason` event in the session timeline.
+- **Alert history**: alerts raised and cleared over the last 24 h (at most 1,000), paged and
+  searchable on Overview (`api/alerts`), and drawn as dashed markers on the Overview charts.
