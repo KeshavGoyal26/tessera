@@ -182,10 +182,17 @@ func TestClusterView(t *testing.T) {
 		t.Fatalf("room %+v", room.Nodes)
 	}
 
-	// One node's full update, through this dashboard.
-	var u Update
-	if code := getJSON(t, ce.edge, c, "/admin/api/cluster/node?id=m2", &u); code != 200 || u.Snapshot == nil || u.Snapshot.Rooms[0].Name != "h" {
-		t.Fatalf("%d %+v", code, u.Snapshot)
+	// One node's live frame, and its rooms paged on that node, through this dashboard.
+	var u Live
+	if code := getJSON(t, ce.edge, c, "/admin/api/cluster/node?id=m2", &u); code != 200 || u.Version == 0 || u.Counts.Rooms != 1 {
+		t.Fatalf("%d %+v", code, u)
+	}
+	var rooms struct {
+		Total int
+		Items []RoomRow
+	}
+	if code := getJSON(t, ce.edge, c, "/admin/api/rooms?node=m2", &rooms); code != 200 || rooms.Total != 1 || rooms.Items[0].Name != "h" {
+		t.Fatalf("rooms on m2: %d %+v", code, rooms)
 	}
 	if code := getJSON(t, ce.edge, c, "/admin/api/cluster/node?id=nope", &u); code != http.StatusBadGateway {
 		t.Fatalf("unknown node: %d", code)

@@ -1,6 +1,6 @@
-import { action, recordings } from '../api';
+import { action, recorders, recordings } from '../api';
 import { store } from '../store';
-import type { CoordRecording, RecTrack } from '../types';
+import type { CoordRecording, RecorderStatus, RecTrack } from '../types';
 import { attachTimeline, setDot, timelineUrl } from '../quality';
 import { badge, esc, fmtBytes, fmtDur, fmtNum, matches, playUrl, table } from '../util';
 import { toast } from './rooms';
@@ -11,6 +11,8 @@ export class Recordings implements View {
   private coord: CoordRecording[] = [];
   private coordTotal = 0;
   private coordErr = '';
+  private recs: RecorderStatus[] = [];
+  private recNode = '';
   private loaded = false;
   private filter!: HTMLInputElement;
   private timer?: number;
@@ -30,6 +32,11 @@ export class Recordings implements View {
   }
 
   private async refreshCoord(): Promise<void> {
+    const node = (this.recNode = store.node);
+    try {
+      const r = await recorders({ node });
+      if (node === store.node) this.recs = r.recorders ?? [];
+    } catch { /* the workers' cards keep their last state */ }
     try {
       const r = await recordings();
       this.coord = r.recordings ?? [];
@@ -98,10 +105,12 @@ export class Recordings implements View {
   }
 
   update(): void {
+    // The node picker changed: fetch that node's recorders now.
+    if (this.loaded && this.recNode !== store.node) { this.recNode = store.node; this.recs = []; void this.refreshCoord(); }
     const body = this.root.querySelector<HTMLElement>('.body');
     if (!body) return;
     const q = this.filter.value;
-    const recs = store.update?.recorders ?? [];
+    const recs = this.recs;
     const workers = recs.map((r) => {
       if (!r.ok || !r.stats) return `<div class="card bad"><div class="label">${esc(r.url)}</div><div class="value">down</div><div class="sub">${esc(r.error ?? '')}</div></div>`;
       const s = r.stats;

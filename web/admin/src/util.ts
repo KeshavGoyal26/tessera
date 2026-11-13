@@ -1,4 +1,4 @@
-import type { CoordRecording, NodeRoom, Participant, Snapshot } from './types';
+import type { CoordRecording, NodeRoom, Participant } from './types';
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (v: unknown): string => String(v ?? '').replace(/[&<>"']/g, (c) => ESC[c]!);
 
@@ -62,24 +62,6 @@ export function role(p: Participant): Role {
 }
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-const videoFirst = (a: { kind: string }, b: { kind: string }): number => Number(a.kind !== 'video') - Number(b.kind !== 'video');
-
-// sortSnapshot orders a snapshot in place: rooms by name, presenters before viewers, then
-// by identity, video before audio. The server builds the lists from maps, so without this
-// rows would swap places every second (and a button could move under the pointer).
-export function sortSnapshot(s: Snapshot): void {
-  const rooms = s.rooms ?? [];
-  rooms.sort((a, b) => cmp(a.name, b.name));
-  for (const r of rooms) {
-    const ps = r.participants ?? [];
-    ps.sort((a, b) => ROLE_ORDER[role(a)] - ROLE_ORDER[role(b)] || cmp(a.identity, b.identity) || cmp(a.sid, b.sid));
-    const who = new Map(ps.map((p) => [p.sid, p.identity]));
-    for (const p of ps) {
-      p.published?.sort((a, b) => videoFirst(a, b) || cmp(a.sid, b.sid));
-      p.subscribed?.sort((a, b) => cmp(who.get(a.publisher_sid) ?? '', who.get(b.publisher_sid) ?? '') || videoFirst(a, b) || cmp(a.track_sid, b.track_sid));
-    }
-  }
-}
 
 /** Counts the participants of rooms by role (hidden ones included: relay sessions are hidden). */
 export function roleCounts(rooms: { participants: Participant[] | null }[]): Record<Role, number> {
@@ -92,6 +74,20 @@ export function roleCounts(rooms: { participants: Participant[] | null }[]): Rec
 export function matches(q: string, ...fields: (string | undefined)[]): boolean {
   const s = q.trim().toLowerCase();
   return !s || fields.some((f) => f?.toLowerCase().includes(s));
+}
+
+/** Query parameters of an API call; empty, false and undefined ones are left out. */
+export type Params = Record<string, string | number | boolean | undefined>;
+export function qs(p: Params): string {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== '' && v !== false) out.push(`${k}=${encodeURIComponent(v === true ? '1' : String(v))}`);
+  return out.length ? '?' + out.join('&') : '';
+}
+
+/** Appends to a history array, dropping the oldest beyond max (15 minutes at 1 Hz). */
+export function pushCap<T>(a: T[], p: T, max = 900): void {
+  a.push(p);
+  if (a.length > max) a.splice(0, a.length - max);
 }
 
 /** The most rows a table renders; the rest are counted below it (big nodes have thousands). */

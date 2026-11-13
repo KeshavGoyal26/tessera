@@ -259,9 +259,10 @@ func TestSSEStream(t *testing.T) {
 	n := 0
 	for sc.Scan() && n < 3 {
 		if strings.HasPrefix(sc.Text(), "data: ") {
-			var u Update
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(sc.Text(), "data: ")), &u); err != nil || u.Snapshot == nil {
-				t.Fatalf("%v", err)
+			data := strings.TrimPrefix(sc.Text(), "data: ")
+			var u Live
+			if err := json.Unmarshal([]byte(data), &u); err != nil || u.Version == 0 || strings.Contains(data, `"rooms":[`) {
+				t.Fatalf("a small live frame without room lists: %v %.200s", err, data)
 			}
 			n++
 		}

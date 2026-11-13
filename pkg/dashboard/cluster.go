@@ -10,6 +10,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,6 +153,17 @@ func (h *Handler) latestBytes() ([]byte, error) {
 	return b, nil
 }
 
+// liveBytes is the latest Live frame as JSON (cluster/node: another node's live view).
+func (h *Handler) liveBytes() ([]byte, error) {
+	h.mu.Lock()
+	b := h.liveJSON
+	h.mu.Unlock()
+	if b == nil {
+		return nil, errors.New("no sample yet")
+	}
+	return b, nil
+}
+
 // ---- served to other nodes ---------------------------------------------------
 
 // RoomBrief is one room in a node's room index.
@@ -191,6 +203,20 @@ func (h *Handler) nodeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if route := q.Get("api"); route != "" { // a query forwarded by another node's dashboard (node=)
+		q.Del("api")
+		b, err := h.queryBytes(route, q)
+		switch {
+		case errors.Is(err, errGone), errors.Is(err, errUnknown):
+			jsonErr(w, http.StatusNotFound, err.Error())
+		case err != nil:
+			jsonErr(w, 500, err.Error())
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(b)
+		}
+		return
+	}
 	switch {
 	case q.Has("room"):
 		writeJSON(w, 200, h.localRoom(q.Get("room")))
@@ -202,7 +228,7 @@ func (h *Handler) nodeAPI(w http.ResponseWriter, r *http.Request) {
 		h.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"interval_ms": h.p.Interval.Milliseconds(), "points": pts})
 	default:
-		b, err := h.latestBytes()
+		b, err := h.liveBytes()
 		if err != nil {
 			jsonErr(w, 500, err.Error())
 			return
@@ -481,6 +507,10 @@ func (h *Handler) token() (string, error) {
 func (h *Handler) fetch(ctx context.Context, id, query string) ([]byte, error) {
 	if id == h.p.Cluster.Self {
 		q, _ := url.ParseQuery(query)
+		if route := q.Get("api"); route != "" {
+			q.Del("api")
+			return h.queryBytes(route, q)
+		}
 		switch {
 		case q.Has("room"):
 			return json.Marshal(h.localRoom(q.Get("room")))
@@ -492,7 +522,7 @@ func (h *Handler) fetch(ctx context.Context, id, query string) ([]byte, error) {
 			h.mu.Unlock()
 			return json.Marshal(map[string]any{"interval_ms": h.p.Interval.Milliseconds(), "points": pts})
 		}
-		return h.latestBytes()
+		return h.liveBytes()
 	}
 	h.cl.mu.Lock()
 	base := h.cl.urls[id]

@@ -1,17 +1,12 @@
-import { history, nodeHistory, nodeUpdate, session, stream } from './api';
-import type { Alert, Point, Update } from './types';
-import { sortSnapshot } from './util';
+import { history, live, nodeHistory, session, stream } from './api';
+import type { Alert, Live, Point } from './types';
 
-export interface TrackPoint { t: number; bitrate: number; loss: number; jitter: number; rtt: number; bwe: number }
-
-const MAX_TRACK_POINTS = 900; // 15 minutes at 1 Hz, kept in the browser
 const NODE_POLL_MS = 2000;
 
 class Store {
-  update?: Update;
+  /** The latest live frame (small and fixed-size); lists and details are fetched by the views. */
+  live?: Live;
   points: Point[] = [];
-  /** Per-track history collected in the browser, key "pub:<sid>" or "sub:<participant>:<sid>". */
-  tracks = new Map<string, TrackPoint[]>();
   connected = false;
   /** The node shown by the node views: '' for this node (live stream), else another
    *  cluster node, polled through this dashboard every NODE_POLL_MS while the tab is visible. */
@@ -33,7 +28,7 @@ class Store {
     let timer = 0, stopped = false;
     const poll = async () => {
       if (!document.hidden) {
-        try { const u = await nodeUpdate(node); if (!stopped) { this.ingest(u); this.setConnected(true); } } catch { if (!stopped) this.setConnected(false); }
+        try { const u = await live({ node }); if (!stopped) { this.ingest(u); this.setConnected(true); } } catch { if (!stopped) this.setConnected(false); }
       }
       if (!stopped) timer = window.setTimeout(poll, NODE_POLL_MS);
     };
@@ -48,9 +43,8 @@ class Store {
     if (id === this.node) return;
     this.close();
     this.node = id;
-    this.update = undefined;
+    this.live = undefined;
     this.points = [];
-    this.tracks.clear();
     this.emit();
     void this.start();
   }
@@ -58,36 +52,14 @@ class Store {
   get canAct(): boolean { return !this.node || session.cluster?.role === 'edge'; }
   private setConnected(c: boolean): void { if (c !== this.connected) { this.connected = c; this.emit(); } }
 
-  private ingest(u: Update): void {
-    sortSnapshot(u.snapshot);
-    this.update = u;
+  private ingest(l: Live): void {
+    this.live = l;
     const last = this.points[this.points.length - 1];
-    if (!last || u.point.t > last.t) this.points.push(u.point);
+    if (!last || l.point.t > last.t) this.points.push(l.point);
     if (this.points.length > 3600) this.points.shift();
-    const t = u.point.t;
-    const seen = new Set<string>();
-    for (const r of u.snapshot.rooms ?? []) {
-      for (const p of r.participants ?? []) {
-        for (const tr of p.published ?? []) {
-          const key = `pub:${tr.sid}`; seen.add(key);
-          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, rtt: 0, bwe: 0 });
-        }
-        for (const tr of p.subscribed ?? []) {
-          const key = `sub:${p.sid}:${tr.track_sid}`; seen.add(key);
-          this.push(key, { t, bitrate: tr.bitrate_bps, loss: tr.loss_percent, jitter: tr.jitter_ms, rtt: tr.rtt_ms, bwe: tr.bandwidth_estimate_bps });
-        }
-      }
-    }
-    for (const k of this.tracks.keys()) if (!seen.has(k)) this.tracks.delete(k);
     this.emit();
   }
-  private push(key: string, p: TrackPoint): void {
-    let a = this.tracks.get(key);
-    if (!a) this.tracks.set(key, (a = []));
-    a.push(p);
-    if (a.length > MAX_TRACK_POINTS) a.shift();
-  }
-  get alerts(): Alert[] { return this.update?.alerts ?? []; }
+  get alerts(): Alert[] { return this.live?.alerts ?? []; }
 }
 
 export const store = new Store();

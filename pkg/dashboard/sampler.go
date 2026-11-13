@@ -3,7 +3,6 @@ package dashboard
 import (
 	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,15 +127,15 @@ func (h *Handler) tick() {
 		sum, _ = json.Marshal(summaryOf(snap, pt, recs, alerts))
 	}
 	h.mu.Lock()
-	viewers := len(h.subs)
+	total := len(h.alertAt) // every active alert; the list is capped
 	h.mu.Unlock()
-	var b []byte
-	err := errNoViewers
-	if viewers > 0 { // the frame grows with participants x subscriptions; skip it when nobody watches
-		b, err = json.Marshal(u)
-	}
+	ver := h.version.Load() + 1
+	live := liveOf(ver, snap, pt, alerts, total, recs)
+	b, err := json.Marshal(live) // a few KB at any scale: sent to every viewer as is
 	h.mu.Lock()
-	h.latest, h.latestJSON, h.summary = u, b, sum
+	h.latest, h.latestJSON, h.summary = u, nil, sum
+	h.live, h.liveJSON = live, b
+	h.version.Store(ver)
 	h.hist.add(pt)
 	if err == nil {
 		for ch := range h.subs {
@@ -148,8 +147,6 @@ func (h *Handler) tick() {
 	}
 	h.mu.Unlock()
 }
-
-var errNoViewers = errors.New("no viewers")
 
 // recorders fetches recorder /stats at most every 2 s, in parallel.
 func (h *Handler) recorders() []RecorderStatus {

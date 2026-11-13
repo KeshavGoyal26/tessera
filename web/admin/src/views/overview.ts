@@ -1,5 +1,5 @@
 import { store } from '../store';
-import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, roleCounts } from '../util';
+import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum } from '../util';
 import { ChartGroup, render, type View } from './view';
 
 export class Overview implements View {
@@ -28,19 +28,22 @@ export class Overview implements View {
   }
 
   update(): void {
-    const u = store.update;
+    const u = store.live;
     if (!u) { render(this.cards, '<p class="muted">Waiting for data…</p>'); return; }
-    const n = u.snapshot.node;
+    const n = u.node;
     const card = (label: string, value: string, sub = '', cls = '') => `<div class="card ${cls}"><div class="label">${label}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
-    const roles = roleCounts(u.snapshot.rooms ?? []);
-    const recs = u.recorders.filter((r) => r.ok && r.stats).map((r) => r.stats!);
+    const c = u.counts, q = u.quality;
+    const recs = u.recorders.filter((r) => r.ok);
     const used = recs.reduce((a, s) => a + s.capacity_used, 0), cap = recs.reduce((a, s) => a + s.capacity, 0);
-    const recCard = recs.length
-      ? card('Recording', `${recs.reduce((a, s) => a + s.active_recordings, 0)} active`, `capacity ${used} of ${cap} units`, cap && used >= cap ? 'bad' : cap && used * 10 >= cap * 9 ? 'warn' : '')
+    const recCard = u.recorders.length
+      ? card('Recording', `${recs.reduce((a, s) => a + s.active_recordings, 0)} active`, `${recs.reduce((a, s) => a + s.tracks_recording, 0)} tracks · capacity ${used} of ${cap} units${recs.length < u.recorders.length ? ` · ${u.recorders.length - recs.length} down` : ''}`, cap && used >= cap ? 'bad' : recs.length < u.recorders.length || (cap && used * 10 >= cap * 9) ? 'warn' : '')
       : '';
+    const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'none yet'} ${fmtNum(v)}`).join(' · ');
     render(this.cards,
-      card('Rooms', fmtNum(n.rooms)) +
-      card('Participants', fmtNum(n.participants), `${roles.presenter} presenters · ${roles.viewer} viewers${roles.relay ? ` · ${roles.relay} relay` : ''}`) +
+      card('Rooms', fmtNum(c.rooms)) +
+      card('Participants', fmtNum(n.participants), `${fmtNum(c.presenters)} presenters · ${fmtNum(c.viewers)} viewers${c.relays ? ` · ${fmtNum(c.relays)} relay` : ''}${c.recorders ? ` · ${fmtNum(c.recorders)} recorder` : ''}`) +
+      card('Connection quality', `${fmtNum(q.poor + q.lost)} poor or lost`, `${fmtNum(q.excellent)} excellent · ${fmtNum(q.good)} good · ${fmtNum(q.poor)} poor · ${fmtNum(q.lost)} lost · ${fmtNum(q.unknown)} unknown`, q.lost ? 'bad' : q.poor ? 'warn' : '') +
+      card('ICE candidates', ice || 'none yet') +
       card('Tracks', `${n.published_tracks} ↑ / ${n.subscribed_tracks} ↓`, `${n.peer_connections} peer connections`) + recCard +
       card('CPU', `${(n.cpu_percent / Math.max(n.num_cpu, 1)).toFixed(0)}%`, `${n.num_cpu} cores`) +
       card('Memory', fmtBytes(n.rss_bytes), `heap ${fmtBytes(n.heap_bytes)}`) +
@@ -48,8 +51,9 @@ export class Overview implements View {
       card('UDP in', fmtBps(n.udp_bytes_in_per_sec * 8), `${fmtNum(n.udp_packets_in_per_sec)} pkt/s`) +
       card('UDP out', fmtBps(n.udp_bytes_out_per_sec * 8), `${fmtNum(n.udp_packets_out_per_sec)} pkt/s`) +
       card('Uptime', fmtDur(Date.now() - Date.parse(n.started_at)), `${n.node_id} ${n.version}`));
+    const more = u.alerts_total > u.alerts.length ? `<p class="muted">… and ${fmtNum(u.alerts_total - u.alerts.length)} more.</p>` : '';
     render(this.alerts, u.alerts.length
-      ? u.alerts.map((a) => `<div class="alert ${a.severity}">${badge(a.kind, a.severity === 'critical' ? 'bad' : 'warn')} ${esc(a.message)} <span class="muted">since ${new Date(a.since).toLocaleTimeString()}</span></div>`).join('')
+      ? u.alerts.map((a) => `<div class="alert ${a.severity}">${badge(a.kind, a.severity === 'critical' ? 'bad' : 'warn')} ${esc(a.message)} <span class="muted">since ${new Date(a.since).toLocaleTimeString()}</span></div>`).join('') + more
       : '<p class="ok-line">No active alerts.</p>');
     const pts = store.points;
     this.charts.update(pts.map((p) => p.t / 1000), pts.length);

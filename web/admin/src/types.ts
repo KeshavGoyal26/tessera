@@ -44,7 +44,53 @@ export interface RecorderStats {
     outputs: null | { track_sid: string; participant: string; playlist_url?: string; playlist_location: string; segments: number; duration_ms: number }[] }[]
 }
 export interface RecorderStatus { url: string; ok: boolean; error?: string; stats?: RecorderStats }
-export interface Update { snapshot: Snapshot; recorders: RecorderStatus[]; alerts: Alert[]; point: Point }
+
+// Scale-safe data flow: a small live frame over SSE, paged lists and detail pages (docs: dashboard contract).
+export interface RecorderSummary {
+  url: string; ok: boolean; error?: string; capacity: number; capacity_used: number; active_recordings: number; tracks_recording: number
+  segments_written: number; bytes_uploaded: number; upload_backlog: number; upload_errors: number; track_errors: number
+  segment_delay_ms: number; segment_delay_max_ms: number
+}
+export interface Live {
+  version: number; point: Point; node: Node
+  counts: { rooms: number; presenters: number; viewers: number; relays: number; recorders: number }
+  quality: { excellent: number; good: number; poor: number; lost: number; unknown: number }
+  ice: Record<string, number>
+  alerts: Alert[]; alerts_total: number; recorders: RecorderSummary[]
+}
+export interface Page<T> { version: number; total: number; offset: number; items: T[] }
+export interface RoomBrief {
+  name: string; sid: string; created_at: string; participants: number; presenters: number; viewers: number; relays: number
+  recording: boolean; speakers: string[]; worst_quality: string
+}
+export interface ParticipantBrief {
+  room: string; sid: string; identity: string; name?: string; role: 'presenter' | 'viewer' | 'relay' | 'recorder'
+  kind: string; hidden?: boolean; state: string; quality: string; score: number; rtt_ms: number
+  loss_percent: number; bitrate_bps: number; bwe_bps: number; ice_type: string; ice_setup_ms: number; dtls_setup_ms: number
+  published: number; subscribed: number; paused: number; no_video: boolean; client_sdk?: string; joined_at: string
+}
+export interface SetupStats { avg: number; p95: number; max: number }
+export interface ParticipantPage extends Page<ParticipantBrief> {
+  quality: Record<string, number>; ice: Record<string, number>; ice_setup_ms: SetupStats; dtls_setup_ms: SetupStats; relay: number
+}
+export interface TrackBrief {
+  room: string; participant: string; participant_sid: string; sid: string; kind: string; source: string; codec: string
+  width?: number; height?: number; bitrate_bps: number; loss_percent: number; jitter_ms: number
+  subscribers: number; active: boolean; muted: boolean; nacks: number; plis: number
+}
+export interface SubscriberBrief {
+  sid: string; identity: string; bitrate_bps: number; loss_percent: number; jitter_ms: number; rtt_ms: number
+  bwe_bps: number; paused: boolean; muted: boolean; restarts: number
+}
+export interface ParticipantDetail {
+  version: number; room: string; participant: Participant & { subscribed_total?: number }; names: Record<string, string>
+  /** Count of subscriptions when the list is capped (500). */
+  subscribed_total?: number
+}
+export interface TrackDetail {
+  version: number; room: string; participant: string; participant_sid: string; track: Published
+  subscribers: SubscriberBrief[]; subscribers_total: number
+}
 export interface CoordRecording { recording_id: string; room: string; status: string; started_at_ms?: string; ended_at_ms?: string; error?: string; worker_id?: string
   request?: { participant?: { identity: string }; track?: { track_sid: string } }
   master_playlist_location?: string

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { NodeRoom, Participant, Published, Snapshot, Subscribed } from './types';
-import { esc, fmtBps, fmtBytes, fmtDur, matches, mergeRoom, nodeHealth, percentile, playUrl, role, roleCounts, sortSnapshot, table } from './util';
+import type { NodeRoom, Participant, Published, Subscribed } from './types';
+import { esc, fmtBps, fmtBytes, fmtDur, matches, mergeRoom, nodeHealth, percentile, playUrl, role, pushCap, qs, roleCounts, table } from './util';
 
 describe('util', () => {
   it('escapes HTML', () => expect(esc('<a href="x">&')).toBe('&lt;a href=&quot;x&quot;&gt;&amp;'));
@@ -50,31 +50,6 @@ describe('presenter/viewer model', () => {
     expect(roleCounts([{ participants: [part('PA_1', 'p', { published: [pub('TR_v', 'video')] }), part('PA_2', 'v'), part('PA_3', 'v2')] }, { participants: null }]))
       .toEqual({ presenter: 1, viewer: 2, relay: 0, recorder: 0 });
   });
-
-  it('sorts a snapshot so rows keep their place between updates', () => {
-    const make = (): Snapshot => ({ time: '', node: {} as Snapshot['node'], rooms: [
-      { sid: 'RM_b', name: 'b', created_at: '', active_recording: false, active_speakers: null, participants: [] },
-      { sid: 'RM_a', name: 'a', created_at: '', active_recording: false, active_speakers: null, participants: [
-        part('PA_v2', 'zed', { subscribed: [sub('TR_ya', 'PA_y', 'audio'), sub('TR_xv', 'PA_x', 'video'), sub('TR_yv', 'PA_y', 'video')] }),
-        part('PA_y', 'yan', { published: [pub('TR_ya', 'audio'), pub('TR_yv', 'video')] }),
-        part('PA_v1', 'amy'),
-        part('PA_x', 'xia', { published: [pub('TR_xv', 'video')] }),
-      ] },
-    ] });
-    const s = make();
-    sortSnapshot(s);
-    const a = s.rooms![0]!;
-    expect(s.rooms!.map((r) => r.name)).toEqual(['a', 'b']);
-    expect(a.participants!.map((p) => p.identity)).toEqual(['xia', 'yan', 'amy', 'zed']); // presenters first
-    expect(a.participants![1]!.published!.map((t) => t.sid)).toEqual(['TR_yv', 'TR_ya']); // video first
-    expect(a.participants![3]!.subscribed!.map((t) => t.track_sid)).toEqual(['TR_xv', 'TR_yv', 'TR_ya']); // by presenter identity
-    // Same result whatever order the server listed things in.
-    const r = make();
-    r.rooms!.reverse();
-    r.rooms![0]!.participants!.reverse();
-    sortSnapshot(r);
-    expect(JSON.stringify(r)).toBe(JSON.stringify(s));
-  });
 });
 
 describe('lists', () => {
@@ -90,6 +65,19 @@ describe('lists', () => {
     expect(html).toContain('Showing 3 of 5.');
     expect(table(['n'], rows)).not.toContain('Showing');
     expect(table(['n'], [], 'No <rooms>.')).toBe('<p class="muted">No &lt;rooms&gt;.</p>');
+  });
+});
+
+describe('queries', () => {
+  it('builds a query string, leaving out empty values', () => {
+    expect(qs({})).toBe('');
+    expect(qs({ q: '', sort: 'rtt', desc: true, offset: 0, limit: 100, node: undefined, x: false })).toBe('?sort=rtt&desc=1&offset=0&limit=100');
+    expect(qs({ q: 'a b&c', node: 'n/1' })).toBe('?q=a%20b%26c&node=n%2F1');
+  });
+  it('keeps the newest points of a history', () => {
+    const a = [1, 2, 3];
+    pushCap(a, 4, 3);
+    expect(a).toEqual([2, 3, 4]);
   });
 });
 

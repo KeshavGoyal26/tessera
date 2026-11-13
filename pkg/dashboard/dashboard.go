@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tesserav1 "github.com/KeshavGoyal26/tessera/gen/go/tessera/v1"
@@ -82,11 +83,20 @@ type Handler struct {
 	// node's Summary for the cluster heartbeat.
 	latestJSON []byte
 	summary    []byte
-	cl         clusterData
-	subs       map[chan []byte]struct{}
-	alertAt    map[string]time.Time
-	rec        []RecorderStatus
-	recAt      time.Time
+	// version counts samples; live is the latest Live frame (liveJSON marshalled once).
+	version  atomic.Uint64
+	live     *Live
+	liveJSON []byte
+	// Query layer (query.go): the index of the latest sample and answers cached per query.
+	qmu       sync.Mutex
+	idx       *index
+	qcache    map[string][]byte
+	qcacheVer uint64
+	cl        clusterData
+	subs      map[chan []byte]struct{}
+	alertAt   map[string]time.Time
+	rec       []RecorderStatus
+	recAt     time.Time
 
 	stop chan struct{}
 	done chan struct{}
@@ -278,6 +288,8 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, route string) {
 		pts := h.hist.all()
 		h.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"interval_ms": h.p.Interval.Milliseconds(), "points": pts})
+	case queryRoutes[route] && r.Method == http.MethodGet:
+		h.serveQuery(w, r, route)
 	case route == "events" && r.Method == http.MethodGet:
 		h.events(w, r)
 	case route == "recordings" && r.Method == http.MethodGet:
@@ -424,7 +436,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan []byte, 4)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
-	first := h.latest
+	first := h.liveJSON
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -438,7 +450,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		fl.Flush()
 		return true
 	}
-	if b, err := json.Marshal(first); err == nil && !send(b) {
+	if first != nil && !send(first) {
 		return
 	}
 	keep := time.NewTicker(15 * time.Second)
