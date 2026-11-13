@@ -62,7 +62,7 @@ export class Overview implements View {
     if (!u) { render(this.cards, '<p class="muted">Waiting for data…</p>'); return; }
     const n = u.node;
     const card = (label: string, value: string, sub = '', cls = '') => `<div class="card ${cls}"><div class="label">${label}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
-    const c = u.counts, q = u.quality;
+    const c = u.counts, q = u.quality; // the server always sends all five
     const recs = u.recorders.filter((r) => r.ok);
     const used = recs.reduce((a, s) => a + s.capacity_used, 0), cap = recs.reduce((a, s) => a + s.capacity, 0);
     const recCard = u.recorders.length
@@ -75,7 +75,7 @@ export class Overview implements View {
       ? card('Webhooks', `${fmtNum(sum('sent'))} sent`, `${fmtNum(sum('failed'))} failed · ${fmtNum(sum('retried'))} retried · ${fmtNum(sum('dropped'))} dropped · ${fmtNum(sum('queued'))} queued${whErr ? ` · last error: ${whErr.last_error} (${whErr.url})` : ''}`,
         sum('dropped') ? 'bad' : sum('failed') || sum('queued') > 100 ? 'warn' : '')
       : '';
-    const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'none yet'} ${fmtNum(v)}`).join(' · ');
+    const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'not connected yet'} ${fmtNum(v)}`).join(' · ');
     render(this.cards,
       card('Rooms', fmtNum(c.rooms)) +
       card('Participants', fmtNum(n.participants), `${fmtNum(c.presenters)} presenters · ${fmtNum(c.viewers)} viewers${c.relays ? ` · ${fmtNum(c.relays)} relay` : ''}${c.recorders ? ` · ${fmtNum(c.recorders)} recorder` : ''}`) +

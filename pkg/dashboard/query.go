@@ -255,7 +255,8 @@ func liveOf(version uint64, s *stats.Snapshot, pt Point, alerts []Alert, total i
 		alerts = alerts[:liveAlerts]
 	}
 	l := &Live{Version: version, Point: pt, Node: s.Node, Alerts: alerts, AlertsTotal: total,
-		Quality: map[string]int{}, ICE: map[string]int{}, Recorders: make([]RecorderSummary, 0, len(recs))}
+		Quality: map[string]int{stats.QualityExcellent: 0, stats.QualityGood: 0, stats.QualityPoor: 0, stats.QualityLost: 0, stats.QualityUnknown: 0},
+		ICE:     map[string]int{}, Recorders: make([]RecorderSummary, 0, len(recs))}
 	l.Counts.Rooms = len(s.Rooms)
 	for ri := range s.Rooms {
 		r := &s.Rooms[ri]
@@ -265,12 +266,11 @@ func liveOf(version uint64, s *stats.Snapshot, pt Point, alerts []Alert, total i
 		l.Counts.Relays += rl
 		for pi := range r.Participants {
 			pp := &r.Participants[pi]
-			switch roleOf(pp) {
-			case "relay":
-				continue
-			case "recorder":
+			if roleOf(pp) == "recorder" {
 				l.Counts.Recorders++
-				continue
+			}
+			if b := briefOf(r.Name, pp); !b.connectedHere() {
+				continue // quality and ICE describe connections to this node
 			}
 			l.Quality[cmp.Or(pp.ConnectionQuality, stats.QualityUnknown)]++
 			l.ICE[pp.ICECandidateType]++
