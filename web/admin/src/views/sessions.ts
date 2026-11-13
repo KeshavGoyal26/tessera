@@ -1,4 +1,4 @@
-import { sessionDetail, sessions } from '../api';
+import { session, sessionDetail, sessions } from '../api';
 import { store } from '../store';
 import type { Hops, QualityShare, SessionBrief, SessionDetail } from '../types';
 import { badge, esc, fmtBps, fmtDur, fmtNum, newestFirst, qualityBadge, safeDecode, table } from '../util';
@@ -58,7 +58,9 @@ export class Sessions implements View {
     this.root = root;
     const sid = safeDecode(args[0] ?? '');
     if (sid) return this.mountOne(sid);
-    root.innerHTML = '<div class="view-head"><h2>Sessions</h2></div><div class="body"></div>';
+    // On an edge presenters are only relayed copies: their sessions are on the media nodes.
+    const onEdge = session.cluster?.role === 'edge' && !store.node;
+    root.innerHTML = `<div class="view-head"><h2>Sessions</h2></div>${onEdge ? '<p class="muted">This edge holds viewers\' sessions; presenters\' sessions are on the media nodes (pick one with the node picker).</p>' : ''}<div class="body"></div>`;
     const head = root.querySelector<HTMLElement>('.view-head')!;
     const f = document.createElement('span');
     f.className = 'filters';

@@ -17,7 +17,6 @@ From the functional QA of 2026-11-09. Severity in brackets.
 - [low] After a crash (kill -9) `quality.json` is never finalised: storage has no `Get`.
 
 ## Dashboard / demo
-- [low] Theme toggle remounts the view: clears the filter and closes the player (`web/admin/src/main.ts` toggleTheme).
 - [low] Native-HLS player shows no error on failure.
 - [low] Cluster landing page node picker (QA a5 B11).
 - [low] Call page: tile order flips after a full rejoin.
@@ -35,3 +34,13 @@ From the functional QA of 2026-11-09. Severity in brackets.
   with no hint ("waiting for tracks").
 - Not covered yet: browser through cluster edges, recording playback via an edge, kick/metadata
   across edges, Redis restart, edge kill, real token expiry, camera-denied path.
+
+## Dashboard (after the scale rework, 2026-11-13)
+- [low] Stats are still built as one full snapshot (shared by dashboard, Prometheus and /stats,
+  ~1 per second, every 5 s when nobody watches); a separate allocation-free aggregate path would
+  cut the idle cost further.
+- [low] Cluster room list sorted by presenters/viewers is approximate (exact by name).
+- [low] Session leave reasons come from the room manager only (no client-side reason).
+- [low] Edges list only viewers' sessions; presenters' sessions are on media nodes (by design).
+- Not yet checked against a real 10k+ load: the dashboard was tested with 2,000 synthetic
+  participants (unit) and ~50 live ones (Docker cluster).

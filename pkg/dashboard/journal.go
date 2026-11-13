@@ -288,13 +288,13 @@ type Hops struct {
 // HopTrack is one track on a hop.
 type HopTrack struct {
 	TrackSID    string  `json:"track_sid"`
-	Presenter   string  `json:"presenter,omitempty"`
+	Presenter   string  `json:"presenter"`
 	Kind        string  `json:"kind"`
 	LossPercent float64 `json:"loss_percent"`
 	JitterMs    float64 `json:"jitter_ms"`
-	RTTMs       float64 `json:"rtt_ms,omitempty"`
+	RTTMs       float64 `json:"rtt_ms"`
 	BitrateBps  float64 `json:"bitrate_bps"`
-	Paused      bool    `json:"paused,omitempty"`
+	Paused      bool    `json:"paused"`
 }
 
 // HopSource is the uplink of a presenter whose track the session receives.
