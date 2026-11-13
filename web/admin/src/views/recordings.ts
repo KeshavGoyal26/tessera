@@ -3,18 +3,16 @@ import { store } from '../store';
 import type { CoordRecording, RecorderStatus, RecTrack } from '../types';
 import { attachTimeline, setDot, timelineUrl } from '../quality';
 import { badge, esc, fmtBytes, fmtDur, fmtNum, matches, playUrl, table } from '../util';
+import { PagedList, type Column } from './paged';
 import { toast } from './rooms';
-import { filterBox, render, type View } from './view';
+import { render, selectBox, type View } from './view';
 
 export class Recordings implements View {
   private root!: HTMLElement;
-  private coord: CoordRecording[] = [];
-  private coordTotal = 0;
-  private coordErr = '';
   private recs: RecorderStatus[] = [];
   private recNode = '';
   private loaded = false;
-  private filter!: HTMLInputElement;
+  private list!: PagedList<CoordRecording>;
   private timer?: number;
   private hls?: { destroy(): void };
   private stopTimeline?: () => void;
@@ -23,10 +21,17 @@ export class Recordings implements View {
   mount(root: HTMLElement): void {
     this.root = root;
     root.addEventListener('click', this.onClick);
-    root.innerHTML = '<div class="view-head"><h2>Recordings</h2></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><div class="qline" hidden><i class="cq"></i><div class="qbar" role="img"></div><span class="qsum muted"></span></div><p class="muted player-msg" role="status"></p></div><div class="body"></div>';
-    this.filter = filterBox(root.querySelector('.view-head')!, 'Filter by participant, room or id', () => this.update());
+    root.innerHTML = '<div class="view-head"><h2>Recordings</h2></div><div class="player" hidden><div class="player-bar"><b class="player-title"></b><button data-act="close-player">Close</button></div><video controls playsinline></video><div class="qline" hidden><i class="cq"></i><div class="qbar" role="img"></div><span class="qsum muted"></span></div><p class="muted player-msg" role="status"></p></div><h3>All recordings</h3><div class="coord"></div><div class="body"></div>';
+    const head = root.querySelector<HTMLElement>('.view-head')!;
+    const status = selectBox(head, 'Status', [['', 'All statuses'], ['active', 'In progress'], ['ended', 'Ended'], ['failed', 'Failed']], () => this.list.reload());
+    // The coordinator's list is searched and paged on the server; the workers below are small and local.
+    this.list = new PagedList<CoordRecording>({
+      head, body: root.querySelector('.coord')!, filterLabel: 'Search participant, room or id', sort: 'started', desc: true, name: 'recordings',
+      empty: 'No recordings yet.', columns: coordColumns, onData: () => this.update(),
+      fetch: (st) => recordings({ q: st.q.trim(), status: status.value, offset: st.offset, limit: st.limit }), // newest first (the server's only order)
+    });
     void this.refreshCoord();
-    // The list is not in the live stream; refresh it while the page is visible.
+    // The workers are not in the live stream; refresh them while the page is visible.
     this.timer = window.setInterval(() => { if (!document.hidden) void this.refreshCoord(); }, 5000);
     this.update();
   }
@@ -37,12 +42,6 @@ export class Recordings implements View {
       const r = await recorders({ node });
       if (node === store.node) this.recs = r.recorders ?? [];
     } catch { /* the workers' cards keep their last state */ }
-    try {
-      const r = await recordings();
-      this.coord = r.recordings ?? [];
-      this.coordTotal = r.total ?? this.coord.length;
-      this.coordErr = '';
-    } catch (e) { this.coordErr = (e as Error).message; }
     this.loaded = true;
     this.update();
   }
@@ -53,7 +52,7 @@ export class Recordings implements View {
     const d = b.dataset as Record<string, string>;
     if (d.act === 'stop-recording') {
       if (!confirm(`Stop recording ${d.id}?`)) return;
-      try { await action('stop-recording', { recording_id: d.id }); toast('Stop requested'); void this.refreshCoord(); } catch (err) { toast((err as Error).message, true); }
+      try { await action('stop-recording', { recording_id: d.id }); toast('Stop requested'); this.list.reload(); void this.refreshCoord(); } catch (err) { toast((err as Error).message, true); }
     } else if (d.act === 'play') {
       await this.play(d.url!, d.title ?? '');
     } else if (d.act === 'close-player') {
@@ -109,7 +108,7 @@ export class Recordings implements View {
     if (this.loaded && this.recNode !== store.node) { this.recNode = store.node; this.recs = []; void this.refreshCoord(); }
     const body = this.root.querySelector<HTMLElement>('.body');
     if (!body) return;
-    const q = this.filter.value;
+    const q = this.list?.state.q ?? '';
     const recs = this.recs;
     const workers = recs.map((r) => {
       if (!r.ok || !r.stats) return `<div class="card bad"><div class="label">${esc(r.url)}</div><div class="value">down</div><div class="sub">${esc(r.error ?? '')}</div></div>`;
@@ -144,41 +143,48 @@ export class Recordings implements View {
       return `<tr><td>${esc(who)}</td><td>${esc(f.room)}</td><td>${new Date(f.ended_at).toLocaleTimeString()}</td><td>${fmtDur(f.duration_ms)}</td><td>${st}</td>
         <td class="actions">${play} ${tracks}</td><td>${esc(f.error ?? '')}</td></tr>`;
     });
-    const now = Date.now();
-    const coordRows = this.coord.slice().reverse().filter((c) => matches(q, who(c), c.room, c.recording_id)).map((c) => {
-      const name = who(c);
-      const started = c.started_at_ms ? new Date(Number(c.started_at_ms)) : undefined;
-      const st = c.status.replace('RECORDING_STATUS_', '').toLowerCase();
-      const live = /starting|active|ending/.test(st);
-      const dur = started ? fmtDur((c.ended_at_ms ? Number(c.ended_at_ms) : live ? now : started.getTime()) - started.getTime()) : '';
-      const stBadge = st === 'complete' ? badge(st, 'ok') : live ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
-      const url = playUrl(c);
-      const title = `${name || c.recording_id} · ${c.room}${started ? ' · ' + started.toLocaleString() : ''}`;
-      const play = url ? `<button class="primary" data-act="play" data-url="${esc(url)}" data-title="${esc(title + (live ? ' · live' : ''))}">${live ? '▶ Watch live' : '▶ Play'}</button>` : '';
-      const stop = /STARTING|ACTIVE/.test(c.status) ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">■ Stop</button>` : '';
-      return `<tr><td>${esc(name)}</td><td>${esc(c.room)}</td><td>${started ? started.toLocaleTimeString() : ''}</td><td>${dur}</td><td>${stBadge}</td>
-      <td class="actions">${play} ${stop}</td><td title="${esc(c.recording_id)}">${esc(c.error ?? '')}</td></tr>`;
-    });
-    const running = this.coord.filter((c) => /STARTING|ACTIVE|ENDING/.test(c.status)).length;
-    const listNote = this.coordTotal > this.coord.length
-      ? `<p class="muted more">Listing every recording in progress and the newest ${this.coord.length - running} ended of ${this.coordTotal}; the admin API lists the rest.</p>` : '';
-    const coordHtml = this.coordErr ? `<p class="error">Could not list recordings: ${esc(this.coordErr)}</p>`
-      : !this.loaded ? '<p class="muted">Loading…</p>'
-      : table(['Participant', 'Room', 'Started', 'Duration', 'Status', '', 'Error'], coordRows, q ? 'No recording matches the filter.' : 'No recordings yet.') + listNote;
-    render(body, `<h3>All recordings${running ? ` <span class="badge warn">${running} in progress</span>` : ''}</h3>${coordHtml}
-      <h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats: recording is disabled or the metrics listener is off.</p>'}</div>
+    render(body, `<h3>Recorder workers</h3><div class="cards">${workers || '<p class="muted">No recorder stats: recording is disabled or the metrics listener is off.</p>'}</div>
       <h3>Active tracks</h3>${table(['Recording', 'Room', 'Track', 'Codec', 'Duration', 'Segments', 'Backlog', 'Lost', 'Last RTP', 'State'], activeRows, 'No track is being recorded.')}
       <h3>Finished on this worker</h3>${table(['Participant', 'Room', 'Ended', 'Duration', 'Status', 'Watch', 'Error'], finRows)}`);
   }
 
   destroy(): void {
     window.clearInterval(this.timer);
+    this.list.destroy();
     this.hls?.destroy();
     this.stopTimeline?.();
     this.root.removeEventListener('click', this.onClick);
     this.root.innerHTML = '';
   }
 }
+
+const statusOf = (c: CoordRecording): string => c.status.replace('RECORDING_STATUS_', '').toLowerCase();
+const isLive = (c: CoordRecording): boolean => /starting|active|ending/.test(statusOf(c));
+const startedAt = (c: CoordRecording): Date | undefined => (c.started_at_ms ? new Date(Number(c.started_at_ms)) : undefined);
+const durationMs = (c: CoordRecording): number => {
+  const started = startedAt(c);
+  return started ? (c.ended_at_ms ? Number(c.ended_at_ms) : isLive(c) ? Date.now() : started.getTime()) - started.getTime() : 0;
+};
+
+const coordColumns: Column<CoordRecording>[] = [
+  { label: 'Participant', get: who },
+  { label: 'Room', get: (c) => c.room },
+  { label: 'Started', get: (c) => startedAt(c)?.toISOString(), cell: (c) => startedAt(c)?.toLocaleTimeString() ?? '' },
+  { label: 'Duration', get: (c) => durationMs(c), cell: (c) => (startedAt(c) ? fmtDur(durationMs(c)) : '') },
+  { label: 'Status', get: statusOf, cell: (c) => {
+    const st = statusOf(c);
+    return st === 'complete' ? badge(st, 'ok') : isLive(c) ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
+  } },
+  { label: '', cls: 'actions', cell: (c) => {
+    const started = startedAt(c), live = isLive(c), url = playUrl(c);
+    const title = `${who(c) || c.recording_id} · ${c.room}${started ? ' · ' + started.toLocaleString() : ''}`;
+    const play = url ? `<button class="primary" data-act="play" data-url="${esc(url)}" data-title="${esc(title + (live ? ' · live' : ''))}">${live ? '▶ Watch live' : '▶ Play'}</button>` : '';
+    const stop = /STARTING|ACTIVE/.test(c.status) ? `<button class="danger" data-act="stop-recording" data-id="${esc(c.recording_id)}">■ Stop</button>` : '';
+    return `${play} ${stop}`;
+  } },
+  { label: 'Error', get: (c) => c.error, cell: (c) => `<span title="${esc(c.recording_id)}">${esc(c.error ?? '')}</span>` },
+  { label: 'Recording id', get: (c) => c.recording_id },
+];
 
 /** Who a recording is of: the participant asked for, else the one in its outputs, else its track. */
 function who(c: CoordRecording): string {

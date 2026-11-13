@@ -8,14 +8,17 @@ import { Overview } from './views/overview';
 import { Quality } from './views/quality';
 import { Recordings } from './views/recordings';
 import { Rooms } from './views/rooms';
+import { Sessions } from './views/sessions';
 import type { View } from './views/view';
 import './style.css';
 
 const app = document.getElementById('app')!;
-const ROUTES: Record<string, { label: string; make: () => View }> = {
-  cluster: { label: 'Cluster', make: () => new Cluster() },
+/** Every page, in nav order: a new page is one entry here. clusterOnly pages exist on cluster nodes only. */
+const ROUTES: Record<string, { label: string; make: () => View; clusterOnly?: boolean }> = {
+  cluster: { label: 'Cluster', make: () => new Cluster(), clusterOnly: true },
   overview: { label: 'Overview', make: () => new Overview() },
   rooms: { label: 'Rooms', make: () => new Rooms() },
+  sessions: { label: 'Sessions', make: () => new Sessions() },
   quality: { label: 'Track quality', make: () => new Quality() },
   connectivity: { label: 'Connectivity', make: () => new Connectivity() },
   recordings: { label: 'Recordings', make: () => new Recordings() },
@@ -42,10 +45,12 @@ function toggleTheme(): void {
 let current: { name: string; args: string; view: View } | undefined;
 let unsub: (() => void) | undefined;
 
+const available = (name: string): boolean => !!ROUTES[name] && (!ROUTES[name]!.clusterOnly || !!session.cluster);
+
 function route(): void {
   const home = session.cluster ? 'cluster' : 'overview';
   const [name = home, ...args] = location.hash.replace(/^#\/?/, '').split('/');
-  const key = ROUTES[name] && (name !== 'cluster' || session.cluster) ? name : home;
+  const key = available(name) ? name : home;
   const r = ROUTES[key]!;
   document.querySelectorAll('nav a').forEach((a) => {
     const on = a.getAttribute('href') === `#/${key}`;
@@ -63,8 +68,8 @@ function route(): void {
 
 function shell(): void {
   app.innerHTML = `<header><div class="brand">Tessera <span class="muted">admin</span></div>
-    <nav aria-label="Views">${Object.entries(ROUTES).filter(([k]) => k !== 'cluster' || session.cluster).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
-    ${session.cluster ? '<label class="node-pick">Node <select id="node" aria-label="Node shown by Overview, Rooms, Track quality, Connectivity and Recordings"></select></label>' : ''}
+    <nav aria-label="Views">${Object.entries(ROUTES).filter(([k]) => available(k)).map(([k, v]) => `<a href="#/${k}">${v.label}</a>`).join('')}</nav>
+    ${session.cluster ? '<label class="node-pick">Node <select id="node" aria-label="Node shown by Overview, Rooms, Sessions, Track quality, Connectivity and Recordings"></select></label>' : ''}
     <div class="spacer"></div><span id="conn" class="conn" role="status" title="live stream"></span>
     <span class="muted user">${esc(session.apiKey)}</span><button id="theme" title="Toggle theme" aria-label="Toggle light or dark theme">◐</button><button id="logout">Log out</button></header>
     <div id="scope" class="scope" hidden></div><main id="view"></main>`;

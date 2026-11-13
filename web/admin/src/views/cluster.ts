@@ -1,12 +1,13 @@
-import { clusterHistory, clusterRoom, clusterRooms, clusterState, session } from '../api';
+import { clusterHistory, clusterRoom, clusterState, session } from '../api';
 import { store } from '../store';
-import type { ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
-import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, matches, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
+import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
+import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
 import { handleAction, media } from './rooms';
-import { ChartGroup, filterBox, render, type View } from './view';
+import { clusterList } from './clusterlist';
+import type { Column } from './paged';
+import { ChartGroup, render, type View } from './view';
 
 const STATE_MS = 5000; // the server samples the registry every 5 s
-const ROOMS_MS = 5000;
 const ROOM_MS = 2000;
 
 /** The latest cluster sample, shared with the header's node picker. */
@@ -14,6 +15,36 @@ export const cluster: { state?: ClusterState; listeners: Set<() => void> } = { l
 export async function refreshCluster(): Promise<void> {
   try { cluster.state = await clusterState(); } catch { /* keep the last sample */ }
   cluster.listeners.forEach((f) => f());
+}
+
+/** Columns of a cluster-wide participant list (search results and Worst 50). */
+const participantColumns: Column<ClusterParticipantBrief>[] = [
+  { label: 'Participant', sort: 'identity', get: (p) => p.identity,
+    cell: (p) => `<a href="#" data-node="${esc(p.node)}" data-hash="#/rooms/${encodeURIComponent(p.room)}/${encodeURIComponent(p.sid)}">${esc(p.identity)}</a>` },
+  { label: 'Role', get: (p) => p.role, cell: (p) => badge(p.role, p.role === 'presenter' ? 'ok' : 'muted') },
+  { label: 'Room', get: (p) => p.room, cell: (p) => `<a href="#" data-node="${esc(p.node)}" data-hash="#/rooms/${encodeURIComponent(p.room)}">${esc(p.room)}</a>` },
+  { label: 'Node', get: (p) => p.node },
+  { label: 'Quality', sort: 'quality', get: (p) => p.quality, cell: (p) => qualityBadge(p.quality) },
+  { label: 'RTT', sort: 'rtt', desc: true, get: (p) => p.rtt_ms, cell: (p) => `${fmtNum(p.rtt_ms)} ms` },
+  { label: 'Loss', sort: 'loss', desc: true, get: (p) => p.loss_percent, cell: (p) => `${p.loss_percent.toFixed(1)}%` },
+  { label: 'Bitrate', sort: 'bitrate', desc: true, get: (p) => p.bitrate_bps, cell: (p) => fmtBps(p.bitrate_bps) },
+  { label: 'ICE', get: (p) => p.ice_type, cell: (p) => esc(p.ice_type || '–') },
+];
+
+const roomColumns: Column<ClusterRoom>[] = [
+  { label: 'Room', sort: 'name', get: (r) => r.name, cell: (r) => `<a href="#/cluster/room/${encodeURIComponent(r.name)}">${esc(r.name)}</a>` },
+  { label: 'Presenters', sort: 'presenters', desc: true, get: (r) => r.presenters },
+  { label: 'Viewers', sort: 'viewers', desc: true, get: (r) => r.viewers },
+  { label: 'Media nodes', get: (r) => r.media.join(' '), cell: (r) => r.media.map(esc).join(', ') || '<span class="muted">none</span>' },
+  { label: 'Edges', get: (r) => r.edges.join(' '), cell: (r) => r.edges.map(esc).join(', ') },
+  { label: 'Recording', get: (r) => !!r.recording, cell: (r) => (r.recording ? badge('● recording', 'bad') : '') },
+];
+
+/** Bars of one value per node; max is the full bar (100 for a percentage, else the largest value). */
+export function balance(title: string, rows: [string, number][], fmt: (v: number) => string, max?: number): string {
+  const top = max ?? Math.max(1, ...rows.map((r) => r[1]));
+  return `<div class="bars"><h4>${esc(title)}</h4>${rows.length ? rows.map(([k, v]) =>
+    `<div class="bar-row"><span class="bar-label" title="${esc(k)}">${esc(k)}</span><span class="bar"><i style="width:${Math.min(100, (100 * v) / top)}%"></i></span><span class="bar-val">${esc(fmt(v))}</span></div>`).join('') : '<p class="muted">None.</p>'}</div>`;
 }
 
 /** Shows a node in the node views (Overview, Rooms, …) through this dashboard. */
@@ -40,9 +71,8 @@ export class Cluster implements View {
   private onClick = (e: Event) => this.click(e);
   private charts?: ChartGroup;
   private points: ClusterPoint[] = [];
-  private rooms?: { rooms: ClusterRoom[]; errors: string[] | null; truncated: boolean };
+  private lists: { destroy(): void }[] = [];
   private roomErr = '';
-  private filter?: HTMLInputElement;
   private room?: string;
   private parts?: NodeRoom[];
   private onState = () => this.update();
@@ -54,8 +84,23 @@ export class Cluster implements View {
     if (args[0] === 'room' && args[1]) return this.mountRoom(safeDecode(args[1]));
     root.innerHTML = `<h2>Cluster</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div>
       <h3>Nodes</h3><div class="nodes"></div><h3>Last hour</h3><div class="grid charts"></div>
-      <div class="view-head"><h3>Rooms</h3></div><div class="rooms"></div>`;
-    this.filter = filterBox(root.querySelector('.view-head')!, 'Filter rooms', () => this.update());
+      <h3>Balance</h3><div class="grid balance"></div>
+      <div class="view-head"><h3>Search participants</h3></div><div class="psearch"></div>
+      <h3>Worst 50 participants</h3><div class="worst"></div>
+      <div class="view-head rooms-head"><h3>Rooms</h3></div><div class="rooms"></div>`;
+    // Every list below is searched, sorted and paged on the server (cluster/<endpoint>), merged from all nodes.
+    this.lists.push(clusterList<ClusterParticipantBrief>({
+      endpoint: 'participants', head: root.querySelector('.view-head')!, body: root.querySelector('.psearch')!, filterLabel: 'Search identity, name, room or session',
+      sort: 'identity', columns: participantColumns, needsQuery: true, empty: 'Type to search participants on every node.', name: 'cluster-participants',
+    }));
+    this.lists.push(clusterList<ClusterParticipantBrief>({
+      endpoint: 'participants', body: root.querySelector('.worst')!, sort: 'quality', limit: 50, pager: false, columns: participantColumns,
+      empty: 'No participants in the cluster.', name: 'cluster-worst',
+    }));
+    this.lists.push(clusterList<ClusterRoom>({
+      endpoint: 'rooms', head: root.querySelector('.rooms-head')!, body: root.querySelector('.rooms')!, filterLabel: 'Filter rooms',
+      sort: 'name', columns: roomColumns, empty: 'No rooms in the cluster.', name: 'cluster-rooms',
+    }));
     const g = (this.charts = new ChartGroup(root.querySelector('.charts')!));
     const P = () => this.points;
     g.add({ title: 'People', series: [{ label: 'viewers', color: '--c1', get: (i) => P()[i]!.viewers, fill: true }, { label: 'presenters', color: '--c2', get: (i) => P()[i]!.presenters }], fmt: (v) => fmtNum(v), int: true });
@@ -69,10 +114,6 @@ export class Cluster implements View {
       const pt = cluster.state?.point;
       const last = this.points[this.points.length - 1];
       if (pt && (!last || pt.t > last.t)) { this.points.push(pt); if (this.points.length > 720) this.points.shift(); }
-      this.update();
-    }));
-    this.stops.push(every(ROOMS_MS, async () => {
-      try { this.rooms = await clusterRooms(); this.roomErr = ''; } catch (e) { this.roomErr = (e as Error).message; }
       this.update();
     }));
   }
@@ -95,7 +136,6 @@ export class Cluster implements View {
   update(): void {
     if (this.room) return this.updateRoom();
     const st = cluster.state;
-    const q = this.filter?.value ?? '';
     if (!st) { render(this.root.querySelector('.cards')!, '<p class="muted">Loading…</p>'); return; }
     const nodes = st.nodes ?? [];
     const up = nodes.filter((n) => !n.down);
@@ -116,15 +156,10 @@ export class Cluster implements View {
       : '<p class="ok-line">No active alerts.</p>'));
     render(this.root.querySelector('.nodes')!, nodesTable(nodes, st.time));
     this.charts?.update(this.points.map((x) => x.t / 1000), this.points.length);
-    const r = this.rooms;
-    const rows = (r?.rooms ?? []).filter((x) => matches(q, x.name, ...x.media, ...x.edges)).map((x) => `<tr>
-      <td><a href="#/cluster/room/${encodeURIComponent(x.name)}">${esc(x.name)}</a></td><td>${fmtNum(x.presenters)}</td><td>${fmtNum(x.viewers)}</td>
-      <td>${x.media.map(esc).join(', ') || '<span class="muted">none</span>'}</td><td>${x.edges.map(esc).join(', ')}</td><td>${x.recording ? badge('● recording', 'bad') : ''}</td></tr>`);
-    const notes = (r?.truncated ? '<p class="muted more">A node has more rooms than it lists; filter or open a node to see them all.</p>' : '') +
-      (r?.errors?.length ? `<p class="error">Some nodes did not answer: ${esc(r.errors.join('; '))}</p>` : '');
-    render(this.root.querySelector('.rooms')!, this.roomErr ? `<p class="error">${esc(this.roomErr)}</p>`
-      : !r ? '<p class="muted">Loading…</p>'
-      : table(['Room', 'Presenters', 'Viewers', 'Media nodes', 'Edges', 'Recording'], rows, q ? 'No room matches the filter.' : 'No rooms in the cluster.') + notes);
+    render(this.root.querySelector('.balance')!,
+      balance('Presenters per media node', nodes.filter((n) => n.role !== 'edge' && !n.down).map((n) => [n.id, n.summary?.presenters ?? 0]), fmtNum) +
+      balance('Viewers per edge', nodes.filter((n) => n.role === 'edge' && !n.down).map((n) => [n.id, n.summary?.viewers ?? 0]), fmtNum) +
+      balance('CPU (% of each node)', up.map((n) => [n.id, n.summary?.cpu ?? 0]), (v) => `${v.toFixed(0)}%`, 100));
   }
 
   private updateRoom(): void {
@@ -152,6 +187,7 @@ export class Cluster implements View {
 
   destroy(): void {
     this.stops.forEach((s) => s());
+    this.lists.forEach((l) => l.destroy());
     cluster.listeners.delete(this.onState);
     this.charts?.destroy();
     this.root.removeEventListener('click', this.onClick);

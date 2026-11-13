@@ -57,7 +57,9 @@ export interface Live {
   quality: { excellent: number; good: number; poor: number; lost: number; unknown: number }
   ice: Record<string, number>
   alerts: Alert[]; alerts_total: number; recorders: RecorderSummary[]
+  webhooks?: WebhookStat[]
 }
+export interface WebhookStat { url: string; sent: number; failed: number; retried: number; dropped: number; queued: number; last_error?: string }
 export interface Page<T> { version: number; total: number; offset: number; items: T[] }
 export interface RoomBrief {
   name: string; sid: string; created_at: string; participants: number; presenters: number; viewers: number; relays: number
@@ -91,6 +93,7 @@ export interface TrackDetail {
   version: number; room: string; participant: string; participant_sid: string; track: Published
   subscribers: SubscriberBrief[]; subscribers_total: number
 }
+export interface CoordRecordingPage { total: number; offset: number; items: CoordRecording[] }
 export interface CoordRecording { recording_id: string; room: string; status: string; started_at_ms?: string; ended_at_ms?: string; error?: string; worker_id?: string
   request?: { participant?: { identity: string }; track?: { track_sid: string } }
   master_playlist_location?: string
@@ -111,5 +114,25 @@ export interface ClusterPoint {
   cpu_max: number; cpu_avg: number; recordings: number; rec_used: number; rec_cap: number; loss_max: number
 }
 export interface ClusterState { self: string; time: number; error?: string; nodes: NodeView[] | null; alerts: Alert[] | null; point?: ClusterPoint }
+/** A page merged from every reachable node (cluster/rooms, cluster/participants, …). */
+export interface ClusterPage<T> { total: number; offset: number; items: T[]; errors: string[] | null; truncated?: boolean }
+export type ClusterParticipantBrief = ParticipantBrief & { node: string }
 export interface ClusterRoom { name: string; presenters: number; viewers: number; recording?: boolean; media: string[]; edges: string[] }
 export interface NodeRoom { node: string; role: string; room?: Room; error?: string }
+
+// Sessions: one participant connection, active or recently ended (node-local).
+export interface QualityShare { excellent: number; good: number; poor: number; lost: number; unknown: number }
+export interface SessionBrief {
+  sid: string; identity: string; name?: string; room: string; role: string; state: 'active' | 'ended'
+  started_at: string; ended_at?: string; duration_ms: number; quality: string; share: QualityShare
+  max_rtt_ms: number; max_loss_percent: number; ice_type: string; client_sdk?: string; events: number
+}
+/** kind is open: the server may add kinds the browser does not know. */
+export interface SessionEvent { t: string; kind: string; detail: string }
+export interface Hops {
+  uplink: { track_sid: string; kind: string; loss_percent: number; jitter_ms: number; bitrate_bps: number }[]
+  downlink: { track_sid: string; presenter: string; kind: string; loss_percent: number; jitter_ms: number; rtt_ms: number; bitrate_bps: number; paused: boolean }[]
+  sources: { presenter: string; track_sid: string; kind: string; uplink_loss_percent: number; on_this_node: boolean }[]
+}
+/** The contract's SessionBrief & { events: SessionEvent[] }: here `events` is the list, not the count. */
+export type SessionDetail = Omit<SessionBrief, 'events'> & { events: SessionEvent[]; hops?: Hops }

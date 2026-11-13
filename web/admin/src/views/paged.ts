@@ -2,12 +2,22 @@ import { esc, fmtNum, table } from '../util';
 import { filterBox, render } from './view';
 
 export interface ListState { q: string; sort: string; desc: boolean; offset: number; limit: number }
-export interface Column {
+/**
+ * One column of a list: the header, the table cell and the exported value come from this single
+ * entry, so adding a column is adding one entry.
+ */
+export interface Column<T = never> {
   label: string
   /** Server-side sort field; without one the header is not clickable. */
   sort?: string
   /** The first click sorts descending (numbers where the biggest matters). */
   desc?: boolean
+  /** Plain value: exported (CSV/JSON) and shown when there is no cell. Without it the column is not exported. */
+  get?: (item: T) => string | number | boolean | undefined
+  /** The cell's html (escape it); default is the escaped value. */
+  cell?: (item: T) => string
+  /** Class of the td (e.g. 'actions'). */
+  cls?: string
 }
 interface PageLike<T> { total: number; offset: number; items: T[] }
 
@@ -21,10 +31,36 @@ export function listParams(s: ListState): Record<string, string | number | boole
 }
 
 /** State after a click on a column: the same field flips the direction, a new one restarts at page 1. */
-export function clickSort(s: ListState, col: Column): ListState {
+export function clickSort(s: ListState, col: { label?: string; sort?: string; desc?: boolean }): ListState {
   if (!col.sort) return s;
   if (col.sort === s.sort) return { ...s, desc: !s.desc, offset: 0 };
   return { ...s, sort: col.sort, desc: !!col.desc, offset: 0 };
+}
+
+/** A CSV field: quoted when needed, and text a spreadsheet would run as a formula gets a leading '. */
+export function csvField(v: unknown): string {
+  let t = v === undefined || v === null ? '' : String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = "'" + t;
+  return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+type Exportable<T> = Column<T> & { get: NonNullable<Column<T>['get']> };
+const exportable = <T>(cols: Column<T>[]): Exportable<T>[] => cols.filter((c): c is Exportable<T> => !!c.get);
+/** The items as CSV with the columns' labels as header. */
+export function toCSV<T>(cols: Column<T>[], items: T[]): string {
+  const c = exportable(cols);
+  return [c.map((x) => csvField(x.label)).join(','), ...items.map((i) => c.map((x) => csvField(x.get(i))).join(','))].join('\n') + '\n';
+}
+/** The items as a JSON array of objects keyed by the columns' labels. */
+export function toJSON<T>(cols: Column<T>[], items: T[]): string {
+  const c = exportable(cols);
+  return JSON.stringify(items.map((i) => Object.fromEntries(c.map((x) => [x.label, x.get(i)]))), null, 2);
+}
+function download(name: string, mime: string, text: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 /** "1–100 of 12,345" (or "0" for an empty set). */
@@ -73,15 +109,22 @@ export class Poller<T> {
 }
 
 export interface PagedOptions<T, P extends PageLike<T>> {
-  /** Where the filter box goes. */
-  head: HTMLElement
+  /** Where the filter box goes; without it there is no filter box. */
+  head?: HTMLElement
   body: HTMLElement
-  filterLabel: string
-  columns: Column[]
+  filterLabel?: string
+  columns: Column<T>[]
   sort: string
   desc?: boolean
+  /** Rows per page (default 100). */
+  limit?: number
+  /** false: no prev/next (a fixed top-N list). */
+  pager?: boolean
+  /** File name stem of the exports. */
+  name?: string
   fetch: (s: ListState) => Promise<P>
-  row: (item: T) => string
+  /** Called with each page that arrives (to refresh something that depends on it). */
+  onData?: (p: P) => void
   empty: string
   /** Extra html above the table (aggregates), built from the page. */
   extra?: (p: P) => string
@@ -95,15 +138,17 @@ export class PagedList<T, P extends PageLike<T> = PageLike<T>> {
   private err = '';
   private poller: Poller<P>;
   private debounce = 0;
-  private filter: HTMLInputElement;
+  private filter?: HTMLInputElement;
   private onClick = (e: Event) => this.click(e);
 
   constructor(private o: PagedOptions<T, P>) {
-    this.state = { q: '', sort: o.sort, desc: !!o.desc, offset: 0, limit: PAGE_SIZE };
-    this.filter = filterBox(o.head, o.filterLabel, () => {
-      window.clearTimeout(this.debounce);
-      this.debounce = window.setTimeout(() => { this.state = { ...this.state, q: this.filter.value, offset: 0 }; void this.poller.run(); }, FILTER_MS);
-    });
+    this.state = { q: '', sort: o.sort, desc: !!o.desc, offset: 0, limit: o.limit ?? PAGE_SIZE };
+    if (o.head) {
+      this.filter = filterBox(o.head, o.filterLabel ?? 'Filter', () => {
+        window.clearTimeout(this.debounce);
+        this.debounce = window.setTimeout(() => { this.state = { ...this.state, q: this.filter!.value, offset: 0 }; void this.poller.run(); }, FILTER_MS);
+      });
+    }
     this.poller = new Poller<P>({
       fetch: () => o.fetch({ ...this.state }),
       ms: REFRESH_MS,
@@ -116,7 +161,7 @@ export class PagedList<T, P extends PageLike<T> = PageLike<T>> {
           void this.poller.run();
           return;
         }
-        this.page = p; this.err = ''; this.draw();
+        this.page = p; this.err = ''; this.draw(); this.o.onData?.(p);
       },
       onError: (e) => { this.err = e.message; this.draw(); },
     });
@@ -125,13 +170,23 @@ export class PagedList<T, P extends PageLike<T> = PageLike<T>> {
     this.poller.start();
   }
 
+  /** The page on screen. */
+  get items(): T[] { return this.page?.items ?? []; }
+  /** Refetch from the first page (a view's own filters changed). */
+  reload(): void { this.state = { ...this.state, offset: 0 }; void this.poller.run(); }
   /** Call from the view's update(): follows the node picker. */
   check(): void { this.poller.check(); }
   destroy(): void { window.clearTimeout(this.debounce); this.poller.stop(); this.o.body.removeEventListener('click', this.onClick); }
 
   private click(e: Event): void {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-sort], button[data-page]');
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-sort], button[data-page], button[data-export]');
     if (!b) return;
+    if (b.dataset.export) {
+      const items = this.page?.items ?? [], name = `${this.o.name ?? 'export'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+      if (b.dataset.export === 'csv') download(`${name}.csv`, 'text/csv', toCSV(this.o.columns, items));
+      else download(`${name}.json`, 'application/json', toJSON(this.o.columns, items));
+      return;
+    }
     if (b.dataset.sort) this.state = clickSort(this.state, this.o.columns.find((c) => c.sort === b.dataset.sort)!);
     else {
       const d = b.dataset.page === 'next' ? 1 : -1;
@@ -150,11 +205,14 @@ export class PagedList<T, P extends PageLike<T> = PageLike<T>> {
       return `<button class="sort" data-sort="${esc(c.sort)}" title="Sort by ${esc(c.label)}">${esc(c.label)}${on ? (state.desc ? ' ▼' : ' ▲') : ''}</button>`;
     });
     // Column labels are html for table(), so the empty-action column stays as given.
-    const rows = page.items.map((i) => this.o.row(i));
+    const cols = this.o.columns;
+    const rows = page.items.map((i) => `<tr>${cols.map((c) => `<td${c.cls ? ` class="${esc(c.cls)}"` : ''}>${c.cell ? c.cell(i) : esc(c.get?.(i))}</td>`).join('')}</tr>`);
     const from = page.offset, to = page.offset + page.items.length;
-    const pager = page.total > state.limit || from > 0
-      ? `<div class="pager"><button data-page="prev"${from <= 0 ? ' disabled' : ''}>‹ Prev</button> <span class="muted">${pageLabel(from, page.items.length, page.total)}</span> <button data-page="next"${to >= page.total ? ' disabled' : ''}>Next ›</button></div>`
-      : page.total ? `<p class="muted more">${pageLabel(from, page.items.length, page.total)}</p>` : '';
+    const paging = this.o.pager !== false && (page.total > state.limit || from > 0);
+    const exports = page.items.length ? '<span class="export"><button data-export="csv" title="Download this page as CSV">Export CSV</button> <button data-export="json" title="Download this page as JSON">Export JSON</button></span>' : '';
+    const pager = page.total
+      ? `<div class="pager">${paging ? `<button data-page="prev"${from <= 0 ? ' disabled' : ''}>‹ Prev</button> ` : ''}<span class="muted">${pageLabel(from, page.items.length, page.total)}</span>${paging ? ` <button data-page="next"${to >= page.total ? ' disabled' : ''}>Next ›</button>` : ''}${exports}</div>`
+      : '';
     render(this.o.body, (this.o.extra?.(page) ?? '') + err + table(heads, rows, state.q ? 'Nothing matches the filter.' : this.o.empty, state.limit) + pager);
   }
 }

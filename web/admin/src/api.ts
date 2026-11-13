@@ -1,4 +1,4 @@
-import type { ClusterPoint, ClusterRoom, ClusterState, CoordRecording, Live, NodeRoom, Page, ParticipantDetail, ParticipantPage, Point, RecorderStatus, RoomBrief, TrackBrief, TrackDetail } from './types';
+import type { ClusterPage, ClusterPoint, ClusterState, CoordRecordingPage, Live, NodeRoom, Page, ParticipantDetail, ParticipantPage, Point, RecorderStatus, RoomBrief, SessionBrief, SessionDetail, TrackBrief, TrackDetail } from './types';
 import { qs, type Params } from './util';
 
 const base = location.pathname.replace(/[^/]*$/, '') + 'api/';
@@ -40,13 +40,18 @@ export const recorders = (p: Params = {}): Promise<{ version: number; recorders:
 export const participant = (p: Params): Promise<ParticipantDetail> => get('participant', p);
 /** p: sid. */
 export const track = (p: Params): Promise<TrackDetail> => get('track', p);
-/** Recordings in progress and the newest ended ones; total counts all the coordinator keeps. */
-export const recordings = (): Promise<{ recordings: CoordRecording[]; total?: number }> => req('recordings');
+/** Coordinator recordings, newest first; p: q, status (active|ended|failed), offset, limit. */
+export const recordings = (p: Params = {}): Promise<CoordRecordingPage> => get('recordings', p);
+/** p: q, state, room, role, quality, sort, desc, offset, limit. */
+export const sessions = (p: Params = {}): Promise<Page<SessionBrief>> => get('sessions', p);
+/** p: sid. */
+export const sessionDetail = (p: Params): Promise<SessionDetail> => get('session-detail', p);
 // Cluster view: the registry sample (taken every 5 s), its last hour, and pages fetched
 // from the nodes only while open (the server caches each for a few seconds).
 export const clusterState = (): Promise<ClusterState> => req('cluster');
 export const clusterHistory = (): Promise<{ interval_ms: number; points: ClusterPoint[] }> => req('cluster/history');
-export const clusterRooms = (): Promise<{ rooms: ClusterRoom[]; errors: string[] | null; truncated: boolean }> => req('cluster/rooms');
+/** Any cluster-wide paged list ('rooms', 'participants', later 'sessions', …): merged from every node by the server. */
+export const clusterPage = <T>(endpoint: string, p: Params = {}): Promise<ClusterPage<T>> => get(`cluster/${endpoint}`, p);
 export const clusterRoom = (name: string): Promise<{ name: string; nodes: NodeRoom[] }> => req(`cluster/room?name=${encodeURIComponent(name)}`);
 export const nodeUpdate = (id: string): Promise<Live> => req(`cluster/node?id=${encodeURIComponent(id)}`);
 export const nodeHistory = (id: string): Promise<{ interval_ms: number; points: Point[] }> => req(`cluster/node?id=${encodeURIComponent(id)}&history`);

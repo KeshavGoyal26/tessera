@@ -207,3 +207,32 @@ func TestAlertsGroupedAtScale(t *testing.T) {
 		t.Fatalf("grouped: %+v total %d", group, l.AlertsTotal)
 	}
 }
+
+func TestJournalSessions(t *testing.T) {
+	j := newJournal()
+	t0 := time.Unix(1000, 0)
+	snapAt := func(q string, present bool) *stats.Snapshot {
+		s := &stats.Snapshot{Rooms: []stats.RoomStats{{Name: "r"}}}
+		if present {
+			s.Rooms[0].Participants = []stats.ParticipantStats{{SID: "PA_1", Identity: "alice", JoinedAt: t0, ICECandidateType: "relay", ConnectionQuality: q, RTTMs: 80}}
+		}
+		return s
+	}
+	j.Observe(snapAt(stats.QualityGood, true), t0)
+	j.Observe(snapAt(stats.QualityGood, true), t0.Add(30*time.Second))
+	j.Observe(snapAt(stats.QualityPoor, true), t0.Add(40*time.Second)) // 40 s good, then poor
+	j.Observe(snapAt("", false), t0.Add(50*time.Second))                // gone: ended at 40 s
+	rows := j.rows(t0.Add(time.Minute))
+	if len(rows) != 1 || rows[0].State != "ended" || rows[0].DurationMs != 40000 || rows[0].Share.Good != 1 || rows[0].MaxRTTMs != 80 {
+		t.Fatalf("row %+v", rows)
+	}
+	j.Record("PA_1", SessionEvent{T: t0, Kind: "leave_reason", Detail: "client closed"}) // another source
+	b, ev, ok := j.detail("PA_1", t0.Add(time.Minute))
+	kinds := []string{}
+	for _, e := range ev {
+		kinds = append(kinds, e.Kind)
+	}
+	if !ok || b.Events != 4 || strings.Join(kinds, ",") != "leave_reason,left,quality,joined" {
+		t.Fatalf("events %v (%d)", kinds, b.Events)
+	}
+}

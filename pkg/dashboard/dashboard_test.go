@@ -432,22 +432,31 @@ func TestRecordingsListBounded(t *testing.T) {
 	e.srv = httptest.NewServer(e.h)
 	t.Cleanup(e.srv.Close)
 	c, _ := e.login(t)
-	_, body := e.do(t, "GET", "/admin/api/recordings", "", c, nil)
-	var out struct {
+	type page struct {
 		Recordings []struct {
 			ID string `json:"recording_id"`
-		} `json:"recordings"`
+		} `json:"items"`
 		Total int `json:"total"`
 	}
-	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatal(err)
+	get := func(q string) page {
+		_, body := e.do(t, "GET", "/admin/api/recordings"+q, "", c, nil)
+		var out page
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
-	if out.Total != maxListedEnded+50 || len(out.Recordings) != maxListedEnded+1 {
-		t.Fatalf("total %d, listed %d", out.Total, len(out.Recordings))
+	n := maxListedEnded + 50
+	if out := get(""); out.Total != n || len(out.Recordings) != pageDefault || out.Recordings[0].ID != fmt.Sprintf("RC_%d", n-1) {
+		t.Fatalf("newest first, one page: total %d, listed %d, first %v", out.Total, len(out.Recordings), out.Recordings[0])
 	}
-	if out.Recordings[0].ID != "RC_3" || out.Recordings[len(out.Recordings)-1].ID != fmt.Sprintf("RC_%d", maxListedEnded+49) {
-		t.Fatalf("want the running one and the newest ended ones, oldest first: %v ... %v", out.Recordings[0], out.Recordings[len(out.Recordings)-1])
+	if out := get("?status=active"); out.Total != 1 || out.Recordings[0].ID != "RC_3" {
+		t.Fatalf("in progress: %+v", out)
 	}
+	if out := get("?q=RC_12&limit=5"); out.Total != 11 || len(out.Recordings) != 5 { // RC_12, RC_120..RC_129
+		t.Fatalf("search: %+v", out)
+	}
+
 }
 
 // TestEventsEndWithSession: logging out ends an open event stream.

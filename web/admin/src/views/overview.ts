@@ -48,12 +48,19 @@ export class Overview implements View {
     const recCard = u.recorders.length
       ? card('Recording', `${recs.reduce((a, s) => a + s.active_recordings, 0)} active`, `${recs.reduce((a, s) => a + s.tracks_recording, 0)} tracks · capacity ${used} of ${cap} units · ${fmtNum(recs.reduce((a, s) => a + s.segments_written, 0))} segments, ${fmtBytes(recs.reduce((a, s) => a + s.bytes_uploaded, 0))} uploaded${recs.some((s) => s.upload_errors || s.track_errors) ? ` · ${fmtNum(recs.reduce((a, s) => a + s.upload_errors + s.track_errors, 0))} errors` : ''}${recs.length < u.recorders.length ? ` · ${u.recorders.length - recs.length} down` : ''}`, cap && used >= cap ? 'bad' : recs.length < u.recorders.length || (cap && used * 10 >= cap * 9) ? 'warn' : '')
       : '';
+    const wh = u.webhooks ?? [];
+    const sum = (k: 'sent' | 'failed' | 'retried' | 'dropped' | 'queued') => wh.reduce((a, w) => a + w[k], 0);
+    const whErr = wh.find((w) => w.last_error);
+    const whCard = wh.length
+      ? card('Webhooks', `${fmtNum(sum('sent'))} sent`, `${fmtNum(sum('failed'))} failed · ${fmtNum(sum('retried'))} retried · ${fmtNum(sum('dropped'))} dropped · ${fmtNum(sum('queued'))} queued${whErr ? ` · last error: ${whErr.last_error} (${whErr.url})` : ''}`,
+        sum('dropped') ? 'bad' : sum('failed') || sum('queued') > 100 ? 'warn' : '')
+      : '';
     const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'none yet'} ${fmtNum(v)}`).join(' · ');
     render(this.cards,
       card('Rooms', fmtNum(c.rooms)) +
       card('Participants', fmtNum(n.participants), `${fmtNum(c.presenters)} presenters · ${fmtNum(c.viewers)} viewers${c.relays ? ` · ${fmtNum(c.relays)} relay` : ''}${c.recorders ? ` · ${fmtNum(c.recorders)} recorder` : ''}`) +
       card('Connection quality', `${fmtNum(q.poor + q.lost)} poor or lost`, `${fmtNum(q.excellent)} excellent · ${fmtNum(q.good)} good · ${fmtNum(q.poor)} poor · ${fmtNum(q.lost)} lost · ${fmtNum(q.unknown)} unknown`, q.lost ? 'bad' : q.poor ? 'warn' : '') +
-      card('ICE candidates', ice || 'none yet') +
+      card('ICE candidates', ice || 'none yet') + whCard +
       card('Tracks', `${n.published_tracks} ↑ / ${n.subscribed_tracks} ↓`, `${n.peer_connections} peer connections`) + recCard +
       card('CPU', `${(n.cpu_percent / Math.max(n.num_cpu, 1)).toFixed(0)}%`, `${n.num_cpu} cores`) +
       card('Memory', fmtBytes(n.rss_bytes), `heap ${fmtBytes(n.heap_bytes)}`) +

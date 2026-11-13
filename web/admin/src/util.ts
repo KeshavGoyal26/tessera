@@ -134,3 +134,8 @@ export function nodeHealth(n: { down?: boolean; draining?: boolean; seen: number
 export function safeDecode(s: string): string {
   try { return decodeURIComponent(s); } catch { return s; }
 }
+
+/** Events newest first (the order of the server's list is not relied on); a copy. */
+export function newestFirst<E extends { t: string }>(events: E[]): E[] {
+  return events.map((e, i) => ({ e, i, ms: Date.parse(e.t) })).sort((a, b) => (b.ms || 0) - (a.ms || 0) || b.i - a.i).map((x) => x.e);
+}

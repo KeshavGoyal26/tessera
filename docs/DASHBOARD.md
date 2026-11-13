@@ -151,3 +151,22 @@ Nothing the dashboard sends grows with the number of participants:
 - History: the last hour at 1 s (`api/history`) and the last day at 10 s, each point the
   maximum of its window (`api/history?range=24h`, about 1.3 MB per node).
 - JSON responses over 2 KB are gzipped when the browser accepts it.
+
+## Sessions, troubleshooting and cluster search
+
+- **Sessions** (`#/sessions`, `api/sessions`, `api/session-detail?sid=`): one entry per
+  participant connection on the node, active ones and the last 5,000 ended (in memory): a
+  timeline (joined, quality and ICE changes, tracks published and unpublished, left), the share
+  of time per connection quality, worst RTT and loss. Searchable by identity, name, room and sid,
+  filtered by state, role and "had poor or lost quality", sorted and paged on the server. The
+  journal is derived from the samples (no change on the media path); `Handler.Journal().Record`
+  lets other sources add events (any kind is shown).
+- **Why was this call bad**: an active session's page shows its three hops side by side: its
+  own uplink, the uplinks of the presenters it watches, and its downlink (worst 50 tracks).
+- **Cluster** (`#/cluster`): participant search across every node and the worst 50
+  (`api/cluster/participants`: each node returns its first offset+limit rows in the requested
+  order, the server merges them; at most 16 nodes asked at once), a balance panel (presenters
+  per media node, viewers per edge, CPU) and the room index searched and paged on the server.
+- **Recordings** (`api/recordings`): searched (id, room, identity), filtered by status and paged.
+- **Webhooks**: delivery health (sent, failed, retried, dropped, queued, last error) on Overview.
+- **Export**: every list exports its current page as CSV or JSON.

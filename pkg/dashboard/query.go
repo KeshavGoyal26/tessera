@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
+	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
 
 // Scale-safe views of the latest snapshot: the live frame stays a few KB at any size, and
@@ -22,15 +23,16 @@ import (
 
 // Live is what the SSE stream sends every sample.
 type Live struct {
-	Version     uint64            `json:"version"`
-	Point       Point             `json:"point"`
-	Node        stats.NodeStats   `json:"node"`
-	Counts      Counts            `json:"counts"`
-	Quality     map[string]int    `json:"quality"`
-	ICE         map[string]int    `json:"ice"`
-	Alerts      []Alert           `json:"alerts"`
-	AlertsTotal int               `json:"alerts_total"`
-	Recorders   []RecorderSummary `json:"recorders"`
+	Version     uint64                  `json:"version"`
+	Point       Point                   `json:"point"`
+	Node        stats.NodeStats         `json:"node"`
+	Counts      Counts                  `json:"counts"`
+	Quality     map[string]int          `json:"quality"`
+	ICE         map[string]int          `json:"ice"`
+	Alerts      []Alert                 `json:"alerts"`
+	AlertsTotal int                     `json:"alerts_total"`
+	Recorders   []RecorderSummary       `json:"recorders"`
+	Webhooks    []webhook.EndpointStats `json:"webhooks"`
 }
 
 // Counts are the participants of this node by role.
@@ -387,6 +389,10 @@ func (h *Handler) queryLocal(route string, v url.Values) (any, error) {
 		return trackDetail(ix, v.Get("sid"))
 	case "recorders":
 		return map[string]any{"version": ix.version, "recorders": h.recorders()}, nil
+	case "sessions":
+		return h.sessionsPage(v), nil
+	case "session-detail":
+		return h.sessionDetail(v)
 	case "live":
 		h.mu.Lock()
 		l := h.live
@@ -399,7 +405,7 @@ func (h *Handler) queryLocal(route string, v url.Values) (any, error) {
 var errUnknown = errors.New("unknown endpoint")
 
 // queryRoutes are the GET routes answered by queryLocal (and forwarded with node=).
-var queryRoutes = map[string]bool{"rooms": true, "participants": true, "tracks": true, "participant": true, "track": true, "recorders": true, "live": true}
+var queryRoutes = map[string]bool{"sessions": true, "session-detail": true, "rooms": true, "participants": true, "tracks": true, "participant": true, "track": true, "recorders": true, "live": true}
 
 // serveQuery answers a query route, on this node or forwarded to node=<id>, cached per
 // sample (per query string).

@@ -74,3 +74,9 @@ th button.sort { all: unset; cursor: pointer; font: inherit; text-transform: inh
 
 .range button { font-size: 0.75rem; padding: 2px 8px; }
 .range button[aria-pressed="true"] { font-weight: 700; }
+.pager .export { margin-left: auto; }
+.sharebar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--mutedbg); margin: 6px 0; } .sharebar i { display: block; height: 100%; }
+.sharebar .excellent { background: var(--q-good); } .sharebar .good { background: #7fcf9d; } .sharebar .poor { background: var(--q-fair); } .sharebar .lost { background: var(--q-lost); } .sharebar .unknown { background: var(--grid); }
+.hops { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; } @media (max-width: 1100px) { .hops { grid-template-columns: 1fr; } }
+.events { list-style: none; padding: 0; margin: 0; } .events li { display: grid; grid-template-columns: 90px 110px 1fr; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.filters { display: inline-flex; gap: 8px; flex-wrap: wrap; }

@@ -2,13 +2,13 @@ import { participants } from '../api';
 import { store } from '../store';
 import type { ParticipantBrief, ParticipantPage, SetupStats } from '../types';
 import { badge, esc, fmtNum, qualityBadge } from '../util';
-import { listParams, PagedList } from './paged';
+import { listParams, PagedList, type Column } from './paged';
 import { ChartGroup, type View } from './view';
 
 const ORDER = ['excellent', 'good', 'poor', 'lost', 'unknown'];
 
 /** Bars of a count per key; the share is of the sum so a bar never exceeds its row. */
-function bars(m: Record<string, number>, label: string, order?: string[]): string {
+export function bars(m: Record<string, number>, label: string, order?: string[]): string {
   const rank = (k: string) => (order ? order.indexOf(k) : 0);
   const entries = Object.entries(m).filter(([, v]) => v > 0).sort((a, b) => (order ? rank(a[0]) - rank(b[0]) : b[1] - a[1]));
   const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
@@ -28,10 +28,16 @@ function extra(p: ParticipantPage): string {
     <h3>Participants (worst first)</h3>`;
 }
 
-function row(p: ParticipantBrief): string {
-  return `<tr><td><a href="#/rooms/${encodeURIComponent(p.room)}/${encodeURIComponent(p.sid)}">${esc(p.identity)}</a> ${p.kind === 'loadtest' ? badge(p.kind) : ''}</td><td>${esc(p.role)}</td><td>${esc(p.room)}</td><td>${qualityBadge(p.quality)} ${p.score.toFixed(1)}</td>
-    <td>${esc(p.ice_type || '–')}</td><td>${p.ice_setup_ms}</td><td>${p.dtls_setup_ms}</td><td>${fmtNum(p.rtt_ms)}</td></tr>`;
-}
+const columns: Column<ParticipantBrief>[] = [
+  { label: 'Participant', sort: 'identity', get: (p) => p.identity, cell: (p) => `<a href="#/rooms/${encodeURIComponent(p.room)}/${encodeURIComponent(p.sid)}">${esc(p.identity)}</a> ${p.kind === 'loadtest' ? badge(p.kind) : ''}` },
+  { label: 'Role', get: (p) => p.role },
+  { label: 'Room', sort: 'room', get: (p) => p.room },
+  { label: 'Quality', sort: 'quality', get: (p) => p.quality, cell: (p) => `${qualityBadge(p.quality)} ${p.score.toFixed(1)}` },
+  { label: 'ICE type', get: (p) => p.ice_type, cell: (p) => esc(p.ice_type || '–') },
+  { label: 'ICE ms', get: (p) => p.ice_setup_ms },
+  { label: 'DTLS ms', get: (p) => p.dtls_setup_ms },
+  { label: 'RTT ms', sort: 'rtt', desc: true, get: (p) => p.rtt_ms, cell: (p) => fmtNum(p.rtt_ms) },
+];
 
 export class Connectivity implements View {
   private root!: HTMLElement;
@@ -47,9 +53,8 @@ export class Connectivity implements View {
     this.list = new PagedList<ParticipantBrief, ParticipantPage>({
       head: root.querySelector('.view-head')!, body: root.querySelector('.body')!, filterLabel: 'Filter participants', sort: 'quality', scope: () => store.node,
       empty: 'No participants on this node.', extra,
-      columns: [{ label: 'Participant', sort: 'identity' }, { label: 'Role' }, { label: 'Room', sort: 'room' }, { label: 'Quality', sort: 'quality' }, { label: 'ICE type' }, { label: 'ICE ms' }, { label: 'DTLS ms' }, { label: 'RTT ms', sort: 'rtt', desc: true }],
+      columns, name: 'connectivity',
       fetch: (st) => participants({ ...listParams(st), connected: 1, node: store.node }), // own connections only
-      row,
     });
     this.update();
   }

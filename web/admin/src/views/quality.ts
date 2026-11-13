@@ -2,9 +2,22 @@ import { track, tracks } from '../api';
 import { store } from '../store';
 import type { TrackBrief, TrackDetail } from '../types';
 import { badge, esc, fmtBps, fmtNum, pushCap, safeDecode, table } from '../util';
-import { listParams, PagedList, Poller } from './paged';
+import { listParams, PagedList, Poller, type Column } from './paged';
 import { trackState } from './rooms';
 import { ChartGroup, render, type View } from './view';
+
+const trackColumns: Column<TrackBrief>[] = [
+  { label: 'Track', get: (t) => t.sid, cell: (t) => `<a href="#/quality/${encodeURIComponent(t.sid)}">${esc(t.sid)}</a>` },
+  { label: 'Room', sort: 'room', get: (t) => t.room },
+  { label: 'Presenter', sort: 'participant', get: (t) => t.participant },
+  { label: 'Kind', get: (t) => `${t.kind}/${t.source}` },
+  { label: 'Bitrate', sort: 'bitrate', desc: true, get: (t) => t.bitrate_bps, cell: (t) => fmtBps(t.bitrate_bps) },
+  { label: 'Loss', sort: 'loss', desc: true, get: (t) => t.loss_percent, cell: (t) => `${t.loss_percent.toFixed(1)}%` },
+  { label: 'Jitter', sort: 'jitter', desc: true, get: (t) => t.jitter_ms, cell: (t) => `${t.jitter_ms.toFixed(1)} ms` },
+  { label: 'NACK/PLI', get: (t) => `${t.nacks}/${t.plis}` },
+  { label: 'Subs', sort: 'subscribers', desc: true, get: (t) => t.subscribers },
+  { label: 'State', get: (t) => (t.muted ? 'muted' : t.active ? 'receiving' : 'no media'), cell: trackState },
+];
 
 interface TrackPoint { t: number; bitrate: number; loss: number; jitter: number }
 
@@ -26,11 +39,8 @@ export class Quality implements View {
       this.list = new PagedList<TrackBrief>({
         head: root.querySelector('.view-head')!, body: this.body, filterLabel: 'Filter by room, presenter or track', sort: 'loss', desc: true, scope: () => store.node,
         empty: 'No published tracks on this node.',
-        columns: [{ label: 'Track' }, { label: 'Room', sort: 'room' }, { label: 'Presenter', sort: 'participant' }, { label: 'Kind' }, { label: 'Bitrate', sort: 'bitrate', desc: true },
-          { label: 'Loss', sort: 'loss', desc: true }, { label: 'Jitter', sort: 'jitter', desc: true }, { label: 'NACK/PLI' }, { label: 'Subs', sort: 'subscribers', desc: true }, { label: 'State' }],
+        name: 'tracks', columns: trackColumns,
         fetch: (st) => tracks({ ...listParams(st), node: store.node }),
-        row: (t) => `<tr><td><a href="#/quality/${encodeURIComponent(t.sid)}">${esc(t.sid)}</a></td><td>${esc(t.room)}</td><td>${esc(t.participant)}</td><td>${esc(t.kind)}/${esc(t.source)}</td>
-          <td>${fmtBps(t.bitrate_bps)}</td><td>${t.loss_percent.toFixed(1)}%</td><td>${t.jitter_ms.toFixed(1)} ms</td><td>${t.nacks}/${t.plis}</td><td>${t.subscribers}</td><td>${trackState(t)}</td></tr>`,
       });
       return;
     }

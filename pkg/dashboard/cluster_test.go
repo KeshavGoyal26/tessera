@@ -162,7 +162,10 @@ func TestClusterView(t *testing.T) {
 	}
 
 	// The room index merges the nodes' indexes.
-	var idx struct{ Rooms []ClusterRoom }
+	var idx struct {
+		Rooms []ClusterRoom `json:"items"`
+		Total int
+	}
 	getJSON(t, ce.edge, c, "/admin/api/cluster/rooms", &idx)
 	if len(idx.Rooms) != 2 || idx.Rooms[0].Name != "g" || idx.Rooms[0].Presenters != 1 || idx.Rooms[0].Viewers != 2 ||
 		strings.Join(idx.Rooms[0].Media, ",") != "m1" || strings.Join(idx.Rooms[0].Edges, ",") != "e1" || idx.Rooms[1].Presenters != 1 {

@@ -31,6 +31,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/recorder"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
+	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
 
 //go:embed all:dist
@@ -62,6 +63,8 @@ type Params struct {
 	Now func() time.Time
 	// Thresholds for alerts (defaults: loss 5 %, RTT 300 ms, CPU 80 %).
 	LossPercent, RTTMs, CPUPercent float64
+	// Webhooks reports webhook delivery (nil: no webhook health on the dashboard).
+	Webhooks webhook.StatsProvider
 	// Cluster turns on the cluster view (nil: a single node).
 	Cluster *ClusterParams
 }
@@ -77,7 +80,8 @@ type Handler struct {
 	sessions map[string]*session
 	fails    map[string][]time.Time
 
-	hist *ring
+	hist    *ring
+	journal *Journal
 	// day is 24 h of history at dayStep: each point is the maximum of its window, so peaks
 	// stay visible (about 1.3 MB).
 	day    *ring
@@ -175,7 +179,7 @@ func New(p Params) (*Handler, error) {
 	}
 	h := &Handler{
 		p: p, log: p.Logger, static: http.FileServerFS(sub), client: &http.Client{Timeout: 1500 * time.Millisecond},
-		sessions: map[string]*session{}, fails: map[string][]time.Time{}, hist: newRing(p.HistorySize), day: newRing(int(24 * time.Hour / dayStep)),
+		sessions: map[string]*session{}, fails: map[string][]time.Time{}, hist: newRing(p.HistorySize), journal: newJournal(), day: newRing(int(24 * time.Hour / dayStep)),
 		subs: map[chan []byte]struct{}{}, alertAt: map[string]time.Time{},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -187,6 +191,9 @@ func New(p Params) (*Handler, error) {
 	}
 	return h, nil
 }
+
+// Journal is this node's session journal, for sources that add events (Journal.Record).
+func (h *Handler) Journal() *Journal { return h.journal }
 
 // Close stops the sampler.
 func (h *Handler) Close() {
@@ -529,29 +536,25 @@ func (h *Handler) listRecordings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	// Keep every recording in progress and the newest maxListedEnded ended ones (the
-	// coordinator keeps up to 1000): the view refreshes this list every few seconds.
-	nEnded := 0
-	keep := make([]bool, len(list))
+	// Searched and paged here, newest first: the coordinator keeps up to 1000.
+	v := r.URL.Query()
+	p, status := pageOf(v), v.Get("status")
+	var sel []json.RawMessage
 	for i := len(list) - 1; i >= 0; i-- {
-		if !isEnded(list[i].GetStatus()) {
-			keep[i] = true
-		} else if nEnded < maxListedEnded {
-			keep[i] = true
-			nEnded++
-		}
-	}
-	out := make([]json.RawMessage, 0, len(list))
-	for i, rec := range list {
-		if !keep[i] {
+		rec := list[i]
+		ended := isEnded(rec.GetStatus())
+		if (status == "active" && ended) || (status == "ended" && !ended) ||
+			(status == "failed" && rec.GetStatus() != tesserav1.RecordingStatus_RECORDING_STATUS_FAILED) {
 			continue
 		}
-		b, err := (jsonpb).Marshal(rec)
-		if err == nil {
-			out = append(out, b)
+		b, err := jsonpb.Marshal(rec)
+		if err != nil || !p.match(string(b)) { // the id, room and identities are all in the JSON
+			continue
 		}
+		sel = append(sel, b)
 	}
-	writeJSON(w, 200, map[string]any{"recordings": out, "total": len(list)})
+	total, out := page(p, sel, func(*json.RawMessage) bool { return true }, nil)
+	writeJSON(w, 200, map[string]any{"items": out, "total": total, "offset": p.offset})
 }
 
 func (h *Handler) fail(w http.ResponseWriter, err error) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeRoom, Participant, Published, Subscribed } from './types';
-import { esc, fmtBps, fmtBytes, fmtDur, matches, mergeRoom, nodeHealth, percentile, playUrl, role, pushCap, qs, roleCounts, table } from './util';
+import { esc, newestFirst, fmtBps, fmtBytes, fmtDur, matches, mergeRoom, nodeHealth, percentile, playUrl, role, pushCap, qs, roleCounts, table } from './util';
 
 describe('util', () => {
   it('escapes HTML', () => expect(esc('<a href="x">&')).toBe('&lt;a href=&quot;x&quot;&gt;&amp;'));
@@ -101,5 +101,13 @@ describe('cluster', () => {
     expect(nodeHealth({ draining: true, seen: now }, now).label).toBe('draining');
     expect(nodeHealth({ seen: now, summary: { critical: 2, warnings: 1 } }, now)).toEqual({ label: '2 critical', kind: 'bad' });
     expect(nodeHealth({ seen: now - 1000, summary: { critical: 0, warnings: 0 } }, now)).toEqual({ label: 'ok', kind: 'ok' });
+  });
+});
+
+describe('newestFirst', () => {
+  it('orders events newest first whatever the input order, ties in reverse arrival order', () => {
+    const e = [{ t: '2026-01-01T10:00:00Z', k: 'a' }, { t: '2026-01-01T10:00:05Z', k: 'c' }, { t: '2026-01-01T10:00:05Z', k: 'd' }, { t: '2026-01-01T10:00:02Z', k: 'b' }];
+    expect(newestFirst(e).map((x) => x.k)).toEqual(['d', 'c', 'b', 'a']);
+    expect(newestFirst([])).toEqual([]);
   });
 });

@@ -48,3 +48,14 @@ export function filterBox(parent: HTMLElement, label: string, onInput: () => voi
   parent.appendChild(input);
   return input;
 }
+
+/** A select for a list filter ([value, text] options, the first is the default); onChange re-queries. */
+export function selectBox(parent: HTMLElement, label: string, options: [string, string][], onChange: () => void): HTMLSelectElement {
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', label);
+  sel.title = label;
+  sel.innerHTML = options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  sel.addEventListener('change', onChange);
+  parent.appendChild(sel);
+  return sel;
+}

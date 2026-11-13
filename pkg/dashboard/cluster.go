@@ -8,6 +8,7 @@ package dashboard
 // cluster's API key), with short caches so several open dashboards cost the same as one.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -592,10 +593,13 @@ func (h *Handler) reachable() []NodeView {
 func (h *Handler) fanOut(ctx context.Context, query string, each func(n NodeView, b []byte, err error)) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	slots := make(chan struct{}, fanOutMax)
 	for _, n := range h.reachable() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
 			b, err := h.fetch(ctx, n.ID, query)
 			mu.Lock()
 			each(n, b, err)
@@ -603,6 +607,58 @@ func (h *Handler) fanOut(ctx context.Context, query string, each func(n NodeView
 		}()
 	}
 	wg.Wait()
+}
+
+// fanOutMax nodes are asked at the same time.
+const fanOutMax = 16
+
+// fanOutPage runs a paged query route (query.go) on every reachable node and merges the
+// pages: each node returns its first offset+limit items in the requested order, so the
+// merged, re-sorted slice is exact. Reusable for any route whose items are T.
+func fanOutPage[T any](ctx context.Context, h *Handler, route string, v url.Values, def, most int,
+	cmpFn func(a, b *T) int, setNode func(*T, string)) map[string]any {
+	p := pageOf(v)
+	if v.Get("limit") == "" {
+		p.limit = def
+	}
+	p.limit = min(p.limit, most)
+	q := url.Values{}
+	for k, vals := range v {
+		q[k] = vals
+	}
+	q.Set("api", route)
+	q.Set("offset", "0")
+	q.Set("limit", fmt.Sprint(min(p.offset+p.limit, pageMax)))
+	var items []T
+	var errs []string
+	total := 0
+	h.fanOut(ctx, q.Encode(), func(n NodeView, b []byte, err error) {
+		var pg struct {
+			Total int `json:"total"`
+			Items []T `json:"items"`
+		}
+		if err == nil {
+			err = json.Unmarshal(b, &pg)
+		}
+		if err != nil {
+			errs = append(errs, n.ID+": "+err.Error())
+			return
+		}
+		total += pg.Total
+		for i := range pg.Items {
+			setNode(&pg.Items[i], n.ID)
+		}
+		items = append(items, pg.Items...)
+	})
+	_, out := page(p, items, func(*T) bool { return true }, cmpFn)
+	sort.Strings(errs)
+	return map[string]any{"total": total, "offset": p.offset, "items": out, "errors": errs}
+}
+
+// NodeParticipant is a participant row of a cluster-wide search.
+type NodeParticipant struct {
+	ParticipantBrief
+	Node string `json:"node"`
 }
 
 // ClusterRoom is one room in the cluster room index.
@@ -641,7 +697,18 @@ func (h *Handler) clusterAPI(w http.ResponseWriter, r *http.Request, route strin
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(b)
 	case "cluster/rooms":
-		h.writeCached(w, "rooms", "rooms", func() (any, error) { return h.clusterRooms(r.Context()), nil })
+		h.clusterRoomsPage(w, r)
+	case "cluster/participants":
+		v := r.URL.Query()
+		if v.Get("sort") == "" {
+			v.Set("sort", "quality") // worst first
+		}
+		cmpP := partCmp(v.Get("sort"))
+		res := fanOutPage(r.Context(), h, "participants", v, 50, 200,
+			func(a, b *NodeParticipant) int { return cmpP(&a.ParticipantBrief, &b.ParticipantBrief) },
+			func(x *NodeParticipant, node string) { x.Node = node })
+		b, _ := json.Marshal(res)
+		writeBody(w, r, b)
 	case "cluster/room":
 		name := q.Get("name")
 		h.writeCached(w, "room", "room:"+name, func() (any, error) { return h.clusterRoom(r.Context(), name), nil })
@@ -711,6 +778,39 @@ func (h *Handler) clusterRooms(ctx context.Context) map[string]any {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	sort.Strings(errs)
 	return map[string]any{"rooms": out, "errors": errs, "truncated": truncated}
+}
+
+// clusterRoomsPage searches, sorts and pages the cluster room index (built at most every
+// few seconds from the nodes, cached).
+func (h *Handler) clusterRoomsPage(w http.ResponseWriter, r *http.Request) {
+	b, err := h.cachedFetch("rooms", "rooms", func() ([]byte, error) { return json.Marshal(h.clusterRooms(r.Context())) })
+	if err != nil {
+		jsonErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var all struct {
+		Rooms     []ClusterRoom `json:"rooms"`
+		Errors    []string      `json:"errors"`
+		Truncated bool          `json:"truncated"`
+	}
+	_ = json.Unmarshal(b, &all)
+	p := pageOf(r.URL.Query())
+	var cmpFn func(a, b *ClusterRoom) int
+	switch p.sort {
+	case "presenters":
+		cmpFn = func(a, b *ClusterRoom) int {
+			return cmp.Or(cmp.Compare(a.Presenters, b.Presenters), strings.Compare(a.Name, b.Name))
+		}
+	case "viewers":
+		cmpFn = func(a, b *ClusterRoom) int {
+			return cmp.Or(cmp.Compare(a.Viewers, b.Viewers), strings.Compare(a.Name, b.Name))
+		}
+	default:
+		cmpFn = func(a, b *ClusterRoom) int { return strings.Compare(a.Name, b.Name) }
+	}
+	total, items := page(p, all.Rooms, func(cr *ClusterRoom) bool { return p.match(cr.Name) }, cmpFn)
+	out, _ := json.Marshal(map[string]any{"total": total, "offset": p.offset, "items": items, "errors": all.Errors, "truncated": all.Truncated})
+	writeBody(w, r, out)
 }
 
 // clusterRoom returns every node's part of a room (nodes without it are left out).

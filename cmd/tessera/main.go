@@ -223,10 +223,14 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		dashCluster = &dashboard.ClusterParams{Nodes: cc, Self: cfg.NodeID, Role: cfg.Cluster.Role,
 			APIKey: recKey, Secret: recSecret, Verifier: verifier, KeepHistory: cfg.Cluster.Role == config.RoleEdge}
 	}
-	dash, err := dashboard.New(dashboard.Params{
+	dashParams := dashboard.Params{
 		Stats: rooms, Keys: keys, Rooms: adminRooms, Recordings: adminRecordings,
 		RecorderURLs: recorderURLs, Logger: logger, Cluster: dashCluster,
-	})
+	}
+	if sp, ok := notifier.(webhook.StatsProvider); ok {
+		dashParams.Webhooks = sp
+	}
+	dash, err := dashboard.New(dashParams)
 	if err != nil {
 		return err
 	}

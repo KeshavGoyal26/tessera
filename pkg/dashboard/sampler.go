@@ -15,6 +15,7 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/recorder"
 	"github.com/KeshavGoyal26/tessera/pkg/stats"
+	"github.com/KeshavGoyal26/tessera/pkg/webhook"
 )
 
 var jsonpb = protojson.MarshalOptions{UseProtoNames: true, EmitUnpopulated: false}
@@ -138,6 +139,7 @@ func (h *Handler) tick() {
 			active += r.Stats.ActiveRecordings
 		}
 	}
+	h.journal.Observe(snap, snap.Time)
 	pt := pointOf(snap, active)
 	alerts := h.alerts(snap, recs)
 	u := &Update{Snapshot: snap, Recorders: recs, Alerts: alerts, Point: pt}
@@ -150,6 +152,10 @@ func (h *Handler) tick() {
 	h.mu.Unlock()
 	ver := h.version.Load() + 1
 	live := liveOf(ver, snap, pt, alerts, total, recs)
+	live.Webhooks = []webhook.EndpointStats{}
+	if h.p.Webhooks != nil {
+		live.Webhooks = h.p.Webhooks.Stats()
+	}
 	b, err := json.Marshal(live) // a few KB at any scale: sent to every viewer as is
 	h.mu.Lock()
 	h.latest, h.latestJSON, h.summary = u, nil, sum
