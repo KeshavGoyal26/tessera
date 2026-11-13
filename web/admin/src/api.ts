@@ -25,7 +25,8 @@ export async function login(api_key: string, secret: string): Promise<void> {
   session.csrf = r.csrf; session.apiKey = r.api_key; session.cluster = r.cluster ?? null;
 }
 export const logout = (): Promise<unknown> => req('logout', { method: 'POST', body: '{}' });
-export const history = (): Promise<{ interval_ms: number; points: Point[] }> => req('history');
+/** The last hour at 1 s, or with range '24h' the last day at 10 s (each point the maximum of its window). */
+export const history = (range = ''): Promise<{ interval_ms: number; points: Point[] }> => req(range ? `history?range=${range}` : 'history');
 
 // Scale-safe endpoints: every one takes `node` (a cluster node id, '' for this node) and lists
 // take q, sort, desc, offset and limit; the server filters, sorts and pages.

@@ -67,6 +67,25 @@ func (r *ring) all() []Point {
 	return append(append([]Point(nil), r.buf[r.next:]...), r.buf[:r.next]...)
 }
 
+// addDay folds pt into the current dayStep window (maximum of each field) and closes the
+// window once it is dayStep old. The caller holds h.mu.
+func (h *Handler) addDay(pt Point) {
+	a := &h.dayAcc
+	if a.T == 0 {
+		*a = pt
+		return
+	}
+	a.CPU, a.RSS, a.Heap, a.Goroutines = max(a.CPU, pt.CPU), max(a.RSS, pt.RSS), max(a.Heap, pt.Heap), max(a.Goroutines, pt.Goroutines)
+	a.GCPauseNs, a.GCCPU, a.PktsIn, a.PktsOut = max(a.GCPauseNs, pt.GCPauseNs), max(a.GCCPU, pt.GCCPU), max(a.PktsIn, pt.PktsIn), max(a.PktsOut, pt.PktsOut)
+	a.BpsIn, a.BpsOut, a.Rooms, a.Particips = max(a.BpsIn, pt.BpsIn), max(a.BpsOut, pt.BpsOut), max(a.Rooms, pt.Rooms), max(a.Particips, pt.Particips)
+	a.Published, a.Subscribed, a.LossAvg, a.LossMax = max(a.Published, pt.Published), max(a.Subscribed, pt.Subscribed), max(a.LossAvg, pt.LossAvg), max(a.LossMax, pt.LossMax)
+	a.RTTAvg, a.RTTMax, a.Recording = max(a.RTTAvg, pt.RTTAvg), max(a.RTTMax, pt.RTTMax), max(a.Recording, pt.Recording)
+	if time.Duration(pt.T-a.T)*time.Millisecond >= dayStep {
+		h.day.add(*a)
+		*a = Point{}
+	}
+}
+
 func pointOf(s *stats.Snapshot, recordings int) Point {
 	n := s.Node
 	p := Point{
@@ -137,6 +156,7 @@ func (h *Handler) tick() {
 	h.live, h.liveJSON = live, b
 	h.version.Store(ver)
 	h.hist.add(pt)
+	h.addDay(pt)
 	if err == nil {
 		for ch := range h.subs {
 			select {
@@ -277,9 +297,40 @@ func (h *Handler) alerts(s *stats.Snapshot, recs []RecorderStatus) []Alert {
 			}
 		}
 	}
+	group(cur)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return stamp(cur, h.alertAt, now)
+}
+
+// groupAt: more participants than this with the same kind of alert become one alert.
+const groupAt = 5
+
+// group replaces per-participant alerts of one kind (rtt, loss, stall) by one alert with the
+// count and the worst three, once more than groupAt participants have them: at scale one
+// network problem would otherwise be hundreds of alerts.
+func group(cur map[string]Alert) {
+	byKind := map[string][]string{}
+	for id, a := range cur {
+		if prefix, _, ok := strings.Cut(id, ":"); ok && (prefix == "rtt" || prefix == "loss" || prefix == "ploss" || prefix == "stall") {
+			byKind[a.Kind] = append(byKind[a.Kind], id)
+		}
+	}
+	for kind, ids := range byKind {
+		if len(ids) <= groupAt {
+			continue
+		}
+		sort.Strings(ids)
+		var examples []string
+		for _, id := range ids {
+			if len(examples) < 3 {
+				examples = append(examples, cur[id].Message)
+			}
+			delete(cur, id)
+		}
+		cur["group:"+kind] = Alert{ID: "group:" + kind, Severity: "warning", Kind: kind,
+			Message: fmt.Sprintf("%d %s alerts, e.g. %s", len(ids), kind, strings.Join(examples, "; "))}
+	}
 }
 
 // stamp keeps each alert's first-seen time in at (dropping ended ones), orders critical

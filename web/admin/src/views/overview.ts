@@ -1,4 +1,6 @@
+import { history } from '../api';
 import { store } from '../store';
+import type { Point } from '../types';
 import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum } from '../util';
 import { ChartGroup, render, type View } from './view';
 
@@ -7,14 +9,22 @@ export class Overview implements View {
   private cards!: HTMLElement;
   private alerts!: HTMLElement;
   private charts!: ChartGroup;
+  /** '' = the last hour (live), '24h' = the last day at 10 s, refetched every 30 s. */
+  private range = '';
+  private day: Point[] = [];
+  private dayTimer = 0;
 
   mount(root: HTMLElement): void {
     this.root = root;
-    root.innerHTML = `<h2>Overview</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div><h3>Last hour</h3><div class="grid charts"></div>`;
+    root.innerHTML = `<h2>Overview</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div><h3>History <span class="range"><button data-range="" aria-pressed="true">1 h</button> <button data-range="24h" aria-pressed="false">24 h</button></span></h3><div class="grid charts"></div>`;
+    root.querySelector('.range')!.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-range]');
+      if (b) this.setRange(b.dataset.range!);
+    });
     this.cards = root.querySelector('.cards')!;
     this.alerts = root.querySelector('.alerts')!;
     const g = (this.charts = new ChartGroup(root.querySelector('.charts')!));
-    const P = () => store.points;
+    const P = () => (this.range ? this.day : store.points);
     g.add({ title: 'CPU (100 = one core)', series: [{ label: 'process', color: '--c1', get: (i) => P()[i]!.cpu, fill: true }], fmt: (v) => v.toFixed(0) + '%' });
     g.add({ title: 'Memory', series: [{ label: 'RSS', color: '--c1', get: (i) => P()[i]!.rss }, { label: 'heap', color: '--c2', get: (i) => P()[i]!.heap }], fmt: fmtBytes });
     g.add({ title: 'Goroutines', series: [{ label: 'goroutines', color: '--c3', get: (i) => P()[i]!.goroutines }], fmt: (v) => fmtNum(v), int: true });
@@ -36,7 +46,7 @@ export class Overview implements View {
     const recs = u.recorders.filter((r) => r.ok);
     const used = recs.reduce((a, s) => a + s.capacity_used, 0), cap = recs.reduce((a, s) => a + s.capacity, 0);
     const recCard = u.recorders.length
-      ? card('Recording', `${recs.reduce((a, s) => a + s.active_recordings, 0)} active`, `${recs.reduce((a, s) => a + s.tracks_recording, 0)} tracks · capacity ${used} of ${cap} units${recs.length < u.recorders.length ? ` · ${u.recorders.length - recs.length} down` : ''}`, cap && used >= cap ? 'bad' : recs.length < u.recorders.length || (cap && used * 10 >= cap * 9) ? 'warn' : '')
+      ? card('Recording', `${recs.reduce((a, s) => a + s.active_recordings, 0)} active`, `${recs.reduce((a, s) => a + s.tracks_recording, 0)} tracks · capacity ${used} of ${cap} units · ${fmtNum(recs.reduce((a, s) => a + s.segments_written, 0))} segments, ${fmtBytes(recs.reduce((a, s) => a + s.bytes_uploaded, 0))} uploaded${recs.some((s) => s.upload_errors || s.track_errors) ? ` · ${fmtNum(recs.reduce((a, s) => a + s.upload_errors + s.track_errors, 0))} errors` : ''}${recs.length < u.recorders.length ? ` · ${u.recorders.length - recs.length} down` : ''}`, cap && used >= cap ? 'bad' : recs.length < u.recorders.length || (cap && used * 10 >= cap * 9) ? 'warn' : '')
       : '';
     const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'none yet'} ${fmtNum(v)}`).join(' · ');
     render(this.cards,
@@ -55,9 +65,23 @@ export class Overview implements View {
     render(this.alerts, u.alerts.length
       ? u.alerts.map((a) => `<div class="alert ${a.severity}">${badge(a.kind, a.severity === 'critical' ? 'bad' : 'warn')} ${esc(a.message)} <span class="muted">since ${new Date(a.since).toLocaleTimeString()}</span></div>`).join('') + more
       : '<p class="ok-line">No active alerts.</p>');
-    const pts = store.points;
+    this.draw();
+  }
+
+  private draw(): void {
+    const pts = this.range ? this.day : store.points;
     this.charts.update(pts.map((p) => p.t / 1000), pts.length);
   }
 
-  destroy(): void { this.charts.destroy(); this.root.innerHTML = ''; }
+  private setRange(r: string): void {
+    this.range = r;
+    window.clearInterval(this.dayTimer);
+    this.root.querySelectorAll<HTMLButtonElement>('.range button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.range === r)));
+    if (!r) { this.draw(); return; }
+    const load = () => history(r).then((h) => { this.day = h.points; this.draw(); }).catch(() => undefined);
+    void load();
+    this.dayTimer = window.setInterval(load, 30_000);
+  }
+
+  destroy(): void { window.clearInterval(this.dayTimer); this.charts.destroy(); this.root.innerHTML = ''; }
 }

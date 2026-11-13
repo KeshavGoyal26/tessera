@@ -401,11 +401,13 @@ func TestAlertsPresenterModel(t *testing.T) {
 func TestAlertsBounded(t *testing.T) {
 	now := time.Now()
 	h := newHandler(t, now, &fakeRecs{})
-	s := &stats.Snapshot{Node: stats.NodeStats{NumCPU: 1, CPUPercent: 100}, Rooms: []stats.RoomStats{{Name: "g"}}}
+	// Distinct alerts beyond the cap: recorders that cannot be reached.
+	var recs []RecorderStatus
 	for i := range 150 {
-		s.Rooms[0].Participants = append(s.Rooms[0].Participants, stats.ParticipantStats{SID: fmt.Sprintf("PA_%03d", i), Identity: "v", RTTMs: 900})
+		recs = append(recs, RecorderStatus{URL: fmt.Sprintf("http://r%03d", i), Error: "down"})
 	}
-	out := h.alerts(s, nil)
+	s := &stats.Snapshot{Node: stats.NodeStats{NumCPU: 1, CPUPercent: 100}}
+	out := h.alerts(s, recs)
 	if len(out) != maxAlerts {
 		t.Fatalf("got %d alerts, want %d", len(out), maxAlerts)
 	}

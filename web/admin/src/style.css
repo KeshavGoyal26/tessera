@@ -71,3 +71,6 @@ a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid 
 td:not(.actions) { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; }
 th button.sort { all: unset; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; } th button.sort:hover, th button.sort:focus-visible { color: var(--text); text-decoration: underline; }
 .pager { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+
+.range button { font-size: 0.75rem; padding: 2px 8px; }
+.range button[aria-pressed="true"] { font-weight: 700; }

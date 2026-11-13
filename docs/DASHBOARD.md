@@ -132,3 +132,22 @@ adaptation, connectivity, recorder) uses the metrics of `docs/STATS.md` and
 - Roles are inferred (a presenter who has not published yet is listed as a viewer).
 - The frontend has unit tests and was checked with a headless browser against `tessera-loadtest`
   rooms, but there is no automated end-to-end suite yet.
+
+## Scale (10k-100k users)
+
+Nothing the dashboard sends grows with the number of participants:
+
+- The live stream (`api/events`) sends a ~1 KB frame per sample: history point, counts by role,
+  quality and ICE counts, at most 50 alerts (`alerts_total` counts all) and recorder totals.
+- Lists are filtered, sorted and paged on the server: `api/rooms`, `api/participants`
+  (`room`, `role`, `connected=1`, plus quality/ICE/setup aggregates over the filtered set) and
+  `api/tracks`, with `q`, `sort`, `desc=1`, `offset`, `limit` (100 by default, 500 at most).
+  Details: `api/participant?room=&sid=` (subscriptions capped at 500) and `api/track?sid=`
+  (worst 100 subscribers). Each answer is built once per sample and cached.
+- Every list and detail endpoint takes `node=<id>` in a cluster: the query runs on that node.
+- Alerts of one kind (RTT, loss, stall) from more than 5 participants become one alert with the
+  count and examples.
+- With no dashboard open and no API use for 30 s, the node samples every 5 s instead of 1 s.
+- History: the last hour at 1 s (`api/history`) and the last day at 10 s, each point the
+  maximum of its window (`api/history?range=24h`, about 1.3 MB per node).
+- JSON responses over 2 KB are gzipped when the browser accepts it.

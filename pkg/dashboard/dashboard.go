@@ -77,8 +77,15 @@ type Handler struct {
 	sessions map[string]*session
 	fails    map[string][]time.Time
 
-	hist   *ring
-	latest *Update
+	hist *ring
+	// day is 24 h of history at dayStep: each point is the maximum of its window, so peaks
+	// stay visible (about 1.3 MB).
+	day    *ring
+	dayAcc Point
+	// lastUse (unix ns) is the last dashboard request; with no viewer for idleAfter the
+	// sampler takes one sample per idleEvery intervals.
+	lastUse atomic.Int64
+	latest  *Update
 	// latestJSON is latest marshalled (nil until someone needs it); summary is this
 	// node's Summary for the cluster heartbeat.
 	latestJSON []byte
@@ -168,7 +175,7 @@ func New(p Params) (*Handler, error) {
 	}
 	h := &Handler{
 		p: p, log: p.Logger, static: http.FileServerFS(sub), client: &http.Client{Timeout: 1500 * time.Millisecond},
-		sessions: map[string]*session{}, fails: map[string][]time.Time{}, hist: newRing(p.HistorySize),
+		sessions: map[string]*session{}, fails: map[string][]time.Time{}, hist: newRing(p.HistorySize), day: newRing(int(24 * time.Hour / dayStep)),
 		subs: map[chan []byte]struct{}{}, alertAt: map[string]time.Time{},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -195,20 +202,40 @@ func (h *Handler) loop() {
 	defer close(h.done)
 	t := time.NewTicker(h.p.Interval)
 	defer t.Stop()
-	for {
+	for n := 1; ; n++ {
 		select {
 		case <-h.stop:
 			return
 		case <-t.C:
+			if h.idle() && n%idleEvery != 0 {
+				continue // nobody watching: sample less often (history, alerts, heartbeat summary)
+			}
 			h.tick()
 		}
 	}
+}
+
+const (
+	idleAfter = 30 * time.Second
+	idleEvery = 5
+	dayStep   = 10 * time.Second
+)
+
+// idle: no live stream open and no dashboard request for idleAfter.
+func (h *Handler) idle() bool {
+	h.mu.Lock()
+	subs := len(h.subs)
+	h.mu.Unlock()
+	return subs == 0 && h.p.Now().Sub(time.Unix(0, h.lastUse.Load())) > idleAfter
 }
 
 // ServeHTTP implements http.Handler. Requests may arrive with or without the
 // /admin prefix.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, PathPrefix)
+	if strings.HasPrefix(path, "/api/") {
+		h.lastUse.Store(h.p.Now().UnixNano())
+	}
 	switch {
 	case path == "" && !strings.HasSuffix(r.URL.Path, "/"):
 		http.Redirect(w, r, PathPrefix+"/", http.StatusMovedPermanently)
@@ -285,9 +312,13 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, route string) {
 		writeJSON(w, 200, u)
 	case route == "history" && r.Method == http.MethodGet:
 		h.mu.Lock()
-		pts := h.hist.all()
+		pts, step := h.hist.all(), h.p.Interval
+		if r.URL.Query().Get("range") == "24h" {
+			pts, step = h.day.all(), dayStep
+		}
 		h.mu.Unlock()
-		writeJSON(w, 200, map[string]any{"interval_ms": h.p.Interval.Milliseconds(), "points": pts})
+		b, _ := json.Marshal(map[string]any{"interval_ms": step.Milliseconds(), "points": pts})
+		writeBody(w, r, b)
 	case queryRoutes[route] && r.Method == http.MethodGet:
 		h.serveQuery(w, r, route)
 	case route == "events" && r.Method == http.MethodGet:

@@ -24,19 +24,23 @@ type transport struct {
 	handler TransportHandler
 	logger  *slog.Logger
 
-	mu            sync.Mutex
-	remoteSet     bool
-	pending       []webrtc.ICECandidateInit
-	offerID       uint32
-	awaitAnswer   bool
-	renegotiate   bool
-	restartNext   bool
-	timer         *time.Timer
-	closed        bool
-	senders       map[DownTrack]*webrtc.RTPSender
-	dcs           map[string]*webrtc.DataChannel
-	created       time.Time
-	iceConnected  time.Time
+	mu           sync.Mutex
+	remoteSet    bool
+	pending      []webrtc.ICECandidateInit
+	offerID      uint32
+	awaitAnswer  bool
+	renegotiate  bool
+	restartNext  bool
+	timer        *time.Timer
+	closed       bool
+	senders      map[DownTrack]*webrtc.RTPSender
+	dcs          map[string]*webrtc.DataChannel
+	created      time.Time
+	iceConnected time.Time
+	// The selected pair's candidate type, looked up at most every candTTL (it changes only on
+	// an ICE restart); the stats poll would otherwise ask the ICE agent every second.
+	candType      string
+	candAt        time.Time
 	dtlsConnected time.Time
 }
 
@@ -327,6 +331,8 @@ func (t *transport) SendDataPacket(kind tesserav1.DataPacket_Kind, data []byte) 
 // WriteRTCP implements Transport.
 func (t *transport) WriteRTCP(pkts []rtcp.Packet) error { return t.pc.WriteRTCP(pkts) }
 
+const candTTL = 10 * time.Second
+
 // Stats implements Transport.
 func (t *transport) Stats() TransportStats {
 	t.mu.Lock()
@@ -342,8 +348,17 @@ func (t *transport) Stats() TransportStats {
 		// Only a live agent: a closed one (session dropped, waiting to resume) makes Pion log
 		// "the agent is closed" on every poll.
 		if ice := t.iceTransport(); ice != nil && iceUp(ice.State()) {
-			if pair, err := ice.GetSelectedCandidatePair(); err == nil && pair != nil {
-				s.CandidateType = candidateType(pair.Remote)
+			t.mu.Lock()
+			s.CandidateType = t.candType
+			stale := time.Since(t.candAt) > candTTL
+			t.mu.Unlock()
+			if stale {
+				if pair, err := ice.GetSelectedCandidatePair(); err == nil && pair != nil {
+					s.CandidateType = candidateType(pair.Remote)
+					t.mu.Lock()
+					t.candType, t.candAt = s.CandidateType, time.Now()
+					t.mu.Unlock()
+				}
 			}
 			if ps, ok := ice.GetSelectedCandidatePairStats(); ok && ps.CurrentRoundTripTime > 0 {
 				s.RTT = time.Duration(ps.CurrentRoundTripTime * float64(time.Second))

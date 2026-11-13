@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"cmp"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -427,10 +428,27 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, route strin
 	case err != nil:
 		jsonErr(w, http.StatusBadGateway, err.Error())
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(b)
+		writeBody(w, r, b)
 	}
+}
+
+// gzipOver: JSON bodies above this are compressed when the client accepts it (stats JSON
+// shrinks 5-10x).
+const gzipOver = 2 << 10
+
+// writeBody writes a JSON body, gzipped when large and accepted.
+func writeBody(w http.ResponseWriter, r *http.Request, b []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Add("Vary", "Accept-Encoding")
+	if len(b) < gzipOver || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		_, _ = w.Write(b)
+		return
+	}
+	w.Header().Set("Content-Encoding", "gzip")
+	zw := gzip.NewWriter(w)
+	_, _ = zw.Write(b)
+	_ = zw.Close()
 }
 
 // queryBytes is queryLocal as JSON, cached until the next sample.

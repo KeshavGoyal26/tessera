@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestQueriesStaySmallAtScale(t *testing.T) {
 	}
 	var l Live
 	_ = json.Unmarshal(live, &l)
-	if l.Counts.Rooms != 20 || l.Counts.Presenters != 20 || l.Counts.Viewers != 1980 || len(l.Alerts) != liveAlerts || l.AlertsTotal <= liveAlerts {
+	if l.Counts.Rooms != 20 || l.Counts.Presenters != 20 || l.Counts.Viewers != 1980 {
 		t.Fatalf("counts %+v", l.Counts)
 	}
 	if n := l.Quality[stats.QualityLost] + l.Quality[stats.QualityPoor] + l.Quality[stats.QualityGood] + l.Quality[stats.QualityExcellent]; n != 2000 {
@@ -184,5 +185,25 @@ func TestQueryCachePerSample(t *testing.T) {
 	h.tick()
 	if c, _ := h.queryBytes("participants", v); &c[0] == &a[0] || h.indexNow() == ix {
 		t.Fatal("a new sample must give a new index and fresh answers")
+	}
+}
+
+// Hundreds of participants with loss are one alert, not hundreds.
+func TestAlertsGroupedAtScale(t *testing.T) {
+	h := newQueryHandler(t, bigSnap(20, 99))
+	h.mu.Lock()
+	l := h.live
+	h.mu.Unlock()
+	var group *Alert
+	for i, a := range l.Alerts {
+		if strings.HasPrefix(a.ID, "loss:") {
+			t.Fatalf("ungrouped alert %s", a.ID)
+		}
+		if a.ID == "group:loss" {
+			group = &l.Alerts[i]
+		}
+	}
+	if group == nil || !strings.HasPrefix(group.Message, "902 loss alerts") || l.AlertsTotal > 5 {
+		t.Fatalf("grouped: %+v total %d", group, l.AlertsTotal)
 	}
 }
