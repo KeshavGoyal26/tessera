@@ -10,7 +10,17 @@ keys:
 rtc:
   udp_port: ${UDP_PORT}
   tcp_port: ${TCP_PORT}
-  node_ip: ${TESSERA_NODE_IP}
+  node_ip: ${RTC_NODE_IP} # the host IP; empty on media nodes with EDGE_TURN (internal only)
+# TURN on edges (EDGE_TURN=1 in deploy/docker-compose.cluster.yml): TCP only, relaying from the
+# edge's internal address to the media nodes on the internal network (172.28.0.0/16); the
+# secret is shared with the media nodes, which hand presenters credentials.
+turn:
+  enabled: ${TURN_ENABLED}
+  udp_port: -1
+  tcp_port: ${TURN_TCP_PORT}
+  secret: ${TESSERA_DEV_SECRET}
+  relay_ip: ${TURN_RELAY_IP}
+  relay_peers: [172.28.0.0/16]
 room:
   auto_create: true
   empty_timeout: 5m
@@ -21,7 +31,7 @@ recording:
     local_root: /tmp/recordings
     # Served by this node's metrics listener (REC_PORT on the host), so players reach the
     # recording on the media node that made it.
-    local_base_url: http://${TESSERA_NODE_IP}:${REC_PORT}/recordings
+    local_base_url: http://${HOST_IP}:${REC_PORT}/recordings
 metrics:
   addr: ":6789"
 logging:

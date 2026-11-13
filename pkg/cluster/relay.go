@@ -225,7 +225,7 @@ func (g *groupRelay) join(ctx context.Context, node, url string) error {
 	if err != nil {
 		return err
 	}
-	c := client.New(client.Options{AutoSubscribe: true, SettingEngine: g.r.SettingEngine, Logger: g.r.Logger})
+	c := client.New(client.Options{AutoSubscribe: true, Direct: true, SettingEngine: g.r.SettingEngine, Logger: g.r.Logger})
 	c.SetCallbacks(client.Callbacks{
 		OnTrackSubscribed:   func(t *client.RemoteTrack) { g.onTrack(node, c, t) },
 		OnTrackUnsubscribed: g.onTrackGone,

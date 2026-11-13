@@ -20,12 +20,20 @@ x-node: &node
 
 x-env: &env
   TESSERA_DEV_SECRET: ${TESSERA_DEV_SECRET}
-  TESSERA_NODE_IP: ${TESSERA_NODE_IP}
+  HOST_IP: ${TESSERA_NODE_IP}
   TESSERA_TURN_URLS: ${TURN_URLS:-}
   TESSERA_TURN_USERNAME: ${TURN_USERNAME:-}
   TESSERA_TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
   TESSERA_TURN_SECRET: ${TURN_SECRET:-}
   TESSERA_FORCE_RELAY: ${FORCE_RELAY:-}
+
+# EDGE_TURN=1: presenters reach the media nodes only through the edges' TURN over TCP
+# (ADR-0012). Media nodes hand out both edges' TURN with per-session credentials and force relay.
+x-media-env: &media-env
+  RTC_NODE_IP: ${MEDIA_NODE_IP-${TESSERA_NODE_IP}} # scripts/docker.sh empties it with EDGE_TURN
+  TESSERA_TURN_URLS: ${TURN_URLS:-${EDGE_TURN:+turn:${TESSERA_NODE_IP}:3478?transport=tcp,turn:${TESSERA_NODE_IP}:3479?transport=tcp}}
+  TESSERA_TURN_SECRET: ${TURN_SECRET:-${EDGE_TURN:+${TESSERA_DEV_SECRET}}}
+  TESSERA_FORCE_RELAY: ${FORCE_RELAY:-${EDGE_TURN:+true}}
 
 services:
   redis:
@@ -39,27 +47,35 @@ services:
   m1:
     <<: *node
     build: { context: .., dockerfile: deploy/docker/Dockerfile, target: tessera, args: { GOPROXY: "${GOPROXY:-}" } }
-    environment: { <<: *env, NODE_ID: m1, ROLE: media, RECORDING: "true", PORT: 7910, TCP_PORT: 7911, UDP_PORT: 7912, REC_PORT: 6791 }
+    environment: { <<: [*media-env, *env], NODE_ID: m1, ROLE: media, RECORDING: "true", PORT: 7910, TCP_PORT: 7911, UDP_PORT: 7912, REC_PORT: 6791 }
     ports: ["7910:7910/tcp", "7911:7911/tcp", "7912:7912/udp", "6791:6789/tcp"]
   m2:
     <<: *node
     depends_on: { m1: { condition: service_started } }
-    environment: { <<: *env, NODE_ID: m2, ROLE: media, RECORDING: "true", PORT: 7920, TCP_PORT: 7921, UDP_PORT: 7922, REC_PORT: 6792 }
+    environment: { <<: [*media-env, *env], NODE_ID: m2, ROLE: media, RECORDING: "true", PORT: 7920, TCP_PORT: 7921, UDP_PORT: 7922, REC_PORT: 6792 }
     ports: ["7920:7920/tcp", "7921:7921/tcp", "7922:7922/udp", "6792:6789/tcp"]
   e1:
     <<: *node
     depends_on: { m1: { condition: service_started } }
-    environment: { <<: *env, NODE_ID: e1, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7930, TCP_PORT: 7931, UDP_PORT: 7932 }
-    ports: ["7930:7930/tcp", "7931:7931/tcp", "7932:7932/udp"]
+    environment: { <<: *env, NODE_ID: e1, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7930, TCP_PORT: 7931, UDP_PORT: 7932,
+                   RTC_NODE_IP: "${TESSERA_NODE_IP}",
+                   TURN_ENABLED: "${EDGE_TURN:+true}", TURN_TCP_PORT: 3478, TURN_RELAY_IP: 172.28.0.31 }
+    ports: ["7930:7930/tcp", "7931:7931/tcp", "7932:7932/udp", "3478:3478/tcp"]
+    networks: { default: { ipv4_address: 172.28.0.31 } }
   e2:
     <<: *node
     depends_on: { m1: { condition: service_started } }
-    environment: { <<: *env, NODE_ID: e2, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7940, TCP_PORT: 7941, UDP_PORT: 7942 }
-    ports: ["7940:7940/tcp", "7941:7941/tcp", "7942:7942/udp"]
+    environment: { <<: *env, NODE_ID: e2, ROLE: edge, RECORDING: "false", REC_PORT: 0, PORT: 7940, TCP_PORT: 7941, UDP_PORT: 7942,
+                   RTC_NODE_IP: "${TESSERA_NODE_IP}",
+                   TURN_ENABLED: "${EDGE_TURN:+true}", TURN_TCP_PORT: 3479, TURN_RELAY_IP: 172.28.0.41 }
+    ports: ["7940:7940/tcp", "7941:7941/tcp", "7942:7942/udp", "3479:3479/tcp"]
+    networks: { default: { ipv4_address: 172.28.0.41 } }
 
   web-demo:
     build: { context: .., dockerfile: deploy/docker/Dockerfile, target: web-demo, args: { NPM_REGISTRY: "${NPM_REGISTRY:-}" } }
     ports: ["5173:80"]
     restart: unless-stopped
 
-
+networks:
+  default:
+    ipam: { config: [{ subnet: 172.28.0.0/16 }] } # fixed: edges relay into it (EDGE_TURN)

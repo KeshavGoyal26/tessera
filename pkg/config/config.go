@@ -129,6 +129,10 @@ type TURNConfig struct {
 	// RelayPeers are extra networks (CIDR) clients may relay to, besides this node: the
 	// media servers' subnet on an edge (ADR-0012).
 	RelayPeers []string `yaml:"relay_peers"`
+	// RelayIP is the address of the relay sockets, the one the relay peers (media servers)
+	// send to: the edge's private address when they are on a private network. Default:
+	// rtc.node_ip (clients still reach the TURN listeners at rtc.node_ip).
+	RelayIP string `yaml:"relay_ip"`
 }
 
 // TURNRelayConfig points clients at TURN servers that share Secret (TURN REST API

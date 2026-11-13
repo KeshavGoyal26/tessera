@@ -33,6 +33,9 @@ The server must advertise an address the browser can reach.
   `TESSERA_TURN_USERNAME`/`TESSERA_TURN_CREDENTIAL` (fixed); `TESSERA_FORCE_RELAY=true` makes clients
   use only TURN. With only `?transport=tcp`/`turns:` URLs that is TURN over TCP. The compose files
   pass `TURN_URLS`, `TURN_SECRET`, `TURN_USERNAME`, `TURN_CREDENTIAL` and `FORCE_RELAY` from `deploy/.env`.
+- **Edge TURN on a private network** (ADR-0012): set `turn.relay_ip` on each edge to its private
+  address, the one the media servers send to; clients still reach the TURN listeners at `rtc.node_ip`.
+  `deploy/docker-compose.cluster.yml` does this with `EDGE_TURN=1`.
 - **Kubernetes**: use `hostNetwork: true` or a `hostPort` DaemonSet-style deployment per node; a Service of
   type LoadBalancer with UDP works but adds a hop and cannot pin a client to one node. No Helm chart yet.
 

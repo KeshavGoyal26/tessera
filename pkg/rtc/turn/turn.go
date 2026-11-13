@@ -70,17 +70,32 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 		}
 		return false
 	}
+	// Listen on an address only when this machine has it, else on all interfaces: in a
+	// container or behind cloud 1:1 NAT the advertised address (node_ip) is not a local one.
+	bindOf := func(a net.IP) string {
+		if isLocal(a) {
+			return a.String()
+		}
+		return "0.0.0.0"
+	}
+	host := bindOf(ip)
+	rip := ip // relay sockets: towards the relay peers, cfg.RelayIP when set
+	if cfg.RelayIP != "" {
+		if rip = net.ParseIP(cfg.RelayIP); rip == nil {
+			return nil, errs.New(errs.CodeInvalidArgument, "turn: bad relay_ip %q", cfg.RelayIP)
+		}
+	}
 	gen := func() pturn.RelayAddressGenerator {
 		if cfg.RelayRangeStart > 0 && cfg.RelayRangeEnd >= cfg.RelayRangeStart {
-			return &pturn.RelayAddressGeneratorPortRange{RelayAddress: ip, Address: ip.String(),
+			return &pturn.RelayAddressGeneratorPortRange{RelayAddress: rip, Address: bindOf(rip),
 				MinPort: uint16(cfg.RelayRangeStart), MaxPort: uint16(cfg.RelayRangeEnd)}
 		}
-		return &pturn.RelayAddressGeneratorStatic{RelayAddress: ip, Address: ip.String()}
+		return &pturn.RelayAddressGeneratorStatic{RelayAddress: rip, Address: bindOf(rip)}
 	}
 	lf := logging.NewDefaultLoggerFactory()
 	lf.DefaultLogLevel = logging.LogLevelError
 	sc := pturn.ServerConfig{Realm: "tessera", LoggerFactory: lf, AuthHandler: pturn.LongTermTURNRESTAuthHandler(s.secret, nil)}
-	bind := net.JoinHostPort(ip.String(), strconv.Itoa(cfg.UDPPort))
+	bind := net.JoinHostPort(host, strconv.Itoa(cfg.UDPPort))
 	if cfg.UDPPort >= 0 {
 		var lc net.ListenConfig
 		pc, err := lc.ListenPacket(context.Background(), "udp4", bind)
@@ -93,7 +108,7 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 	}
 	if cfg.TCPPort >= 0 {
 		var lc net.ListenConfig
-		ln, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.TCPPort)))
+		ln, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(host, strconv.Itoa(cfg.TCPPort)))
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("turn: listen tcp: %w", err)
@@ -110,7 +125,7 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 			return nil, fmt.Errorf("turn: load tls certificate: %w", err)
 		}
 		var lc net.ListenConfig
-		raw, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.TLSPort)))
+		raw, err := lc.Listen(context.Background(), "tcp4", net.JoinHostPort(host, strconv.Itoa(cfg.TLSPort)))
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("turn: listen tls: %w", err)
@@ -173,6 +188,17 @@ func (s *Server) URLs() []string {
 		out = append(out, fmt.Sprintf("turns:%s:%d?transport=tcp", s.host, s.tlsPort))
 	}
 	return out
+}
+
+// isLocal reports whether ip is assigned to one of this machine's interfaces.
+func isLocal(ip net.IP) bool {
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close stops all listeners.

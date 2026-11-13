@@ -18,7 +18,9 @@ scripts/docker.sh stop [single]    # also: build, status, logs [service]
 
 The script creates `deploy/.env` from `.env.example` on first run (with this machine's LAN IP) and
 removes the images a rebuild replaces. Build settings (command line or `deploy/.env`):
-`NPMRC=~/.npmrc` (npm registry and credentials), `NPM_REGISTRY=<url>`, `GOPROXY=<url>`; behind a
+`NPMRC=~/.npmrc` (npm registry and credentials), `NPM_REGISTRY=<url>`, `GOPROXY=<url>`. Cluster:
+`EDGE_TURN=1 scripts/docker.sh start` sends presenters only through the edges' TURN over TCP (e1
+3478, e2 3479; media nodes then advertise only their internal address). Behind a
 proxy that re-signs HTTPS, see `docker/local/README.md`. Plain compose works too:
 `docker compose -f deploy/docker-compose.cluster.yml --env-file deploy/.env up -d --build`.
 

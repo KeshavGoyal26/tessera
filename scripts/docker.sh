@@ -11,6 +11,7 @@
 #   NPMRC=~/.npmrc        npm config for the web demo build (registry, auth)
 #   NPM_REGISTRY=<url>    npm registry (overrides the one in NPMRC)
 #   GOPROXY=<url>         Go module proxy
+#   EDGE_TURN=1           cluster: presenters only through the edges' TURN over TCP
 #
 # Default: cluster (Redis, media m1 m2, edges e1 e2, web demo). The ports are those of
 # scripts/cluster-start.sh and scripts/start.sh, so run one setup at a time.
@@ -40,6 +41,12 @@ if [ -n "$lan" ] && [ "$ip" != "$lan" ] && [ "$ip" != 127.0.0.1 ] && ! ifconfig 
 fi
 secret=$(sed -n 's/^TESSERA_DEV_SECRET=//p' deploy/.env)
 compose() { docker compose -f "$file" --env-file deploy/.env "$@"; }
+
+# EDGE_TURN=1 (cluster): presenters reach the media nodes only through the edges' TURN over
+# TCP, so media nodes advertise only their internal address.
+if [ -n "${EDGE_TURN:-$(sed -n 's/^EDGE_TURN=//p' deploy/.env)}" ]; then
+  export MEDIA_NODE_IP=
+fi
 
 # The build only sees files inside the project: copy the given .npmrc into the git-ignored
 # deploy/docker/local/ (and drop a copy from an earlier run when none is given).
@@ -93,5 +100,5 @@ case $cmd in
   stop) compose down ;;
   status) compose ps ;;
   logs) compose logs -f --tail 100 "${@:3}" ;;
-  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

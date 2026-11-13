@@ -34,6 +34,9 @@ type Options struct {
 	OnPublisherRTCP func(pkts []rtcp.Packet)
 	// ForceRelay uses only TURN relay candidates.
 	ForceRelay bool
+	// Direct never relays: it ignores the server's ICE servers and force_relay (a cluster
+	// edge pulling from media servers on the private network).
+	Direct bool
 	// TURNSOnly keeps only the turns: (TURN over TLS) ICE servers from the join response and
 	// implies ForceRelay. The system roots verify the server certificate.
 	TURNSOnly bool

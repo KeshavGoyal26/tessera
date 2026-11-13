@@ -270,8 +270,11 @@ func (c *client) Connect(ctx context.Context, rawURL, token string) error {
 		}
 		iceServers = append(iceServers, webrtc.ICEServer{URLs: urls, Username: s.Username, Credential: s.Credential})
 	}
+	if c.opts.Direct {
+		iceServers = nil
+	}
 	cfg := webrtc.Configuration{ICEServers: iceServers}
-	if c.opts.ForceRelay || c.opts.TURNSOnly {
+	if c.opts.ForceRelay || c.opts.TURNSOnly || (!c.opts.Direct && join.GetClientConfiguration().GetForceRelay()) {
 		cfg.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	}
 	if c.sub, err = c.newPC(cfg, tesserav1.SignalTarget_SIGNAL_TARGET_SUBSCRIBER); err != nil {
