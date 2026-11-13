@@ -239,7 +239,7 @@ func TestJournalSessions(t *testing.T) {
 
 func TestCapacityN1(t *testing.T) {
 	n := func(id, role string, cpu float64) NodeView {
-		return NodeView{ID: id, Role: role, Summary: &NodeSummary{CPU: cpu}}
+		return NodeView{ID: id, Role: role, Summary: &Summary{CPU: cpu}}
 	}
 	c := capacityOf([]NodeView{n("m1", "media", 60), n("m2", "media", 40), n("m3", "media", 50), n("e1", "edge", 70)})
 	if m := c["media"]; m.Nodes != 3 || !m.N1 || m.Busiest != "m1" || m.MaxLoad != 0.6 { // 150% over two nodes = 75 %
