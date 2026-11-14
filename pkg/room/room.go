@@ -224,7 +224,7 @@ func (m *manager) CreateRoom(_ context.Context, req *tesserav1.CreateRoomRequest
 		return nil, errs.New(errs.CodeInvalidArgument, "room name required")
 	}
 	rc := &auth.RoomConfig{EmptyTimeoutSeconds: req.GetEmptyTimeoutSeconds(), DepartureTimeoutSeconds: req.GetDepartureTimeoutSeconds(),
-		MaxParticipants: req.GetMaxParticipants()}
+		MaxParticipants: req.GetMaxParticipants(), RecordingEnabled: req.GetRecordingEnabled()}
 	r, err := m.getOrCreateRoom(req.GetName(), rc, true)
 	if err != nil {
 		return nil, err

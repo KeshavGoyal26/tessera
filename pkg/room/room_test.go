@@ -94,3 +94,18 @@ func TestMergeAttributes(t *testing.T) {
 		t.Fatal("no update keeps nil")
 	}
 }
+
+// TestCreateRoomRecordingEnabled: CreateRoom keeps recording_enabled, so the room records
+// every participant who joins it.
+func TestCreateRoomRecordingEnabled(t *testing.T) {
+	m, err := NewManager(Params{Config: config.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	ctx := context.Background()
+	r, err := m.CreateRoom(ctx, &tesserav1.CreateRoomRequest{Name: "rec", RecordingEnabled: true})
+	if err != nil || !r.RecordingEnabled {
+		t.Fatalf("%v %+v", err, r)
+	}
+}
