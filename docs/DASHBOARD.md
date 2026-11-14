@@ -57,17 +57,22 @@ How it stays cheap:
   without the cluster page open; every cluster endpoint answers in under 1 ms; cluster state
   1.5 KB, room index 0.4 KB, one room 12.5 KB.
 
-Node tables, one per role:
+**Connections on this node** (Overview) and the cluster's node tables use the same terms:
 
-| Table | Columns |
-|---|---|
-| Media nodes | presenters sending media here (and how many through TURN), edge pull sessions served, recording (active, units used of capacity), in/out bandwidth |
-| Edges | viewers (and how many through TURN), presenters pulled from media nodes (and the pull sessions bringing them), presenter signaling proxied to media nodes, TURN allocations and relayed bandwidth, in/out bandwidth |
+| Connection | Meaning | Path | Where to |
+|---|---|---|---|
+| Presenters | presenters sending media to this node (media nodes) | via TURN or direct, with connection quality | |
+| Viewers | viewers receiving media from this node (edges) | via TURN or direct, with connection quality | |
+| Pulled presenters | an edge's copies of presenters, for its viewers (not connections to the edge) | the pull sessions bringing them | from which media nodes |
+| Edge pulls served | a media node's presenters pulled by edges | pull sessions | to which edges |
+| Proxied presenter signaling | presenter WebSockets an edge passes to their media node | signaling only | to which media nodes |
+| TURN relays in use | relays on an edge's TURN server that carried traffic in the last 5 s (about one per presenter whose media goes through this edge) | allocations and relayed bandwidth | media nodes (not broken down) |
 
-Both show status (late, draining, down with the time it went), CPU, memory and uptime; Version
-appears only when nodes run different versions. "Through TURN" is the participant's selected ICE
-path (`relay`). A browser told about several TURN servers may allocate on each, so allocations can
-exceed the connections using them. An edge's "in" includes the media it pulls from media nodes.
+"Via TURN" is the participant's selected ICE path (`relay`). A browser allocates on every TURN
+server it is given and ICE uses one, so allocations exceed the relays in use. A presenter's
+signaling and its TURN media can go through different edges. The cluster shows media nodes and
+edges in separate tables (status carries late/draining/down; Version only when nodes differ). An
+edge's "in" includes the media it pulls from media nodes.
 
 Cluster bandwidth is shown by meaning: **delivered** (edges to viewers), **ingest** (presenters to
 media nodes), **between nodes** (media nodes to edges) and **TURN** relayed by edges (one leg).

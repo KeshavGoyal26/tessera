@@ -86,15 +86,17 @@ type NodeStats struct {
 
 	PeerConnections int `json:"peer_connections"`
 
-	// Embedded TURN server (edges in a cluster): active allocations and traffic per
-	// second on both legs (clients and relay peers). Zero without TURN.
+	// Embedded TURN server (edges in a cluster): allocations, the relays among them that
+	// carried traffic in the last few seconds, and traffic per second on both legs
+	// (clients and relay peers). Zero without TURN.
 	TURNAllocations    int     `json:"turn_allocations"`
+	TURNActive         int     `json:"turn_active"`
 	TURNBytesInPerSec  float64 `json:"turn_bytes_in_per_sec"`
 	TURNBytesOutPerSec float64 `json:"turn_bytes_out_per_sec"`
-	// Edge only: presenter signaling sessions proxied to media nodes, and pull sessions
-	// to media nodes (one per group and media node, ADR-0012).
-	ProxiedSessions int `json:"proxied_sessions"`
-	PullSessions    int `json:"pull_sessions"`
+	// Edge only, by media node id: presenter signaling sessions proxied there, and pull
+	// sessions from there (one per group and media node, ADR-0012).
+	ProxiedTo map[string]int `json:"proxied_to,omitempty"`
+	PullsFrom map[string]int `json:"pulls_from,omitempty"`
 
 	Rooms           int `json:"rooms"`
 	Participants    int `json:"participants"`

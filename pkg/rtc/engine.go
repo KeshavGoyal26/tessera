@@ -397,13 +397,13 @@ func (e *engine) PeerConnections() int { return int(e.pcCount.Load()) }
 // PeerConnectionCounter is implemented by the engine.
 type PeerConnectionCounter interface{ PeerConnections() int }
 
-// TURNStats is implemented by the engine: the embedded TURN server's active allocations
-// and traffic in bits per second (zero without TURN).
+// TURNStats is implemented by the engine: the embedded TURN server's allocations, the
+// relays in use among them and the traffic in bits per second (zero without TURN).
 type TURNStats interface {
-	TURNStats(now time.Time) (allocations int, bpsIn, bpsOut float64)
+	TURNStats(now time.Time) (allocations, active int, bpsIn, bpsOut float64)
 }
 
-func (e *engine) TURNStats(now time.Time) (int, float64, float64) { return e.turn.Stats(now) }
+func (e *engine) TURNStats(now time.Time) (int, int, float64, float64) { return e.turn.Stats(now) }
 
 // monotonic clock base for arrival times.
 var clockBase = time.Now()

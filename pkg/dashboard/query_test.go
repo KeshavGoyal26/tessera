@@ -82,8 +82,14 @@ func TestQueriesStaySmallAtScale(t *testing.T) {
 	if l.Counts.Rooms != 20 || l.Counts.Presenters != 20 || l.Counts.Viewers != 1980 {
 		t.Fatalf("counts %+v", l.Counts)
 	}
-	if n := l.Quality[stats.QualityLost] + l.Quality[stats.QualityPoor] + l.Quality[stats.QualityGood] + l.Quality[stats.QualityExcellent]; n != 2000 {
-		t.Fatalf("quality %v", l.Quality)
+	sum := func(m map[string]int) (n int) {
+		for _, v := range m {
+			n += v
+		}
+		return
+	}
+	if c := l.Conns; c.PresentersIn != 20 || c.ViewersOut != 1980 || sum(c.PresenterQuality)+sum(c.ViewerQuality) != 2000 {
+		t.Fatalf("conns %+v", l.Conns)
 	}
 
 	parts, size := query[pageOfT[ParticipantBrief]](t, h, "participants", "")

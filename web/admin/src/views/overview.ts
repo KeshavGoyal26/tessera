@@ -5,10 +5,12 @@ import { store } from '../store';
 import type { Point } from '../types';
 import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum } from '../util';
 import { ChartGroup, render, type View } from './view';
+import { connectionsTable } from './conns';
 
 export class Overview implements View {
   private root!: HTMLElement;
   private cards!: HTMLElement;
+  private conns!: HTMLElement;
   private alerts!: HTMLElement;
   private charts!: ChartGroup;
   /** '' = the last hour (live), '24h' = the last day at 10 s, refetched every 30 s. */
@@ -22,12 +24,13 @@ export class Overview implements View {
 
   mount(root: HTMLElement): void {
     this.root = root;
-    root.innerHTML = `<h2>Overview</h2><div class="cards"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div><div class="view-head alog-head"><h3>Alert history (24 h)</h3></div><div class="alog"></div><h3>History <span class="range"><button data-range="" aria-pressed="true">1 h</button> <button data-range="24h" aria-pressed="false">24 h</button></span></h3><div class="grid charts"></div>`;
+    root.innerHTML = `<h2>Overview</h2><div class="cards"></div><h3>Connections on this node</h3><div class="conns"></div><h3>Alerts</h3><div class="alerts" aria-live="polite"></div><div class="view-head alog-head"><h3>Alert history (24 h)</h3></div><div class="alog"></div><h3>History <span class="range"><button data-range="" aria-pressed="true">1 h</button> <button data-range="24h" aria-pressed="false">24 h</button></span></h3><div class="grid charts"></div>`;
     root.querySelector('.range')!.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-range]');
       if (b) this.setRange(b.dataset.range!);
     });
     this.cards = root.querySelector('.cards')!;
+    this.conns = root.querySelector('.conns')!;
     this.alerts = root.querySelector('.alerts')!;
     const g = (this.charts = new ChartGroup(root.querySelector('.charts')!));
     const P = () => (this.range ? this.day : store.points);
@@ -62,7 +65,7 @@ export class Overview implements View {
     if (!u) { render(this.cards, '<p class="muted">Waiting for data…</p>'); return; }
     const n = u.node;
     const card = (label: string, value: string, sub = '', cls = '') => `<div class="card ${cls}"><div class="label">${label}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
-    const c = u.counts, q = u.quality; // the server always sends all five
+    const c = u.counts;
     const recs = u.recorders.filter((r) => r.ok);
     const used = recs.reduce((a, s) => a + s.capacity_used, 0), cap = recs.reduce((a, s) => a + s.capacity, 0);
     const recCard = u.recorders.length
@@ -75,12 +78,9 @@ export class Overview implements View {
       ? card('Webhooks', `${fmtNum(sum('sent'))} sent`, `${fmtNum(sum('failed'))} failed · ${fmtNum(sum('retried'))} retried · ${fmtNum(sum('dropped'))} dropped · ${fmtNum(sum('queued'))} queued${whErr ? ` · last error: ${whErr.last_error} (${whErr.url})` : ''}`,
         sum('dropped') ? 'bad' : sum('failed') || sum('queued') > 100 ? 'warn' : '')
       : '';
-    const ice = Object.entries(u.ice).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k || 'not connected yet'} ${fmtNum(v)}`).join(' · ');
     render(this.cards,
       card('Rooms', fmtNum(c.rooms)) +
-      card('Participants', fmtNum(n.participants), `${fmtNum(c.presenters)} presenters · ${fmtNum(c.viewers)} viewers${c.relays ? ` · ${fmtNum(c.relays)} relay` : ''}${c.recorders ? ` · ${fmtNum(c.recorders)} recorder` : ''}`) +
-      card('Connection quality', `${fmtNum(q.poor + q.lost)} poor or lost`, `${fmtNum(q.excellent)} excellent · ${fmtNum(q.good)} good · ${fmtNum(q.poor)} poor · ${fmtNum(q.lost)} lost · ${fmtNum(q.unknown)} unknown`, q.lost ? 'bad' : q.poor ? 'warn' : '') +
-      card('ICE candidates', ice || 'none yet') + whCard +
+      whCard +
       card('Tracks', `${n.published_tracks} ↑ / ${n.subscribed_tracks} ↓`, `${n.peer_connections} peer connections`) + recCard +
       card('CPU', `${(n.cpu_percent / Math.max(n.num_cpu, 1)).toFixed(0)}%`, `${n.num_cpu} cores`) +
       card('Memory', fmtBytes(n.rss_bytes), `heap ${fmtBytes(n.heap_bytes)}`) +
@@ -88,6 +88,7 @@ export class Overview implements View {
       card('UDP in', fmtBps(n.udp_bytes_in_per_sec * 8), `${fmtNum(n.udp_packets_in_per_sec)} pkt/s`) +
       card('UDP out', fmtBps(n.udp_bytes_out_per_sec * 8), `${fmtNum(n.udp_packets_out_per_sec)} pkt/s`) +
       card('Uptime', fmtDur(Date.now() - Date.parse(n.started_at)), `${n.node_id} ${n.version}`));
+    render(this.conns, connectionsTable(u.conns));
     const more = u.alerts_total > u.alerts.length ? `<p class="muted">… and ${fmtNum(u.alerts_total - u.alerts.length)} more.</p>` : '';
     render(this.alerts, u.alerts.length
       ? u.alerts.map((a) => `<div class="alert ${a.severity}">${badge(a.kind, a.severity === 'critical' ? 'bad' : 'warn')} ${esc(a.message)} <span class="muted">since ${new Date(a.since).toLocaleTimeString()}</span></div>`).join('') + more

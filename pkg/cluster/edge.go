@@ -5,10 +5,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -36,12 +37,28 @@ type Edge struct {
 	MaxMessageSize int64
 	Logger         *slog.Logger
 
-	proxied atomic.Int64
+	mu      sync.Mutex
+	proxied map[string]int // presenter signaling sessions open, by media node id
 }
 
-// Proxied is the number of presenter signaling sessions this edge is relaying to media
-// nodes right now.
-func (e *Edge) Proxied() int { return int(e.proxied.Load()) }
+// Proxied is the number of presenter signaling sessions this edge is relaying right now,
+// by media node id.
+func (e *Edge) Proxied() map[string]int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return maps.Clone(e.proxied)
+}
+
+func (e *Edge) addProxied(node string, d int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.proxied == nil {
+		e.proxied = map[string]int{}
+	}
+	if e.proxied[node] += d; e.proxied[node] <= 0 {
+		delete(e.proxied, node)
+	}
+}
 
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("access_token")
@@ -128,8 +145,8 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	up.SetReadLimit(limit)
 	down.SetReadLimit(limit)
-	e.proxied.Add(1)
-	defer e.proxied.Add(-1)
+	e.addProxied(node.ID, 1)
+	defer e.addProxied(node.ID, -1)
 	relay(context.Background(), down, up)
 }
 

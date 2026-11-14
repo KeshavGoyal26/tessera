@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -245,21 +246,24 @@ func hasAlert(as []Alert, id string) bool {
 func TestConnsOf(t *testing.T) {
 	pub := []stats.PublishedTrackStats{{}}
 	s := &stats.Snapshot{
-		Node: stats.NodeStats{PullSessions: 2, ProxiedSessions: 3, TURNAllocations: 4, TURNBytesInPerSec: 100, TURNBytesOutPerSec: 200},
+		Node: stats.NodeStats{PullsFrom: map[string]int{"m1": 2}, ProxiedTo: map[string]int{"m1": 1, "m2": 2}, TURNAllocations: 4, TURNActive: 2,
+			TURNBytesInPerSec: 100, TURNBytesOutPerSec: 200},
 		Rooms: []stats.RoomStats{{Participants: []stats.ParticipantStats{
-			{Kind: "standard", Published: pub, ICECandidateType: "relay"}, // presenter through TURN
-			{Kind: "standard", Published: pub, ICECandidateType: "host"},  // presenter, direct
-			{Kind: "standard", Published: pub, Pulled: true},              // presenter pulled from a media node
-			{Kind: "standard", Published: pub},                            // presenter still connecting (no ICE yet)
-			{Kind: "standard", ICECandidateType: "relay"},                 // viewer through TURN
-			{Kind: "standard", ICECandidateType: "srflx"},                 // viewer, direct
-			{Kind: "relay"}, // an edge's pull session
+			{Kind: "standard", Published: pub, ICECandidateType: "relay", ConnectionQuality: "good"}, // presenter through TURN
+			{Kind: "standard", Published: pub, ICECandidateType: "host", ConnectionQuality: "poor"},  // presenter, direct
+			{Kind: "standard", Published: pub, Pulled: true},                                         // presenter pulled from a media node
+			{Kind: "standard", Published: pub},                                                       // presenter still connecting (no ICE yet)
+			{Kind: "standard", ICECandidateType: "relay", ConnectionQuality: "excellent"},            // viewer through TURN
+			{Kind: "standard", ICECandidateType: "srflx", ConnectionQuality: "excellent"},            // viewer, direct
+			{Kind: "relay", Identity: "relay:e1"},                                                    // an edge's pull session
 			{Kind: "recorder"},
 		}}},
 	}
-	want := Conns{PresentersIn: 3, PresentersTURN: 1, ViewersOut: 2, ViewersTURN: 1, PullsIn: 2, Pulled: 1, PullsOut: 1,
-		Proxied: 3, TURN: 4, TURNBpsIn: 800, TURNBpsOut: 1600}
-	if got := connsOf(s); got != want {
+	want := Conns{PresentersIn: 3, PresentersTURN: 1, PresenterQuality: map[string]int{"good": 1, "poor": 1, "unknown": 1},
+		ViewersOut: 2, ViewersTURN: 1, ViewerQuality: map[string]int{"excellent": 2},
+		Pulled: 1, PullsIn: 2, PullsFrom: map[string]int{"m1": 2}, PullsOut: 1, PullsTo: map[string]int{"e1": 1},
+		Proxied: 3, ProxiedTo: map[string]int{"m1": 1, "m2": 2}, TURNActive: 2, TURN: 4, TURNBpsIn: 800, TURNBpsOut: 1600}
+	if got := connsOf(s); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
 	}
 }

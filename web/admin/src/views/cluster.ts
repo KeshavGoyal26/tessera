@@ -6,6 +6,7 @@ import { handleAction, media } from './rooms';
 import { clusterList } from './clusterlist';
 import type { Column } from './paged';
 import { ChartGroup, render, type View } from './view';
+import { fmtNodes, fmtPath } from './conns';
 
 const STATE_MS = 5000; // the server samples the registry every 5 s
 const ROOM_MS = 2000;
@@ -238,24 +239,25 @@ function nodesTable(nodes: NodeView[], now: number): string {
     };
   };
   const tailCols = ['In', 'Out', 'Uptime', ...(mixed ? ['Version'] : [])];
-  const viaTURN = (n: number): string => (n ? ` <span class="muted">· ${fmtNum(n)} via TURN</span>` : '');
+  const count = (n: number, detail: string): string => (n ? `${fmtNum(n)}${detail ? ` <span class="muted">· ${detail}</span>` : ''}` : '');
   const media = nodes.filter((n) => n.role !== 'edge');
   const edges = nodes.filter((n) => n.role === 'edge');
   const mediaRows = media.map((n) => {
     const s = n.summary, c = s?.conns, x = common(n);
     const rec = s && s.rec_cap ? `${fmtNum(s.recordings)} <span class="muted">· ${fmtNum(s.rec_used)}/${fmtNum(s.rec_cap)} units (${Math.round((100 * s.rec_used) / s.rec_cap)}%)</span>` : '';
-    return `<tr>${x.head}<td>${c ? `${fmtNum(c.presenters_in)}${viaTURN(c.presenters_turn)}` : ''}</td><td>${c?.pulls_out ? fmtNum(c.pulls_out) : ''}</td><td>${rec}</td>${x.tail}</tr>`;
+    return `<tr>${x.head}<td>${c ? count(c.presenters_in, fmtPath(c.presenters_in, c.presenters_turn)) || '0' : ''}</td>
+      <td>${c ? count(c.pulls_out, `to ${fmtNodes(c.pulls_to)}`) : ''}</td><td>${rec}</td>${x.tail}</tr>`;
   });
   const edgeRows = edges.map((n) => {
     const s = n.summary, c = s?.conns, x = common(n);
-    const turn = c && (c.turn || c.turn_bps_in) ? `${fmtNum(c.turn)} <span class="muted">· ${fmtBps(Math.max(c.turn_bps_in, c.turn_bps_out))} relayed</span>` : '';
-    return `<tr>${x.head}<td>${c ? `${fmtNum(c.viewers_out)}${viaTURN(c.viewers_turn)}` : ''}</td>
-      <td>${c?.pulled || c?.pulls_in ? `${fmtNum(c.pulled)} <span class="muted">· ${fmtNum(c.pulls_in)} pulls</span>` : ''}</td>
-      <td>${c?.proxied ? fmtNum(c.proxied) : ''}</td><td>${turn}</td>${x.tail}</tr>`;
+    const turn = c && (c.turn || c.turn_active) ? `${fmtNum(c.turn_active)} <span class="muted">· ${fmtNum(c.turn)} allocations · ${fmtBps(Math.max(c.turn_bps_in, c.turn_bps_out))}</span>` : '';
+    return `<tr>${x.head}<td>${c ? count(c.viewers_out, fmtPath(c.viewers_out, c.viewers_turn)) || '0' : ''}</td>
+      <td>${c ? count(c.pulled, `${fmtNum(c.pulls_in)} pulls from ${fmtNodes(c.pulls_from)}`) : ''}</td>
+      <td>${c ? count(c.proxied, `to ${fmtNodes(c.proxied_to)}`) : ''}</td><td>${turn}</td>${x.tail}</tr>`;
   });
   if (!nodes.length) return table(['Node'], [], 'No node is registered.');
-  return (media.length ? `<h4>Media nodes</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Presenters', 'Edge pulls served', 'Recording (active · units)', ...tailCols], mediaRows, '') : '') +
-    (edges.length ? `<h4>Edges</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Viewers', 'Pulled presenters', 'Proxied presenters', 'TURN (allocations · relayed)', ...tailCols], edgeRows, '') : '');
+  return (media.length ? `<h4>Media nodes</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Presenters (sending here)', 'Edge pulls served', 'Recording (active · units)', ...tailCols], mediaRows, '') : '') +
+    (edges.length ? `<h4>Edges</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Viewers (receiving from here)', 'Pulled presenters', 'Proxied presenter signaling', 'TURN relays in use', ...tailCols], edgeRows, '') : '');
 }
 
 export const isCluster = (): boolean => !!session.cluster;

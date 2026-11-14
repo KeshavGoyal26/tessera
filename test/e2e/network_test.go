@@ -66,8 +66,8 @@ func TestEmbeddedTURNRelay(t *testing.T) {
 	}
 	// The node statistics see the allocation and the relayed traffic.
 	time.Sleep(1100 * time.Millisecond) // a rate window
-	if n := s.Manager.Snapshot().Node; n.TURNAllocations == 0 || n.TURNBytesInPerSec == 0 || n.TURNBytesOutPerSec == 0 {
-		t.Fatalf("TURN stats: %d allocations, %.0f B/s in, %.0f B/s out", n.TURNAllocations, n.TURNBytesInPerSec, n.TURNBytesOutPerSec)
+	if n := s.Manager.Snapshot().Node; n.TURNAllocations == 0 || n.TURNActive == 0 || n.TURNActive > n.TURNAllocations || n.TURNBytesInPerSec == 0 || n.TURNBytesOutPerSec == 0 {
+		t.Fatalf("TURN stats: %d allocations, %d active, %.0f B/s in, %.0f B/s out", n.TURNAllocations, n.TURNActive, n.TURNBytesInPerSec, n.TURNBytesOutPerSec)
 	}
 }
 

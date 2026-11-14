@@ -32,8 +32,9 @@ type Server struct {
 	tcpPort int
 	tlsPort int
 	closers []func() error
-	// in and out meter all TURN traffic (meter.go).
+	// in and out meter all TURN traffic; act tracks the relay sockets' activity (meter.go).
 	in, out stats.Meter
+	act     activity
 }
 
 // NewServer starts the TURN listeners. It returns (nil, nil) when TURN is
@@ -96,7 +97,7 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 		return &pturn.RelayAddressGeneratorStatic{RelayAddress: rip, Address: bindOf(rip)}
 	}
 	metered := func() pturn.RelayAddressGenerator {
-		return meteredGenerator{RelayAddressGenerator: gen(), in: &s.in, out: &s.out}
+		return meteredGenerator{RelayAddressGenerator: gen(), in: &s.in, out: &s.out, act: &s.act}
 	}
 	lf := logging.NewDefaultLoggerFactory()
 	lf.DefaultLogLevel = logging.LogLevelError
@@ -209,15 +210,19 @@ func isLocal(ip net.IP) bool {
 	return false
 }
 
-// Stats returns the number of active allocations and the TURN traffic in bits per
-// second (both legs, see meter.go) over the last window ending at now.
-func (s *Server) Stats(now time.Time) (allocations int, bpsIn, bpsOut float64) {
+// relayActiveWindow: a relay that carried traffic this recently is in use (media
+// flows continuously; RTCP alone keeps an idle but connected relay active).
+const relayActiveWindow = 5 * time.Second
+
+// Stats returns the number of allocations, the relays among them in use, and the TURN
+// traffic in bits per second (both legs, see meter.go) over the last window ending at now.
+func (s *Server) Stats(now time.Time) (allocations, active int, bpsIn, bpsOut float64) {
 	if s == nil || s.srv == nil {
-		return 0, 0, 0
+		return 0, 0, 0, 0
 	}
 	_, bpsIn = s.in.Rates(now)
 	_, bpsOut = s.out.Rates(now)
-	return s.srv.AllocationCount(), bpsIn, bpsOut
+	return s.srv.AllocationCount(), s.act.active(now, relayActiveWindow), bpsIn, bpsOut
 }
 
 // Close stops all listeners.

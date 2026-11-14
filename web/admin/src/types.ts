@@ -54,8 +54,7 @@ export interface RecorderSummary {
 export interface Live {
   version: number; point: Point; node: Node
   counts: { rooms: number; presenters: number; viewers: number; relays: number; recorders: number }
-  quality: { excellent: number; good: number; poor: number; lost: number; unknown: number }
-  ice: Record<string, number>
+  conns: NodeConns
   alerts: Alert[]; alerts_total: number; recorders: RecorderSummary[]
   webhooks?: WebhookStat[]
 }
@@ -112,9 +111,12 @@ export interface NodeSummary {
 }
 /** A node's connections by kind (Conns in pkg/dashboard/cluster.go). */
 export interface NodeConns {
-  presenters_in: number; presenters_turn: number; viewers_out: number; viewers_turn: number
-  pulls_in: number; pulled: number; pulls_out: number; proxied: number
-  turn: number; turn_bps_in: number; turn_bps_out: number
+  presenters_in: number; presenters_turn: number; presenter_quality?: Record<string, number>
+  viewers_out: number; viewers_turn: number; viewer_quality?: Record<string, number>
+  pulled: number; pulls_in: number; pulls_from?: Record<string, number>
+  pulls_out: number; pulls_to?: Record<string, number>
+  proxied: number; proxied_to?: Record<string, number>
+  turn_active: number; turn: number; turn_bps_in: number; turn_bps_out: number
 }
 export interface NodeView { id: string; role: string; self?: boolean; draining?: boolean; down?: boolean; reachable: boolean; seen: number; summary?: NodeSummary }
 export interface ClusterPoint {

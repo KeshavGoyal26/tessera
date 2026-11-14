@@ -86,39 +86,65 @@ type Summary struct {
 	Conns      Conns   `json:"conns"`
 }
 
-// Conns breaks a node's connections down by kind (ADR-0012):
-//   - media in: presenters sending media to this node (direct or through TURN);
-//   - media out: viewers this node sends media to (direct or through TURN);
-//   - pulls: an edge's sessions to media nodes, bringing presenters to its viewers
-//     (PullsIn, Pulled presenters), and on a media node the edges' sessions it serves (PullsOut);
-//   - proxied: presenter signaling an edge passes through to media nodes;
-//   - TURN: allocations on this node's TURN server and their traffic (both legs).
+// Conns are a node's connections by kind and where they lead (ADR-0012). The Overview's
+// connections table and the cluster node tables both show them.
+//   - Presenters: WebRTC connections of presenters to this node; how many through TURN;
+//     quality of those connections.
+//   - Viewers: WebRTC connections of viewers to this node; how many through TURN; quality.
+//   - Pulled: presenters an edge brings from media nodes for its viewers, over pull
+//     sessions (PullsIn, by media node in PullsFrom). On a media node, PullsOut are the
+//     edges' pull sessions it serves, by edge in PullsTo.
+//   - Proxied: presenter signaling an edge passes to media nodes, by media node in ProxiedTo.
+//   - TURN: relays in use on this node's TURN server (TURNActive), all allocations (TURN)
+//     and the relayed traffic (both legs).
 type Conns struct {
-	PresentersIn   int     `json:"presenters_in"`
-	PresentersTURN int     `json:"presenters_turn"`
-	ViewersOut     int     `json:"viewers_out"`
-	ViewersTURN    int     `json:"viewers_turn"`
-	PullsIn        int     `json:"pulls_in"`
-	Pulled         int     `json:"pulled"`
-	PullsOut       int     `json:"pulls_out"`
-	Proxied        int     `json:"proxied"`
-	TURN           int     `json:"turn"`
-	TURNBpsIn      float64 `json:"turn_bps_in"`
-	TURNBpsOut     float64 `json:"turn_bps_out"`
+	PresentersIn     int            `json:"presenters_in"`
+	PresentersTURN   int            `json:"presenters_turn"`
+	PresenterQuality map[string]int `json:"presenter_quality,omitempty"`
+	ViewersOut       int            `json:"viewers_out"`
+	ViewersTURN      int            `json:"viewers_turn"`
+	ViewerQuality    map[string]int `json:"viewer_quality,omitempty"`
+	Pulled           int            `json:"pulled"`
+	PullsIn          int            `json:"pulls_in"`
+	PullsFrom        map[string]int `json:"pulls_from,omitempty"`
+	PullsOut         int            `json:"pulls_out"`
+	PullsTo          map[string]int `json:"pulls_to,omitempty"`
+	Proxied          int            `json:"proxied"`
+	ProxiedTo        map[string]int `json:"proxied_to,omitempty"`
+	TURNActive       int            `json:"turn_active"`
+	TURN             int            `json:"turn"`
+	TURNBpsIn        float64        `json:"turn_bps_in"`
+	TURNBpsOut       float64        `json:"turn_bps_out"`
 }
+
+// relayPrefix starts the identity of an edge's pull session (pkg/cluster: "relay:<edge id>").
+const relayPrefix = "relay:"
 
 // connsOf counts a snapshot's connections; presenters and viewers are counted the way
 // roomRoles counts them.
 func connsOf(s *stats.Snapshot) Conns {
 	n := s.Node
-	c := Conns{PullsIn: n.PullSessions, Proxied: n.ProxiedSessions, TURN: n.TURNAllocations,
+	c := Conns{PullsFrom: n.PullsFrom, ProxiedTo: n.ProxiedTo, TURNActive: n.TURNActive, TURN: n.TURNAllocations,
 		TURNBpsIn: n.TURNBytesInPerSec * 8, TURNBpsOut: n.TURNBytesOutPerSec * 8}
+	for _, v := range n.PullsFrom {
+		c.PullsIn += v
+	}
+	for _, v := range n.ProxiedTo {
+		c.Proxied += v
+	}
+	count := func(m *map[string]int, k string) {
+		if *m == nil {
+			*m = map[string]int{}
+		}
+		(*m)[cmp.Or(k, stats.QualityUnknown)]++
+	}
 	for _, r := range s.Rooms {
 		for _, p := range r.Participants {
 			turn := p.ICECandidateType == "relay"
 			switch {
 			case p.Kind == "relay":
 				c.PullsOut++
+				count(&c.PullsTo, strings.TrimPrefix(p.Identity, relayPrefix))
 			case p.Kind == "recorder":
 			case p.Pulled:
 				c.Pulled++
@@ -127,11 +153,13 @@ func connsOf(s *stats.Snapshot) Conns {
 				if turn {
 					c.PresentersTURN++
 				}
+				count(&c.PresenterQuality, p.ConnectionQuality)
 			default:
 				c.ViewersOut++
 				if turn {
 					c.ViewersTURN++
 				}
+				count(&c.ViewerQuality, p.ConnectionQuality)
 			}
 		}
 	}

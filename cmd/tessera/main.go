@@ -163,7 +163,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 		},
 		NodeStats: func(n *stats.NodeStats) {
 			if e := edge.Load(); e != nil {
-				n.ProxiedSessions, n.PullSessions = e.Proxied(), e.Relays.Sessions()
+				n.ProxiedTo, n.PullsFrom = e.Proxied(), e.Relays.Sessions()
 			}
 		},
 	})
