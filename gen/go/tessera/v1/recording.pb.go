@@ -642,7 +642,8 @@ type StartRecordingRequest struct {
 	Hls    *HLSOptions                    `protobuf:"bytes,5,opt,name=hls,proto3" json:"hls,omitempty"`
 	// Empty = recorder default storage.
 	Storage *StorageOptions `protobuf:"bytes,6,opt,name=storage,proto3" json:"storage,omitempty"`
-	// Path prefix for output objects; supports {room}, {recording_id}, {time} templates.
+	// Path prefix for output objects; supports {room}, {recording_id}, {time}, {start_ms},
+	// {pid} and {shard} templates (docs/RECORDING.md).
 	FilenamePrefix string `protobuf:"bytes,7,opt,name=filename_prefix,json=filenamePrefix,proto3" json:"filename_prefix,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

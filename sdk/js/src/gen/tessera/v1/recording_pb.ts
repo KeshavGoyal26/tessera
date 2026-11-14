@@ -268,7 +268,8 @@ export type StartRecordingRequest = Message<"tessera.v1.StartRecordingRequest"> 
   storage?: StorageOptions | undefined;
 
   /**
-   * Path prefix for output objects; supports {room}, {recording_id}, {time} templates.
+   * Path prefix for output objects; supports {room}, {recording_id}, {time}, {start_ms},
+   * {pid} and {shard} templates (docs/RECORDING.md).
    *
    * @generated from field: string filename_prefix = 7;
    */

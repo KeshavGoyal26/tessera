@@ -128,7 +128,8 @@ message StartRecordingRequest {
   HLSOptions hls = 5;
   // Empty = recorder default storage.
   StorageOptions storage = 6;
-  // Path prefix for output objects; supports {room}, {recording_id}, {time} templates.
+  // Path prefix for output objects; supports {room}, {recording_id}, {time}, {start_ms},
+  // {pid} and {shard} templates (docs/RECORDING.md).
   string filename_prefix = 7;
 }
 
