@@ -483,9 +483,11 @@ func (r *jobRun) writeMaster(ctx context.Context, rends []hls.Rendition) (string
 	}
 	r.masterURL = r.st.URL(key)
 	if r.index != "" && !r.indexed {
-		r.indexed = true
+		// On failure the next master write (live or final) tries again.
 		if err := r.w.addToIndex(ctx, r.st, r.index, loc); err != nil {
 			r.w.logger.Warn("recording index", "recording", r.id, "index", r.index, "err", err)
+		} else {
+			r.indexed = true
 		}
 	}
 	return loc, nil

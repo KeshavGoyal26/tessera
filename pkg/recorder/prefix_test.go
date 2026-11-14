@@ -26,6 +26,9 @@ func TestExpandPrefix(t *testing.T) {
 		// Not one path segment: sanitised, never a traversal.
 		{pidTmpl, "../x", "recordings/" + shard(".._x") + "/.._x/1763112345123", "recordings/" + shard(".._x") + "/.._x/index.json"},
 		{pidTmpl, "a/b", "recordings/" + shard("a_b") + "/a_b/1763112345123", "recordings/" + shard("a_b") + "/a_b/index.json"},
+		// Nothing unique per recording: the recording ID is appended (no overwrites).
+		{"{pid}", "42", "42/REC_1", "42/index.json"},
+		{"{room}", "", "demo/REC_1", ""},
 		// A template that needs a pid falls back to the default without one.
 		{pidTmpl, "", "demo/REC_1", ""},
 		{pidTmpl, "..", "demo/REC_1", ""},

@@ -29,7 +29,9 @@ const (
 // for non-numeric ones). The index sits where the template's {pid} segment ends:
 // "recordings/{shard}/{pid}/{start_ms}" lists recordings in
 // "recordings/<shard>/<pid>/index.json". A template that needs a pid falls back to
-// the default for recordings that have none (track recordings).
+// the default for recordings that have none (track recordings). A template without
+// {recording_id}, {start_ms} or {time} gets "/{recording_id}" appended, so recordings
+// never overwrite each other.
 func expandPrefix(tmpl, room, id, pid string, now time.Time) (prefix, index string) {
 	if tmpl == "" {
 		tmpl = defaultPrefix
@@ -38,6 +40,11 @@ func expandPrefix(tmpl, room, id, pid string, now time.Time) (prefix, index stri
 	usesPID := strings.Contains(tmpl, "{pid}") || strings.Contains(tmpl, "{shard}")
 	if usesPID && pid == "" {
 		tmpl = defaultPrefix
+	}
+	if !strings.Contains(tmpl, "{recording_id}") && !strings.Contains(tmpl, "{start_ms}") && !strings.Contains(tmpl, "{time}") {
+		// Nothing tells this recording from the next one of the same room or pid: they
+		// would overwrite each other.
+		tmpl += "/{recording_id}"
 	}
 	rep := strings.NewReplacer("{room}", room, "{recording_id}", id, "{time}", now.UTC().Format("20060102T150405Z"),
 		"{start_ms}", fmt.Sprint(now.UnixMilli()), "{pid}", pid, "{shard}", shard(pid))

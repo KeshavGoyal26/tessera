@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/cluster"
 	"github.com/KeshavGoyal26/tessera/pkg/config"
+	"github.com/KeshavGoyal26/tessera/pkg/errs"
 	"github.com/KeshavGoyal26/tessera/pkg/signal"
 )
 
@@ -453,5 +455,29 @@ func TestEdgeForwardsAdminCalls(t *testing.T) {
 	rooms, err := fwd.ListRooms(ctx, nil)
 	if err != nil || len(rooms) != 1 || rooms[0].GetName() != "g1" {
 		t.Fatalf("rooms %v err %v", rooms, err)
+	}
+	if _, err := fwd.GetParticipant(ctx, "g1", "nobody"); !errors.Is(err, errs.ErrNotFound) || !strings.Contains(err.Error(), "participant") {
+		t.Fatalf("missing participant: %v, want a participant not-found error", err)
+	}
+	if _, err := fwd.StartRecording(ctx, &tesserav1.StartRecordingRequest{Room: "g1"}); errs.CodeOf(err) != errs.CodeInvalidArgument {
+		t.Fatalf("recording without a target: %v, want invalid_argument", err)
+	}
+
+	// A room created on a media node that nobody joined is in no room index: the edge
+	// still updates and deletes it.
+	if _, err := media.Manager.CreateRoom(ctx, &tesserav1.CreateRoomRequest{Name: "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fwd.UpdateRoomMetadata(ctx, "empty", "m"); err != nil {
+		t.Fatalf("update an empty room through the edge: %v", err)
+	}
+	if err := fwd.DeleteRoom(ctx, "empty"); err != nil {
+		t.Fatalf("delete an empty room through the edge: %v", err)
+	}
+	if err := fwd.DeleteRoom(ctx, "empty"); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("delete it again: %v, want not found", err)
+	}
+	if _, err := fwd.ListParticipants(ctx, "no-such-room"); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("participants of a missing room: %v, want not found", err)
 	}
 }

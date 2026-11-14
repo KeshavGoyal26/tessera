@@ -13,6 +13,7 @@ import (
 	"github.com/KeshavGoyal26/tessera/pkg/auth"
 	"github.com/KeshavGoyal26/tessera/pkg/client"
 	"github.com/KeshavGoyal26/tessera/pkg/room"
+	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
 // relayAudioLevelID is the audio-level extension id a media node uses towards its
@@ -321,13 +322,25 @@ func (g *groupRelay) publisher(node string, c client.Client, identity string) ro
 	return rp
 }
 
+// pulledSource counts pulled media in the node's incoming media traffic: the pull
+// sessions' PeerConnections have their own sockets, outside the engine's metered ones.
+type pulledSource struct{ *client.RemoteTrack }
+
+func (s pulledSource) Read(b []byte) (int, error) {
+	n, err := s.RemoteTrack.Read(b)
+	if n > 0 {
+		stats.UDPIn.Add(n)
+	}
+	return n, err
+}
+
 func (g *groupRelay) onTrack(node string, c client.Client, t *client.RemoteTrack) {
 	rp := g.publisher(node, c, t.ParticipantIdentity)
 	if rp == nil {
 		return
 	}
 	remoteSID := t.SID
-	sid, err := rp.PublishTrack(t.Info, t.Codec(), relayAudioLevelID, t, t.WriteRTCP,
+	sid, err := rp.PublishTrack(t.Info, t.Codec(), relayAudioLevelID, pulledSource{t}, t.WriteRTCP,
 		func(w bool) { g.setWatched(c, remoteSID, w) })
 	if err != nil {
 		g.r.Logger.Warn("relay: cannot publish relayed track", "group", g.group, "track", t.SID, "err", err)

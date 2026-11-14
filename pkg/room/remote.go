@@ -76,7 +76,7 @@ func (m *manager) AddRemotePublisher(roomName, identity, name, metadata string, 
 		r.removeParticipant(old, tesserav1.DisconnectReason_DISCONNECT_REASON_DUPLICATE_IDENTITY, true)
 	}
 	p := newParticipant(r, claims, signal.ConnectParams{}, nil)
-	p.state = tesserav1.ParticipantInfo_STATE_ACTIVE
+	p.state, p.pulled = tesserav1.ParticipantInfo_STATE_ACTIVE, true
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()

@@ -80,7 +80,7 @@ func (p *Participant) stats(now time.Time) stats.ParticipantStats {
 	ps := stats.ParticipantStats{
 		SID: p.sid, Identity: p.identity, Name: p.name, JoinedAt: p.joinedAt,
 		State: strings.ToLower(strings.TrimPrefix(p.state.String(), "STATE_")),
-		Kind:  strings.ToLower(strings.TrimPrefix(p.kind.String(), "KIND_")), Hidden: p.perm.GetHidden(),
+		Kind:  strings.ToLower(strings.TrimPrefix(p.kind.String(), "KIND_")), Hidden: p.perm.GetHidden(), Pulled: p.pulled,
 		ConnectionQuality: stats.QualityUnknown, Published: []stats.PublishedTrackStats{}, Subscribed: []stats.SubscribedTrackStats{},
 	}
 	if p.client != nil {

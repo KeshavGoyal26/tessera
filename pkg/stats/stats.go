@@ -153,6 +153,9 @@ type ParticipantStats struct {
 	// Kind: standard, recorder, loadtest.
 	Kind   string `json:"kind"`
 	Hidden bool   `json:"hidden,omitempty"`
+	// Pulled: a presenter brought to this edge from its media node (ADR-0012), not a
+	// connection to this node.
+	Pulled bool `json:"pulled,omitempty"`
 	// ClientSDK, e.g. "js 0.1.0".
 	ClientSDK string `json:"client_sdk,omitempty"`
 

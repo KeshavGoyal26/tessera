@@ -120,7 +120,7 @@ func connsOf(s *stats.Snapshot) Conns {
 			case p.Kind == "relay":
 				c.PullsOut++
 			case p.Kind == "recorder":
-			case len(p.Published) > 0 && p.ICECandidateType == "":
+			case p.Pulled:
 				c.Pulled++
 			case len(p.Published) > 0:
 				c.PresentersIn++
@@ -144,7 +144,7 @@ func roomRoles(r *stats.RoomStats) (presenters, viewers, relays int) {
 		case p.Kind == "relay":
 			relays++
 		case p.Kind == "recorder":
-		case len(p.Published) > 0 && p.ICECandidateType == "":
+		case p.Pulled:
 			// a presenter relayed to this edge from its media node: counted there
 		case len(p.Published) > 0:
 			presenters++

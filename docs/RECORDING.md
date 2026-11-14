@@ -51,7 +51,8 @@ milliseconds), `{pid}` (the recorded participant's identity, made safe as one pa
 `{shard}` (pid mod 1000 as three digits; a hash for non-numeric pids). The request's
 `filename_prefix` wins; otherwise `recording.filename_prefix` from the config is used, which is
 also what auto-record gets. A template with `{pid}` or `{shard}` falls back to the default for
-recordings without a participant (track recordings).
+recordings without a participant (track recordings). A template without `{recording_id}`,
+`{start_ms}` or `{time}` gets `/{recording_id}` appended, so two recordings never share a folder.
 
 ### Per-presenter layout and index
 
@@ -82,9 +83,13 @@ playlists (`#EXT-X-ENDLIST`).
 }
 ```
 
+Entries are storage locations as returned by the storage: `s3://bucket/key` on S3, a file path
+on local storage (inside the container in Docker). Players use the recording's
+`master_playlist_url` from the API or webhook.
+
 The update is a plain read-modify-write: a presenter has one recording at a time, and each
-recording adds itself once. Failures are logged (`recording index`) and do not fail the
-recording.
+recording adds itself once. Failures are logged (`recording index`), do not fail the
+recording and are retried at the next master write.
 
 Segment target
 defaults to 4 s and is clamped to 2 to 6 s; video segments are cut on the first keyframe at or

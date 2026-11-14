@@ -41,6 +41,8 @@ type Participant struct {
 	claims        auth.Claims // of the joining token, re-signed for token refresh
 	sid, identity string
 	kind          tesserav1.ParticipantInfo_Kind
+	// pulled: a presenter brought to this edge from its media node (AddRemotePublisher).
+	pulled        bool
 	joinedAt      time.Time
 	autoSubscribe bool
 	client        *tesserav1.ClientInfo

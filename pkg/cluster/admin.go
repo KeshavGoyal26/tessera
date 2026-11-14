@@ -91,6 +91,11 @@ func (f *AdminForwarder) hosting(ctx context.Context, room string) ([]NodeInfo, 
 	if err != nil {
 		return nil, err
 	}
+	if len(ids) == 0 {
+		// Not in the room index (created through the API, nobody joined yet): it may live
+		// on any media node, so ask them all.
+		return media, nil
+	}
 	want := map[string]bool{}
 	for _, id := range ids {
 		want[id] = true
@@ -181,10 +186,11 @@ func (f *AdminForwarder) DeleteRoom(ctx context.Context, room string) error {
 	}
 	found := false
 	for _, n := range nodes {
-		if err := f.client(n).DeleteRoom(ctx, room); err != nil && errs.CodeOf(err) != errs.CodeNotFound {
+		err := f.client(n).DeleteRoom(ctx, room)
+		if err != nil && errs.CodeOf(err) != errs.CodeNotFound {
 			return err
 		}
-		found = true
+		found = found || err == nil
 	}
 	if err := f.Local.DeleteRoom(ctx, room); err == nil {
 		found = true
@@ -204,6 +210,9 @@ func (f *AdminForwarder) UpdateRoomMetadata(ctx context.Context, room, metadata 
 	var out *tesserav1.Room
 	for _, n := range nodes {
 		r, err := f.client(n).UpdateRoomMetadata(ctx, room, metadata)
+		if errs.CodeOf(err) == errs.CodeNotFound {
+			continue // asked every media node: not this one
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -227,11 +236,13 @@ func (f *AdminForwarder) ListParticipants(ctx context.Context, room string) ([]*
 	}
 	var out []*tesserav1.ParticipantInfo
 	seen := map[string]bool{}
+	hosted := false // some media node has the room
 	for _, n := range nodes {
 		ps, err := f.client(n).ListParticipants(ctx, room)
 		if err != nil {
-			continue // a node that is down or unreachable: list the others
+			continue // not there, or a node that is down or unreachable: list the others
 		}
+		hosted = true
 		for _, p := range ps {
 			if p.GetKind() == tesserav1.ParticipantInfo_KIND_RELAY {
 				continue
@@ -261,7 +272,7 @@ func (f *AdminForwarder) ListParticipants(ctx context.Context, room string) ([]*
 			}
 		}
 	}
-	if len(nodes) == 0 && err != nil {
+	if !hosted && err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -285,7 +296,9 @@ func (f *AdminForwarder) onParticipant(ctx context.Context, room, identity strin
 			return err
 		}
 	}
-	return err
+	// Not found anywhere. The last answer may be another edge's "room not found" (the
+	// room has no viewer there), which would mislead: name the participant.
+	return errs.New(errs.CodeNotFound, "participant %q not found", identity)
 }
 
 // GetParticipant implements room.Admin.
@@ -324,6 +337,9 @@ func (f *AdminForwarder) UpdateParticipant(ctx context.Context, req *tesserav1.U
 
 // StartRecording records on the media node of the participant (or of the track).
 func (f *AdminForwarder) StartRecording(ctx context.Context, req *tesserav1.StartRecordingRequest) (*tesserav1.RecordingInfo, error) {
+	if req.GetTarget() == nil {
+		return nil, errs.New(errs.CodeInvalidArgument, "a recording target is required")
+	}
 	var node *NodeInfo
 	if id := req.GetParticipant().GetIdentity(); id != "" {
 		n, ok, err := f.presenterNode(ctx, req.GetRoom(), id)
