@@ -99,7 +99,7 @@ export interface CoordRecording { recording_id: string; room: string; status: st
   master_playlist_location?: string
   /** Set once the tracks have their first segments, so also while recording (a live EVENT playlist). */
   master_playlist_url?: string
-  outputs?: { track_sid: string; participant_identity?: string; playlist_url?: string; duration_ms?: string }[] }
+  outputs?: { track_sid: string; participant_identity?: string; playlist_url?: string; playlist_location?: string; duration_ms?: string }[] }
 
 // Cluster view (pkg/dashboard/cluster.go).
 export interface NodeSummary {
@@ -119,6 +119,8 @@ export interface NodeConns {
 export interface NodeView { id: string; role: string; self?: boolean; draining?: boolean; down?: boolean; reachable: boolean; seen: number; summary?: NodeSummary }
 export interface ClusterPoint {
   t: number; media: number; edges: number; down: number; presenters: number; viewers: number; bps_in: number; bps_out: number
+  /** Bandwidth by meaning; missing from older nodes' history. */
+  ingest_bps?: number; delivered_bps?: number; internal_bps?: number; turn_bps?: number
   cpu_max: number; cpu_avg: number; recordings: number; rec_used: number; rec_cap: number; loss_max: number
 }
 export interface Capacity { nodes: number; avg_load: number; max_load: number; busiest?: string; n1: boolean; note: string }

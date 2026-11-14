@@ -1,6 +1,6 @@
 import { clusterHistory, clusterRoom, clusterState, session, userSessions } from '../api';
 import { store } from '../store';
-import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeConns, NodeRoom, NodeView } from '../types';
+import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
 import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
 import { handleAction, media } from './rooms';
 import { clusterList } from './clusterlist';
@@ -33,7 +33,8 @@ const participantColumns: Column<ClusterParticipantBrief>[] = [
 
 const roomColumns: Column<ClusterRoom>[] = [
   { label: 'Room', sort: 'name', get: (r) => r.name, cell: (r) => `<a href="#/cluster/room/${encodeURIComponent(r.name)}">${esc(r.name)}</a>` },
-  { label: 'Presenters', sort: 'presenters', desc: true, get: (r) => r.presenters },
+  { label: 'Presenters', sort: 'presenters', desc: true, get: (r) => r.presenters,
+    cell: (r) => (r.presenters === 0 && r.viewers > 0 ? `0 ${badge('no presenter', 'warn')}` : fmtNum(r.presenters)) },
   { label: 'Viewers', sort: 'viewers', desc: true, get: (r) => r.viewers },
   { label: 'Media nodes', get: (r) => r.media.join(' '), cell: (r) => r.media.map(esc).join(', ') || '<span class="muted">none</span>' },
   { label: 'Edges', get: (r) => r.edges.join(' '), cell: (r) => r.edges.map(esc).join(', ') },
@@ -107,7 +108,11 @@ export class Cluster implements View {
     const g = (this.charts = new ChartGroup(root.querySelector('.charts')!));
     const P = () => this.points;
     g.add({ title: 'People', series: [{ label: 'viewers', color: '--c1', get: (i) => P()[i]!.viewers, fill: true }, { label: 'presenters', color: '--c2', get: (i) => P()[i]!.presenters }], fmt: (v) => fmtNum(v), int: true });
-    g.add({ title: 'Bandwidth (all nodes)', series: [{ label: 'out', color: '--c2', get: (i) => P()[i]!.bps_out }, { label: 'in', color: '--c1', get: (i) => P()[i]!.bps_in }], fmt: fmtBps });
+    g.add({ title: 'Bandwidth', series: [
+      { label: 'delivered', color: '--c2', get: (i) => P()[i]!.delivered_bps ?? 0, fill: true },
+      { label: 'ingest', color: '--c1', get: (i) => P()[i]!.ingest_bps ?? 0 },
+      { label: 'between nodes', color: '--c3', get: (i) => P()[i]!.internal_bps ?? 0 },
+      { label: 'TURN', color: '--c6', get: (i) => P()[i]!.turn_bps ?? 0 }], fmt: fmtBps });
     g.add({ title: 'CPU (% of each node)', series: [{ label: 'busiest', color: '--c6', get: (i) => P()[i]!.cpu_max }, { label: 'average', color: '--c3', get: (i) => P()[i]!.cpu_avg }], fmt: (v) => v.toFixed(0) + '%' });
     g.add({ title: 'Recording capacity (units)', series: [{ label: 'used', color: '--c6', get: (i) => P()[i]!.rec_used }, { label: 'capacity', color: '--c3', get: (i) => P()[i]!.rec_cap }], fmt: (v) => fmtNum(v), int: true });
     g.add({ title: 'Nodes', series: [{ label: 'media', color: '--c1', get: (i) => P()[i]!.media }, { label: 'edges', color: '--c2', get: (i) => P()[i]!.edges }, { label: 'down', color: '--c6', get: (i) => P()[i]!.down }], fmt: (v) => fmtNum(v), int: true });
@@ -162,7 +167,7 @@ export class Cluster implements View {
       card('Nodes', `${up.length} up`, `${p?.media ?? 0} media · ${p?.edges ?? 0} edge${p?.edges === 1 ? '' : 's'}${down ? ` · ${down} down` : ''}`, down ? 'bad' : '') +
       card('Presenters', fmtNum(p?.presenters ?? 0), 'on media nodes') +
       card('Viewers', fmtNum(p?.viewers ?? 0), 'on all nodes') +
-      card('Egress', fmtBps(p?.bps_out ?? 0), `ingress ${fmtBps(p?.bps_in ?? 0)}`) +
+      card('Delivered', fmtBps(p?.delivered_bps ?? 0), `to viewers · ingest ${fmtBps(p?.ingest_bps ?? 0)} · between nodes ${fmtBps(p?.internal_bps ?? 0)} · TURN ${fmtBps(p?.turn_bps ?? 0)}`) +
       card('Busiest CPU', `${(p?.cpu_max ?? 0).toFixed(0)}%`, `average ${(p?.cpu_avg ?? 0).toFixed(0)}%`, (p?.cpu_max ?? 0) > 80 ? 'warn' : '') +
       card('Recording', `${fmtNum(p?.recordings ?? 0)} active`, `capacity ${fmtNum(p?.rec_used ?? 0)} of ${fmtNum(p?.rec_cap ?? 0)} units`,
         p && p.rec_cap && p.rec_used * 10 >= p.rec_cap * 9 ? 'warn' : ''));
@@ -214,42 +219,43 @@ export class Cluster implements View {
   }
 }
 
+/** The node tables: media nodes and edges apart, each with the columns of its job (ADR-0012).
+ *  Status carries late/draining/down; Version shows only when nodes differ. */
 function nodesTable(nodes: NodeView[], now: number): string {
-  const rows = nodes.map((n) => {
+  const versions = new Set(nodes.map((n) => n.summary?.version).filter(Boolean));
+  const mixed = versions.size > 1;
+  const common = (n: NodeView) => {
     const s = n.summary;
     const h = nodeHealth(n, now);
     const name = n.down || !n.reachable
       ? `${esc(n.id)}${n.reachable ? '' : ' <span class="muted" title="no private_url: its dashboard cannot be reached from here">(no URL)</span>'}`
       : `<a href="#" data-node="${esc(n.id)}">${esc(n.id)}</a>`;
-    const c = conns(s?.conns);
-    return `<tr><td>${name}${n.self ? ` ${badge('this node')}` : ''}</td><td>${badge(n.role)}</td><td>${badge(h.label, h.kind)}</td>
-      <td>${s ? `${s.cpu.toFixed(0)}% <span class="muted">of ${s.cores}</span>` : ''}</td><td>${s ? fmtBytes(s.rss) : ''}</td>
-      <td>${c.in}</td><td>${c.out}</td><td>${c.proxied}</td><td>${c.turn}</td>
-      <td>${s && s.rec_cap ? `${fmtNum(s.recordings)} · ${fmtNum(s.rec_used)}/${fmtNum(s.rec_cap)}` : ''}</td>
-      <td>${s ? fmtBps(s.bps_out) : ''}</td><td>${s ? fmtNum(s.rooms) : ''}</td>
-      <td>${s ? esc(s.version) : ''}</td><td>${s ? fmtDur(now - s.started_at) : ''}</td>
-      <td>${n.down ? `gone at ${new Date(n.seen).toLocaleTimeString()}` : `${Math.max(0, (now - n.seen) / 1000).toFixed(0)} s ago`}</td></tr>`;
-  });
-  return table(['Node', 'Role', 'Status', 'CPU', 'Memory', 'Media in', 'Media out', 'Proxied signaling', 'TURN', 'Recording (active · units)', 'Out', 'Rooms', 'Version', 'Uptime', 'Heartbeat'], rows, 'No node is registered.');
-}
-
-/** The node table's connection cells: media in (presenters, or presenters pulled from media
- *  nodes), media out (viewers, or edges pulling from this node), proxied presenter signaling
- *  and TURN. "via TURN" counts connections whose selected path is a TURN relay. */
-function conns(c: NodeConns | undefined): { in: string; out: string; proxied: string; turn: string } {
-  if (!c) return { in: '', out: '', proxied: '', turn: '' };
-  const viaTURN = (n: number): string => (n ? ` <span class="muted">· ${fmtNum(n)} via TURN</span>` : '');
-  const parts = (...p: string[]): string => p.filter(Boolean).join('<br>');
-  return {
-    in: parts(
-      c.presenters_in ? `${fmtNum(c.presenters_in)} presenters${viaTURN(c.presenters_turn)}` : '',
-      c.pulls_in || c.pulled ? `${fmtNum(c.pulled)} presenters <span class="muted">· ${fmtNum(c.pulls_in)} pulls</span>` : ''),
-    out: parts(
-      c.viewers_out ? `${fmtNum(c.viewers_out)} viewers${viaTURN(c.viewers_turn)}` : '',
-      c.pulls_out ? `${fmtNum(c.pulls_out)} edge pulls` : ''),
-    proxied: c.proxied ? `${fmtNum(c.proxied)} presenters` : '',
-    turn: c.turn || c.turn_bps_in ? `${fmtNum(c.turn)} allocations <span class="muted">· ${fmtBps(c.turn_bps_in)} in · ${fmtBps(c.turn_bps_out)} out</span>` : '',
+    const status = `${badge(h.label, h.kind)}${n.down ? ` <span class="muted">at ${new Date(n.seen).toLocaleTimeString()}</span>` : ''}`;
+    return {
+      head: `<td>${name}${n.self ? ` ${badge('this node')}` : ''}</td><td>${status}</td>
+        <td>${s ? `${s.cpu.toFixed(0)}% <span class="muted">of ${s.cores}</span>` : ''}</td><td>${s ? fmtBytes(s.rss) : ''}</td>`,
+      tail: `<td>${s ? fmtBps(s.bps_in) : ''}</td><td>${s ? fmtBps(s.bps_out) : ''}</td><td>${s ? fmtDur(now - s.started_at) : ''}</td>${mixed ? `<td>${s ? esc(s.version) : ''}</td>` : ''}`,
+    };
   };
+  const tailCols = ['In', 'Out', 'Uptime', ...(mixed ? ['Version'] : [])];
+  const viaTURN = (n: number): string => (n ? ` <span class="muted">· ${fmtNum(n)} via TURN</span>` : '');
+  const media = nodes.filter((n) => n.role !== 'edge');
+  const edges = nodes.filter((n) => n.role === 'edge');
+  const mediaRows = media.map((n) => {
+    const s = n.summary, c = s?.conns, x = common(n);
+    const rec = s && s.rec_cap ? `${fmtNum(s.recordings)} <span class="muted">· ${fmtNum(s.rec_used)}/${fmtNum(s.rec_cap)} units (${Math.round((100 * s.rec_used) / s.rec_cap)}%)</span>` : '';
+    return `<tr>${x.head}<td>${c ? `${fmtNum(c.presenters_in)}${viaTURN(c.presenters_turn)}` : ''}</td><td>${c?.pulls_out ? fmtNum(c.pulls_out) : ''}</td><td>${rec}</td>${x.tail}</tr>`;
+  });
+  const edgeRows = edges.map((n) => {
+    const s = n.summary, c = s?.conns, x = common(n);
+    const turn = c && (c.turn || c.turn_bps_in) ? `${fmtNum(c.turn)} <span class="muted">· ${fmtBps(Math.max(c.turn_bps_in, c.turn_bps_out))} relayed</span>` : '';
+    return `<tr>${x.head}<td>${c ? `${fmtNum(c.viewers_out)}${viaTURN(c.viewers_turn)}` : ''}</td>
+      <td>${c?.pulled || c?.pulls_in ? `${fmtNum(c.pulled)} <span class="muted">· ${fmtNum(c.pulls_in)} pulls</span>` : ''}</td>
+      <td>${c?.proxied ? fmtNum(c.proxied) : ''}</td><td>${turn}</td>${x.tail}</tr>`;
+  });
+  if (!nodes.length) return table(['Node'], [], 'No node is registered.');
+  return (media.length ? `<h4>Media nodes</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Presenters', 'Edge pulls served', 'Recording (active · units)', ...tailCols], mediaRows, '') : '') +
+    (edges.length ? `<h4>Edges</h4>` + table(['Node', 'Status', 'CPU', 'Memory', 'Viewers', 'Pulled presenters', 'Proxied presenters', 'TURN (allocations · relayed)', ...tailCols], edgeRows, '') : '');
 }
 
 export const isCluster = (): boolean => !!session.cluster;

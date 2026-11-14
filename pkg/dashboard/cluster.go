@@ -316,6 +316,13 @@ type ClusterPoint struct {
 	Viewers    int     `json:"viewers"`
 	BpsIn      float64 `json:"bps_in"`
 	BpsOut     float64 `json:"bps_out"`
+	// Bandwidth by meaning (ADR-0012): Ingest from presenters into media nodes, Delivered
+	// from edges to viewers, Internal from media nodes to edges (pulls), TURN relayed by
+	// edges (one leg: a relayed flow crosses the edge twice). BpsIn/BpsOut are raw sums.
+	Ingest     float64 `json:"ingest_bps"`
+	Delivered  float64 `json:"delivered_bps"`
+	Internal   float64 `json:"internal_bps"`
+	TURN       float64 `json:"turn_bps"`
 	CPUMax     float64 `json:"cpu_max"`
 	CPUAvg     float64 `json:"cpu_avg"`
 	Recordings int     `json:"recordings"`
@@ -460,6 +467,13 @@ func (h *Handler) sampleCluster() *ClusterState {
 		pt.Viewers += s.Viewers
 		pt.BpsIn += s.BpsIn
 		pt.BpsOut += s.BpsOut
+		if v.Role == config.RoleEdge {
+			pt.Delivered += s.BpsOut
+			pt.TURN += max(s.Conns.TURNBpsIn, s.Conns.TURNBpsOut)
+		} else {
+			pt.Ingest += s.BpsIn
+			pt.Internal += s.BpsOut
+		}
 		pt.CPUMax = max(pt.CPUMax, s.CPU)
 		cpuSum += s.CPU
 		cpuN++

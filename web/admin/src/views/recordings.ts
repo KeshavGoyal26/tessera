@@ -122,7 +122,7 @@ export class Recordings implements View {
     const tracks = active.flatMap((a) => a.tracks.map((t) => ({ a, t })))
       .sort((x, y) => rank(x.t) - rank(y.t) || x.a.recording_id.localeCompare(y.a.recording_id) || x.t.track_sid.localeCompare(y.t.track_sid));
     const activeRows = tracks.map(({ a, t }) => `<tr><td>${esc(a.recording_id)}</td><td>${esc(a.room)}</td><td>${esc(t.participant)}/${esc(t.track_sid)} ${esc(t.kind)}</td><td>${esc(t.codec)}${t.width ? ` ${t.width}×${t.height}` : ''}</td>
-      <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${t.last_packet_age_ms > 3000 ? badge(`${(t.last_packet_age_ms / 1000).toFixed(0)}s`, 'warn') : `${(t.last_packet_age_ms / 1000).toFixed(1)}s`}</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : badge('ok', 'ok')}</td></tr>`);
+      <td>${fmtDur(a.duration_ms)}</td><td>${t.segments}</td><td>${t.upload_backlog}</td><td>${t.packets_lost}</td><td>${t.last_packet_age_ms > 3000 ? badge(`${(t.last_packet_age_ms / 1000).toFixed(0)}s`, 'warn') : `${(t.last_packet_age_ms / 1000).toFixed(1)}s`}</td><td>${t.upload_errors || t.error ? badge(t.error ?? 'upload errors', 'bad') : t.packets > 0 && t.segments === 0 && a.duration_ms > 10000 ? badge('no segments', 'warn') : badge('ok', 'ok')}</td></tr>`);
     const fin = recs.flatMap((r) => r.stats?.finished ?? []).map((f) => ({ ...f, outputs: f.outputs ?? [] })) // null when aborted before any media
       .filter((f) => matches(q, f.recording_id, f.room, ...f.outputs.map((o) => o.participant))).sort((a, b) => b.ended_at.localeCompare(a.ended_at));
     const finRows = fin.map((f) => {
@@ -166,14 +166,27 @@ const durationMs = (c: CoordRecording): number => {
   return started ? (c.ended_at_ms ? Number(c.ended_at_ms) : isLive(c) ? Date.now() : started.getTime()) - started.getTime() : 0;
 };
 
+/** Media recorded (longest track), for ended recordings: the wall-clock duration includes stretches without media. */
+const mediaMs = (c: CoordRecording): number => Math.max(0, ...(c.outputs ?? []).map((o) => Number(o.duration_ms ?? 0)));
+/** Tracks with a playlist out of all tracks, when some track recorded nothing. */
+const tracksNote = (c: CoordRecording): string => {
+  const outs = c.outputs ?? [];
+  const ok = outs.filter((o) => o.playlist_location || o.playlist_url).length;
+  return outs.length && ok < outs.length ? ` ${badge(`${ok} of ${outs.length} tracks`, 'warn')}` : '';
+};
+
 const coordColumns: Column<CoordRecording>[] = [
   { label: 'Participant', get: who },
   { label: 'Room', get: (c) => c.room },
   { label: 'Started', get: (c) => startedAt(c)?.toISOString(), cell: (c) => startedAt(c)?.toLocaleTimeString() ?? '' },
-  { label: 'Duration', get: (c) => durationMs(c), cell: (c) => (startedAt(c) ? fmtDur(durationMs(c)) : '') },
+  { label: 'Duration', get: (c) => durationMs(c), cell: (c) => {
+    if (!startedAt(c)) return '';
+    const wall = durationMs(c), media = mediaMs(c);
+    return fmtDur(wall) + (!isLive(c) && media > 0 && media < wall * 0.9 ? ` <span class="muted" title="media recorded">· media ${fmtDur(media)}</span>` : '');
+  } },
   { label: 'Status', get: statusOf, cell: (c) => {
     const st = statusOf(c);
-    return st === 'complete' ? badge(st, 'ok') : isLive(c) ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
+    return st === 'complete' ? badge(st, 'ok') + tracksNote(c) : isLive(c) ? badge(st === 'active' ? '● recording' : st, 'warn') : (st === 'aborted' ? badge(st, 'muted') : badge(st, 'bad'));
   } },
   { label: '', cls: 'actions', cell: (c) => {
     const started = startedAt(c), live = isLive(c), url = playUrl(c);

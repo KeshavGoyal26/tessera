@@ -57,18 +57,24 @@ How it stays cheap:
   without the cluster page open; every cluster endpoint answers in under 1 ms; cluster state
   1.5 KB, room index 0.4 KB, one room 12.5 KB.
 
-Node table connections, by kind:
+Node tables, one per role:
 
-| Column | Media node | Edge |
-|---|---|---|
-| Media in | presenters sending media here, and how many through TURN | presenters pulled from media nodes, and the pull sessions bringing them |
-| Media out | edges' pull sessions served | viewers, and how many through TURN |
-| Proxied signaling | | presenter WebSockets passed through to their media node |
-| TURN | | allocations on this edge's TURN server and their traffic (both legs: clients and media nodes) |
+| Table | Columns |
+|---|---|
+| Media nodes | presenters sending media here (and how many through TURN), edge pull sessions served, recording (active, units used of capacity), in/out bandwidth |
+| Edges | viewers (and how many through TURN), presenters pulled from media nodes (and the pull sessions bringing them), presenter signaling proxied to media nodes, TURN allocations and relayed bandwidth, in/out bandwidth |
 
-"Through TURN" is the participant's selected ICE path (`relay`). A browser told about several
-TURN servers may allocate on each, so allocations can exceed the connections using them. The
-**Out** column is media sent by the SFU; TURN traffic is shown in its own column.
+Both show status (late, draining, down with the time it went), CPU, memory and uptime; Version
+appears only when nodes run different versions. "Through TURN" is the participant's selected ICE
+path (`relay`). A browser told about several TURN servers may allocate on each, so allocations can
+exceed the connections using them. An edge's "in" includes the media it pulls from media nodes.
+
+Cluster bandwidth is shown by meaning: **delivered** (edges to viewers), **ingest** (presenters to
+media nodes), **between nodes** (media nodes to edges) and **TURN** relayed by edges (one leg).
+Rooms with viewers and no presenter carry a "no presenter" badge. On the Recordings page a
+finished recording shows the media recorded next to its duration when they differ, and "N of M
+tracks" when a track recorded nothing; an active track that receives packets but has written no
+segment after 10 s is marked "no segments".
 
 Cluster alerts: a node that stops heartbeating (listed as down for an hour), a late heartbeat
 (over 4 s), a draining node, the registry unreachable, no media node up, and each node's own
