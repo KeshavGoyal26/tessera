@@ -68,9 +68,11 @@ How it stays cheap:
 | Proxied presenter signaling | presenter WebSockets an edge passes to their media node | signaling only | to which media nodes |
 | TURN relays in use | relays on an edge's TURN server that carried traffic in the last 5 s (about one per presenter whose media goes through this edge) | allocations and relayed bandwidth | media nodes (not broken down) |
 
-"Via TURN" is the participant's selected ICE path (`relay`). A browser allocates on every TURN
-server it is given and ICE uses one, so allocations exceed the relays in use. A presenter's
-signaling and its TURN media can go through different edges. The cluster shows media nodes and
+"Via TURN" is the participant's selected ICE path (`relay`). A presenter proxied by an edge is
+given that edge's TURN only (when the media node's `rtc.turn_relay.urls` lists it), so its
+signaling and media use the same edge and each edge's relays in use match its proxied
+presenters. Allocations can still exceed relays in use (a client may allocate per transport).
+Destination lists show the four largest, the rest on hover. The cluster shows media nodes and
 edges in separate tables (status carries late/draining/down; Version only when nodes differ). An
 edge's "in" includes the media it pulls from media nodes.
 

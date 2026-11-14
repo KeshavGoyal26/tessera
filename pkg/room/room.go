@@ -413,7 +413,7 @@ func (m *manager) HandleSession(ctx context.Context, claims *auth.Claims, cp sig
 			_ = conn.Close(signal.CloseProtocolError, "resume failed")
 			return errs.New(errs.CodeNotFound, "resume failed")
 		}
-		return p.resume(ctx, conn)
+		return p.resume(ctx, conn, cp.EdgeTURN)
 	}
 	g := claims.Grants
 	r, err := m.getOrCreateRoom(g.Room, g.RoomConfig, m.cfg.Room.AutoCreate)

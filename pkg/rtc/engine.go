@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -338,11 +339,19 @@ func (e *engine) closeConns() {
 
 // ICEServers implements Engine: configured servers plus per-session
 // credentials for the shared-secret TURN relays and the embedded TURN server.
-func (e *engine) ICEServers(participantSID string) []*tesserav1.ICEServer {
+func (e *engine) ICEServers(participantSID string, prefer []string) []*tesserav1.ICEServer {
 	out := append([]*tesserav1.ICEServer{}, e.iceSrv...)
 	if r := e.cfg.TURNRelay; len(r.URLs) > 0 {
+		urls := r.URLs
+		// Only configured URLs are ever handed out: prefer narrows the list (same host and
+		// port, any transport), it never adds.
+		if some := slices.DeleteFunc(slices.Clone(r.URLs), func(u string) bool {
+			return !slices.ContainsFunc(prefer, func(p string) bool { return turnHostPort(p) == turnHostPort(u) })
+		}); len(some) > 0 {
+			urls = some
+		}
 		u, p := turn.RESTCredentials(r.Secret, participantSID, r.TTL)
-		out = append(out, &tesserav1.ICEServer{Urls: r.URLs, Username: u, Credential: p})
+		out = append(out, &tesserav1.ICEServer{Urls: urls, Username: u, Credential: p})
 	}
 	if e.turn != nil {
 		if urls := e.turn.URLs(); len(urls) > 0 {
@@ -404,6 +413,21 @@ type TURNStats interface {
 }
 
 func (e *engine) TURNStats(now time.Time) (int, int, float64, float64) { return e.turn.Stats(now) }
+
+// turnHostPort is the host:port of a TURN URL ("turn:h:3478?transport=tcp" -> "h:3478").
+func turnHostPort(u string) string {
+	_, rest, _ := strings.Cut(u, ":")
+	hp, _, _ := strings.Cut(rest, "?")
+	return hp
+}
+
+// TURNURLs returns the embedded TURN server's client URLs (nil without TURN).
+func (e *engine) TURNURLs() []string {
+	if e.turn == nil {
+		return nil
+	}
+	return e.turn.URLs()
+}
 
 // monotonic clock base for arrival times.
 var clockBase = time.Now()

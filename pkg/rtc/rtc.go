@@ -24,8 +24,10 @@ import (
 type Engine interface {
 	// NewTransport creates one PeerConnection (publisher or subscriber side).
 	NewTransport(p TransportParams) (Transport, error)
-	// ICEServers returns STUN/TURN servers (with per-session TURN credentials).
-	ICEServers(participantSID string) []*tesserav1.ICEServer
+	// ICEServers returns STUN/TURN servers (with per-session TURN credentials). When
+	// prefer names some of the configured relay TURN URLs (rtc.turn_relay), only those
+	// are handed out (an edge's own TURN, ADR-0012); otherwise all of them.
+	ICEServers(participantSID string, prefer []string) []*tesserav1.ICEServer
 	// Ready reports whether listeners are bound (used by /readyz).
 	Ready() error
 	Close() error

@@ -35,7 +35,10 @@ type Edge struct {
 	Relays *Relays
 	// MaxMessageSize bounds one signaling message (default 1 MiB).
 	MaxMessageSize int64
-	Logger         *slog.Logger
+	// TURNURLs are this edge's own TURN URLs, sent to the media node with each proxied
+	// session (signal.EdgeTURNHeader) so the presenter relays through this edge.
+	TURNURLs []string
+	Logger   *slog.Logger
 
 	mu      sync.Mutex
 	proxied map[string]int // presenter signaling sessions open, by media node id
@@ -107,6 +110,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hdr.Set("Authorization", a)
 	}
 	hdr.Set("X-Forwarded-For", r.RemoteAddr)
+	if len(e.TURNURLs) > 0 {
+		hdr.Set(signal.EdgeTURNHeader, strings.Join(e.TURNURLs, ","))
+	}
 	dctx, dcancel := context.WithTimeout(r.Context(), 10*time.Second)
 	up, resp, err := websocket.Dial(dctx, target, &websocket.DialOptions{HTTPHeader: hdr, Subprotocols: subprotocols(r)})
 	dcancel()

@@ -9,14 +9,16 @@ describe('connections', () => {
     expect(fmtPath(4, 3)).toBe('3 via TURN · 1 direct');
     expect(fmtPath(2, 0)).toBe('2 direct');
     expect(fmtPath(0, 0)).toBe('');
-    expect(fmtNodes({ m2: 3, m1: 2 })).toBe('m1 2 · m2 3');
+    expect(fmtNodes({ m1: 2, m2: 3 })).toBe('m2 3 · m1 2');
+    const many = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`m${i}`, 1]));
+    expect(fmtNodes(many)).toContain('+46 more');
     expect(fmtQuality({ good: 5, poor: 1 })).toContain('1 poor');
   });
   it('shows an edge its pulls, proxied signaling and TURN, and hides kinds it has none of', () => {
     const html = connectionsTable({ ...none, viewers_out: 1, pulled: 4, pulls_in: 2, pulls_from: { m1: 1, m2: 1 }, proxied: 5, proxied_to: { m1: 2, m2: 3 }, turn_active: 4, turn: 9 });
     expect(html).toContain('Pulled presenters');
     expect(html).toContain('from m1 1 · m2 1');
-    expect(html).toContain('to m1 2 · m2 3');
+    expect(html).toContain('to m2 3 · m1 2');
     expect(html).toContain('TURN relays in use');
     expect(html).not.toContain('Edge pulls served');
   });

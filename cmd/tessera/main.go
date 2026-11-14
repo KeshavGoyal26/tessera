@@ -262,6 +262,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			defer relays.Close()
 			e := &cluster.Edge{Cluster: cc, Verifier: verifier, Local: signalSrv, Relays: relays,
 				MaxMessageSize: cfg.Signal.MaxMessageSize, Logger: logger}
+			if t, ok := engine.(interface{ TURNURLs() []string }); ok {
+				e.TURNURLs = t.TURNURLs()
+			}
 			edge.Store(e)
 			rtcHandler = e
 		} else {

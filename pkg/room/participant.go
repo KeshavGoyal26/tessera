@@ -42,7 +42,9 @@ type Participant struct {
 	sid, identity string
 	kind          tesserav1.ParticipantInfo_Kind
 	// pulled: a presenter brought to this edge from its media node (AddRemotePublisher).
-	pulled        bool
+	pulled bool
+	// edgeTURN: the TURN URLs of the edge proxying the session (ICEServers prefers them).
+	edgeTURN      []string
 	joinedAt      time.Time
 	autoSubscribe bool
 	client        *tesserav1.ClientInfo
@@ -93,7 +95,7 @@ func newParticipant(r *Room, c *auth.Claims, cp signal.ConnectParams, conn signa
 	}
 	p := &Participant{
 		room: r, claims: *c, sid: newSID("PA_"), identity: c.Identity(), kind: kind, joinedAt: time.Now(),
-		autoSubscribe: cp.AutoSubscribe, client: cp.Client, conn: conn,
+		autoSubscribe: cp.AutoSubscribe, client: cp.Client, conn: conn, edgeTURN: cp.EdgeTURN,
 		name: c.Name, metadata: c.Metadata, attributes: c.Attributes, perm: perm,
 		autoRecord: c.Grants != nil && c.Grants.AutoRecord,
 		state:      tesserav1.ParticipantInfo_STATE_JOINING,
@@ -250,7 +252,7 @@ func (p *Participant) start() error {
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Join{Join: &tesserav1.JoinResponse{
 		Room: p.room.ToProto(), Participant: p.ToProto(), OtherParticipants: others,
 		ServerInfo:   &tesserav1.ServerInfo{Version: version.Version, Protocol: version.ProtocolVersion, MinProtocol: version.MinProtocolVersion, NodeId: m.cfg.NodeID, Region: m.cfg.Region},
-		IceServers:   m.engine.ICEServers(p.sid),
+		IceServers:   m.engine.ICEServers(p.sid, p.edgeTURN),
 		PingInterval: uint32(m.cfg.Signal.PingInterval / time.Second), PingTimeout: uint32(m.cfg.Signal.PingTimeout / time.Second),
 		EnabledPublishCodecs: codecs, ResumeWindow: uint32(m.cfg.Signal.ResumeWindow / time.Second),
 		ClientConfiguration: m.clientConfiguration(),
@@ -464,7 +466,7 @@ func (p *Participant) others() []*tesserav1.ParticipantInfo {
 	return out
 }
 
-func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
+func (p *Participant) resume(ctx context.Context, conn signal.Conn, edgeTURN []string) error {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -488,7 +490,7 @@ func (p *Participant) resume(ctx context.Context, conn signal.Conn) error {
 	}
 	p.lastSeen.Store(time.Now().UnixNano())
 	p.send(&tesserav1.SignalResponse{Message: &tesserav1.SignalResponse_Reconnect{Reconnect: &tesserav1.ReconnectResponse{
-		IceServers: p.room.m.engine.ICEServers(p.sid), Participant: p.ToProto(), OtherParticipants: p.others(), HasOtherParticipants: true,
+		IceServers: p.room.m.engine.ICEServers(p.sid, edgeTURN), Participant: p.ToProto(), OtherParticipants: p.others(), HasOtherParticipants: true,
 		ClientConfiguration: p.room.m.clientConfiguration()}}})
 	return p.run(ctx)
 }

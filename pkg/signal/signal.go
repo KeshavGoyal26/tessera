@@ -57,7 +57,15 @@ type ConnectParams struct {
 	// JSON selects protojson text frames.
 	JSON   bool
 	Client *tesserav1.ClientInfo
+	// EdgeTURN are the TURN URLs of the edge that proxies this session (header
+	// EdgeTURNHeader, ADR-0012); empty when the client connected directly.
+	EdgeTURN []string
 }
+
+// EdgeTURNHeader carries an edge's own TURN URLs (comma-separated) on the sessions it
+// proxies to a media node, so the presenter is handed that edge's TURN only: its media
+// then goes through the edge its signaling uses, and it allocates on one TURN server.
+const EdgeTURNHeader = "Tessera-Edge-Turn"
 
 // SessionHandler implements sessions on top of connections (pkg/room).
 type SessionHandler interface {
@@ -151,6 +159,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeHTTPError(w, err)
 		return
+	}
+	for _, u := range strings.Split(r.Header.Get(EdgeTURNHeader), ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			p.EdgeTURN = append(p.EdgeTURN, u)
+		}
 	}
 	token := r.URL.Query().Get("access_token")
 	if token == "" {

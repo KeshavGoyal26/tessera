@@ -185,6 +185,10 @@ recording:
 
 Clients use the edges' URL (`wss://edge.example.com/rtc`) as they would a single server.
 
+- **TURN per edge**: an edge tells the media server its own TURN URLs with each proxied
+  session (`Tessera-Edge-Turn` header); the media server then hands that presenter only the
+  matching entries of `rtc.turn_relay.urls` (same host and port), else all of them. List every
+  edge's TURN there, at the address the edge advertises (`rtc.node_ip` or `turn.domain`).
 - **Presenters** (tokens that may publish) are relayed to a media server: the one they are on
   (a reconnect resumes there), else a server already hosting their group with fewer than 250
   sessions, else the least-loaded live server that is not draining. A group can span servers.

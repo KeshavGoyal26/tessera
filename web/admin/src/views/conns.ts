@@ -4,9 +4,11 @@ import { badge, esc, fmtBps, fmtNum, table } from '../util';
 // A node's connections by kind, where they lead and their quality (Conns in
 // pkg/dashboard/cluster.go). Shown on the Overview and, in short, in the cluster tables.
 
-/** "m1 2 · m2 3", sorted by node. */
-export function fmtNodes(m?: Record<string, number>): string {
-  return Object.entries(m ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${esc(k)} ${fmtNum(v)}`).join(' · ');
+/** "m2 3 · m1 2", largest first; past max nodes "… +N more", the full list on hover. */
+export function fmtNodes(m?: Record<string, number>, max = 4): string {
+  const all = Object.entries(m ?? {}).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([k, v]) => `${k} ${fmtNum(v)}`);
+  if (all.length <= max) return esc(all.join(' · '));
+  return `<span title="${esc(all.join('\n'))}">${esc(all.slice(0, max).join(' · '))} · +${all.length - max} more</span>`;
 }
 
 /** "3 via TURN · 1 direct" (connections whose selected ICE path is a TURN relay, the rest). */
