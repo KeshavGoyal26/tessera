@@ -107,6 +107,14 @@ export interface NodeSummary {
   /** On an edge these are the relayed copies of presenters. */
   presenters: number; viewers: number; relays: number; published: number; subscribed: number
   recordings: number; rec_used: number; rec_cap: number; loss_max: number; rtt_avg: number; critical: number; warnings: number
+  /** Missing from nodes older than the connection breakdown. */
+  conns?: NodeConns
+}
+/** A node's connections by kind (Conns in pkg/dashboard/cluster.go). */
+export interface NodeConns {
+  presenters_in: number; presenters_turn: number; viewers_out: number; viewers_turn: number
+  pulls_in: number; pulled: number; pulls_out: number; proxied: number
+  turn: number; turn_bps_in: number; turn_bps_out: number
 }
 export interface NodeView { id: string; role: string; self?: boolean; draining?: boolean; down?: boolean; reachable: boolean; seen: number; summary?: NodeSummary }
 export interface ClusterPoint {

@@ -30,6 +30,8 @@ Snapshot
 │     gc_pause_p99_ns, gc_cpu_percent, num_gc
 │     udp_packets_in_per_sec, udp_packets_out_per_sec, udp_bytes_in_per_sec, udp_bytes_out_per_sec
 │     peer_connections, rooms, participants, published_tracks, subscribed_tracks
+│     turn_allocations, turn_bytes_in_per_sec, turn_bytes_out_per_sec (embedded TURN, both legs)
+│     proxied_sessions, pull_sessions (edge: presenter signaling to media nodes, pulls from them)
 └── rooms[]: RoomStats
       sid, name, created_at, active_recording
       active_speakers[]: { participant_sid, identity, level (0..1) }   loudest first

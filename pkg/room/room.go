@@ -77,6 +77,9 @@ type Params struct {
 	// OnLeave, if set, is called once per participant that leaves, with why (the disconnect
 	// reason, e.g. "client_initiated"), for observers such as the dashboard's session journal.
 	OnLeave func(sid, reason string)
+	// NodeStats, if set, adds fields owned by other components (an edge's proxied and pull
+	// sessions) to every stats snapshot.
+	NodeStats func(*stats.NodeStats)
 }
 
 // RecordingTrigger starts and stops participant recordings as participants come and go.
@@ -96,6 +99,7 @@ type manager struct {
 	keys      auth.KeyProvider // signs refreshed participant tokens; nil disables refresh
 	logger    *slog.Logger
 	onLeave   func(sid, reason string)
+	nodeStats func(*stats.NodeStats)
 	sampler   *stats.NodeSampler
 
 	mu       sync.RWMutex
@@ -121,7 +125,7 @@ func NewManager(p Params) (Manager, error) {
 		rtc.NegotiationDebounce = cfg.Signal.NegotiationDebounce
 	}
 	m := &manager{
-		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, keys: p.Keys, logger: p.Logger, onLeave: p.OnLeave,
+		cfg: cfg, engine: p.Engine, notifier: p.Notifier, recording: p.Recording, keys: p.Keys, logger: p.Logger, onLeave: p.OnLeave, nodeStats: p.NodeStats,
 		sampler: stats.NewNodeSampler(cfg.NodeID),
 		rooms:   map[string]*Room{}, bySID: map[string]*Participant{},
 	}

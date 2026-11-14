@@ -19,6 +19,7 @@ import (
 
 	"github.com/KeshavGoyal26/tessera/pkg/config"
 	"github.com/KeshavGoyal26/tessera/pkg/errs"
+	"github.com/KeshavGoyal26/tessera/pkg/stats"
 )
 
 // Server is the embedded TURN server.
@@ -31,6 +32,8 @@ type Server struct {
 	tcpPort int
 	tlsPort int
 	closers []func() error
+	// in and out meter all TURN traffic (meter.go).
+	in, out stats.Meter
 }
 
 // NewServer starts the TURN listeners. It returns (nil, nil) when TURN is
@@ -92,6 +95,9 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 		}
 		return &pturn.RelayAddressGeneratorStatic{RelayAddress: rip, Address: bindOf(rip)}
 	}
+	metered := func() pturn.RelayAddressGenerator {
+		return meteredGenerator{RelayAddressGenerator: gen(), in: &s.in, out: &s.out}
+	}
 	lf := logging.NewDefaultLoggerFactory()
 	lf.DefaultLogLevel = logging.LogLevelError
 	sc := pturn.ServerConfig{Realm: "tessera", LoggerFactory: lf, AuthHandler: pturn.LongTermTURNRESTAuthHandler(s.secret, nil)}
@@ -104,7 +110,8 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 		}
 		s.udpPort = pc.LocalAddr().(*net.UDPAddr).Port
 		s.closers = append(s.closers, pc.Close)
-		sc.PacketConnConfigs = append(sc.PacketConnConfigs, pturn.PacketConnConfig{PacketConn: pc, RelayAddressGenerator: gen(), PermissionHandler: permit})
+		sc.PacketConnConfigs = append(sc.PacketConnConfigs, pturn.PacketConnConfig{PacketConn: meteredPacketConn{PacketConn: pc, in: &s.in, out: &s.out},
+			RelayAddressGenerator: metered(), PermissionHandler: permit})
 	}
 	if cfg.TCPPort >= 0 {
 		var lc net.ListenConfig
@@ -115,7 +122,8 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 		}
 		s.tcpPort = ln.Addr().(*net.TCPAddr).Port
 		s.closers = append(s.closers, ln.Close)
-		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: gen(), PermissionHandler: permit})
+		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: meteredListener{Listener: ln, in: &s.in, out: &s.out},
+			RelayAddressGenerator: metered(), PermissionHandler: permit})
 	}
 	if cfg.TLSPort > 0 {
 		// TURN over TLS (TURNS, RFC 7350) for networks that only let TCP/443 through.
@@ -130,10 +138,10 @@ func NewServer(cfg config.TURNConfig, relayIP string, allowed []net.IP, peers []
 			s.close()
 			return nil, fmt.Errorf("turn: listen tls: %w", err)
 		}
-		ln := tls.NewListener(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"stun.turn"}})
+		ln := tls.NewListener(meteredListener{Listener: raw, in: &s.in, out: &s.out}, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"stun.turn"}})
 		s.tlsPort = raw.Addr().(*net.TCPAddr).Port
 		s.closers = append(s.closers, ln.Close)
-		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: gen(), PermissionHandler: permit})
+		sc.ListenerConfigs = append(sc.ListenerConfigs, pturn.ListenerConfig{Listener: ln, RelayAddressGenerator: metered(), PermissionHandler: permit})
 	}
 	srv, err := pturn.NewServer(sc)
 	if err != nil {
@@ -199,6 +207,17 @@ func isLocal(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// Stats returns the number of active allocations and the TURN traffic in bits per
+// second (both legs, see meter.go) over the last window ending at now.
+func (s *Server) Stats(now time.Time) (allocations int, bpsIn, bpsOut float64) {
+	if s == nil || s.srv == nil {
+		return 0, 0, 0
+	}
+	_, bpsIn = s.in.Rates(now)
+	_, bpsOut = s.out.Rates(now)
+	return s.srv.AllocationCount(), bpsIn, bpsOut
 }
 
 // Close stops all listeners.

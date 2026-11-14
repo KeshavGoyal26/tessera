@@ -68,6 +68,24 @@ func (r *Relays) Ensure(group string) {
 	go g.run()
 }
 
+// Sessions is the number of pull sessions this edge holds to media nodes (one per group
+// and media node).
+func (r *Relays) Sessions() int {
+	r.mu.Lock()
+	groups := make([]*groupRelay, 0, len(r.groups))
+	for _, g := range r.groups {
+		groups = append(groups, g)
+	}
+	r.mu.Unlock()
+	n := 0
+	for _, g := range groups {
+		g.mu.Lock()
+		n += len(g.sessions)
+		g.mu.Unlock()
+	}
+	return n
+}
+
 // Close stops every relay.
 func (r *Relays) Close() {
 	r.mu.Lock()

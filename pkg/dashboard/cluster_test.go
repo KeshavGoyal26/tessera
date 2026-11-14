@@ -239,3 +239,26 @@ func hasAlert(as []Alert, id string) bool {
 	}
 	return false
 }
+
+// TestConnsOf: presenters and viewers split by TURN, pulls on both sides, and the
+// edge's own counters taken from the node statistics.
+func TestConnsOf(t *testing.T) {
+	pub := []stats.PublishedTrackStats{{}}
+	s := &stats.Snapshot{
+		Node: stats.NodeStats{PullSessions: 2, ProxiedSessions: 3, TURNAllocations: 4, TURNBytesInPerSec: 100, TURNBytesOutPerSec: 200},
+		Rooms: []stats.RoomStats{{Participants: []stats.ParticipantStats{
+			{Kind: "standard", Published: pub, ICECandidateType: "relay"}, // presenter through TURN
+			{Kind: "standard", Published: pub, ICECandidateType: "host"},  // presenter, direct
+			{Kind: "standard", Published: pub},                            // presenter pulled from a media node
+			{Kind: "standard", ICECandidateType: "relay"},                 // viewer through TURN
+			{Kind: "standard", ICECandidateType: "srflx"},                 // viewer, direct
+			{Kind: "relay"}, // an edge's pull session
+			{Kind: "recorder"},
+		}}},
+	}
+	want := Conns{PresentersIn: 2, PresentersTURN: 1, ViewersOut: 2, ViewersTURN: 1, PullsIn: 2, Pulled: 1, PullsOut: 1,
+		Proxied: 3, TURN: 4, TURNBpsIn: 800, TURNBpsOut: 1600}
+	if got := connsOf(s); got != want {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}

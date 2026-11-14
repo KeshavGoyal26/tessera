@@ -151,12 +151,19 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 	autoRec := &lateRecordingTrigger{}
 	// Leave reasons go to the dashboard's session journal, created further down.
 	var journal atomic.Pointer[dashboard.Journal]
+	// An edge's proxied and pull sessions, for the node statistics; set further down.
+	var edge atomic.Pointer[cluster.Edge]
 	rooms, err := room.NewManager(room.Params{
 		Config: cfg, Engine: engine, Notifier: notifier, Keys: keys, Registry: reg, Logger: logger,
 		Recording: autoRec,
 		OnLeave: func(sid, reason string) {
 			if j := journal.Load(); j != nil {
 				j.Record(sid, dashboard.SessionEvent{T: time.Now(), Kind: "leave_reason", Detail: reason})
+			}
+		},
+		NodeStats: func(n *stats.NodeStats) {
+			if e := edge.Load(); e != nil {
+				n.ProxiedSessions, n.PullSessions = e.Proxied(), e.Relays.Sessions()
 			}
 		},
 	})
@@ -253,8 +260,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln *liste
 			// Signaling goes to the room's media node; this node relays media (TURN).
 			relays := &cluster.Relays{Cluster: cc, Rooms: rooms, NodeID: cfg.NodeID, APIKey: recKey, APISecret: recSecret, Logger: logger}
 			defer relays.Close()
-			rtcHandler = &cluster.Edge{Cluster: cc, Verifier: verifier, Local: signalSrv, Relays: relays,
+			e := &cluster.Edge{Cluster: cc, Verifier: verifier, Local: signalSrv, Relays: relays,
 				MaxMessageSize: cfg.Signal.MaxMessageSize, Logger: logger}
+			edge.Store(e)
+			rtcHandler = e
 		} else {
 			hosted = rooms
 		}

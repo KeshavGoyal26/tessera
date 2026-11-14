@@ -83,15 +83,59 @@ type Summary struct {
 	RTTAvg     float64 `json:"rtt_avg"`
 	Critical   int     `json:"critical"`
 	Warnings   int     `json:"warnings"`
+	Conns      Conns   `json:"conns"`
 }
 
-// roles counts participants the way the dashboard shows them.
-func roles(s *stats.Snapshot) (presenters, viewers, relays int) {
+// Conns breaks a node's connections down by kind (ADR-0012):
+//   - media in: presenters sending media to this node (direct or through TURN);
+//   - media out: viewers this node sends media to (direct or through TURN);
+//   - pulls: an edge's sessions to media nodes, bringing presenters to its viewers
+//     (PullsIn, Pulled presenters), and on a media node the edges' sessions it serves (PullsOut);
+//   - proxied: presenter signaling an edge passes through to media nodes;
+//   - TURN: allocations on this node's TURN server and their traffic (both legs).
+type Conns struct {
+	PresentersIn   int     `json:"presenters_in"`
+	PresentersTURN int     `json:"presenters_turn"`
+	ViewersOut     int     `json:"viewers_out"`
+	ViewersTURN    int     `json:"viewers_turn"`
+	PullsIn        int     `json:"pulls_in"`
+	Pulled         int     `json:"pulled"`
+	PullsOut       int     `json:"pulls_out"`
+	Proxied        int     `json:"proxied"`
+	TURN           int     `json:"turn"`
+	TURNBpsIn      float64 `json:"turn_bps_in"`
+	TURNBpsOut     float64 `json:"turn_bps_out"`
+}
+
+// connsOf counts a snapshot's connections; presenters and viewers are counted the way
+// roomRoles counts them.
+func connsOf(s *stats.Snapshot) Conns {
+	n := s.Node
+	c := Conns{PullsIn: n.PullSessions, Proxied: n.ProxiedSessions, TURN: n.TURNAllocations,
+		TURNBpsIn: n.TURNBytesInPerSec * 8, TURNBpsOut: n.TURNBytesOutPerSec * 8}
 	for _, r := range s.Rooms {
-		p, v, rl := roomRoles(&r)
-		presenters, viewers, relays = presenters+p, viewers+v, relays+rl
+		for _, p := range r.Participants {
+			turn := p.ICECandidateType == "relay"
+			switch {
+			case p.Kind == "relay":
+				c.PullsOut++
+			case p.Kind == "recorder":
+			case len(p.Published) > 0 && p.ICECandidateType == "":
+				c.Pulled++
+			case len(p.Published) > 0:
+				c.PresentersIn++
+				if turn {
+					c.PresentersTURN++
+				}
+			default:
+				c.ViewersOut++
+				if turn {
+					c.ViewersTURN++
+				}
+			}
+		}
 	}
-	return
+	return c
 }
 
 func roomRoles(r *stats.RoomStats) (presenters, viewers, relays int) {
@@ -116,7 +160,8 @@ func summaryOf(s *stats.Snapshot, pt Point, recs []RecorderStatus, alerts []Aler
 	sum := Summary{Version: n.Version, StartedAt: n.StartedAt.UnixMilli(), CPU: n.CPUPercent / float64(max(n.NumCPU, 1)),
 		Cores: n.NumCPU, RSS: n.RSSBytes, BpsIn: pt.BpsIn, BpsOut: pt.BpsOut, Rooms: n.Rooms,
 		Published: n.PublishedTracks, Subscribed: n.SubscribedTracks, Recordings: pt.Recording, LossMax: pt.LossMax, RTTAvg: pt.RTTAvg}
-	sum.Presenters, sum.Viewers, sum.Relays = roles(s)
+	sum.Conns = connsOf(s)
+	sum.Presenters, sum.Viewers, sum.Relays = sum.Conns.PresentersIn, sum.Conns.ViewersOut, sum.Conns.PullsOut
 	for _, r := range recs {
 		if r.OK && r.Stats != nil {
 			sum.RecUsed += r.Stats.CapacityUsed

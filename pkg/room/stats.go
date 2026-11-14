@@ -27,6 +27,14 @@ func (m *manager) buildSnapshot() *stats.Snapshot {
 	if c, ok := m.engine.(rtc.PeerConnectionCounter); ok {
 		s.Node.PeerConnections = c.PeerConnections()
 	}
+	if t, ok := m.engine.(rtc.TURNStats); ok {
+		var in, out float64
+		s.Node.TURNAllocations, in, out = t.TURNStats(now)
+		s.Node.TURNBytesInPerSec, s.Node.TURNBytesOutPerSec = in/8, out/8
+	}
+	if m.nodeStats != nil {
+		m.nodeStats(&s.Node)
+	}
 	m.mu.RLock()
 	rooms := make([]*Room, 0, len(m.rooms))
 	for _, r := range m.rooms {

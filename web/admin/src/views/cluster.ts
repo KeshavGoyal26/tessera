@@ -1,6 +1,6 @@
 import { clusterHistory, clusterRoom, clusterState, session, userSessions } from '../api';
 import { store } from '../store';
-import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeRoom, NodeView } from '../types';
+import type { ClusterParticipantBrief, ClusterPoint, ClusterRoom, ClusterState, NodeConns, NodeRoom, NodeView } from '../types';
 import { badge, esc, fmtBps, fmtBytes, fmtDur, fmtNum, mergeRoom, nodeHealth, qualityBadge, table, safeDecode } from '../util';
 import { handleAction, media } from './rooms';
 import { clusterList } from './clusterlist';
@@ -221,15 +221,35 @@ function nodesTable(nodes: NodeView[], now: number): string {
     const name = n.down || !n.reachable
       ? `${esc(n.id)}${n.reachable ? '' : ' <span class="muted" title="no private_url: its dashboard cannot be reached from here">(no URL)</span>'}`
       : `<a href="#" data-node="${esc(n.id)}">${esc(n.id)}</a>`;
-    const people = !s ? '' : n.role === 'edge' ? `${fmtNum(s.viewers)} viewers` : `${fmtNum(s.presenters)} presenters${s.viewers ? ` · ${fmtNum(s.viewers)} viewers` : ''}${s.relays ? ` · ${s.relays} relays` : ''}`;
+    const c = conns(s?.conns);
     return `<tr><td>${name}${n.self ? ` ${badge('this node')}` : ''}</td><td>${badge(n.role)}</td><td>${badge(h.label, h.kind)}</td>
-      <td>${s ? `${s.cpu.toFixed(0)}% <span class="muted">of ${s.cores}</span>` : ''}</td><td>${s ? fmtBytes(s.rss) : ''}</td><td>${people}</td>
+      <td>${s ? `${s.cpu.toFixed(0)}% <span class="muted">of ${s.cores}</span>` : ''}</td><td>${s ? fmtBytes(s.rss) : ''}</td>
+      <td>${c.in}</td><td>${c.out}</td><td>${c.proxied}</td><td>${c.turn}</td>
       <td>${s && s.rec_cap ? `${fmtNum(s.recordings)} · ${fmtNum(s.rec_used)}/${fmtNum(s.rec_cap)}` : ''}</td>
       <td>${s ? fmtBps(s.bps_out) : ''}</td><td>${s ? fmtNum(s.rooms) : ''}</td>
       <td>${s ? esc(s.version) : ''}</td><td>${s ? fmtDur(now - s.started_at) : ''}</td>
       <td>${n.down ? `gone at ${new Date(n.seen).toLocaleTimeString()}` : `${Math.max(0, (now - n.seen) / 1000).toFixed(0)} s ago`}</td></tr>`;
   });
-  return table(['Node', 'Role', 'Status', 'CPU', 'Memory', 'People', 'Recording (active · units)', 'Out', 'Rooms', 'Version', 'Uptime', 'Heartbeat'], rows, 'No node is registered.');
+  return table(['Node', 'Role', 'Status', 'CPU', 'Memory', 'Media in', 'Media out', 'Proxied signaling', 'TURN', 'Recording (active · units)', 'Out', 'Rooms', 'Version', 'Uptime', 'Heartbeat'], rows, 'No node is registered.');
+}
+
+/** The node table's connection cells: media in (presenters, or presenters pulled from media
+ *  nodes), media out (viewers, or edges pulling from this node), proxied presenter signaling
+ *  and TURN. "via TURN" counts connections whose selected path is a TURN relay. */
+function conns(c: NodeConns | undefined): { in: string; out: string; proxied: string; turn: string } {
+  if (!c) return { in: '', out: '', proxied: '', turn: '' };
+  const viaTURN = (n: number): string => (n ? ` <span class="muted">· ${fmtNum(n)} via TURN</span>` : '');
+  const parts = (...p: string[]): string => p.filter(Boolean).join('<br>');
+  return {
+    in: parts(
+      c.presenters_in ? `${fmtNum(c.presenters_in)} presenters${viaTURN(c.presenters_turn)}` : '',
+      c.pulls_in || c.pulled ? `${fmtNum(c.pulled)} presenters <span class="muted">· ${fmtNum(c.pulls_in)} pulls</span>` : ''),
+    out: parts(
+      c.viewers_out ? `${fmtNum(c.viewers_out)} viewers${viaTURN(c.viewers_turn)}` : '',
+      c.pulls_out ? `${fmtNum(c.pulls_out)} edge pulls` : ''),
+    proxied: c.proxied ? `${fmtNum(c.proxied)} presenters` : '',
+    turn: c.turn || c.turn_bps_in ? `${fmtNum(c.turn)} allocations <span class="muted">· ${fmtBps(c.turn_bps_in)} in · ${fmtBps(c.turn_bps_out)} out</span>` : '',
+  };
 }
 
 export const isCluster = (): boolean => !!session.cluster;

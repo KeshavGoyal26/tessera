@@ -38,13 +38,13 @@ the whole cluster (use an edge's: it is reachable, and its actions go through th
 
 | | Content |
 |-|---------|
-| Cluster | nodes up/down by role, presenters (media nodes), viewers (all nodes), egress, busiest CPU, recording capacity; cluster alerts; the node table (status, CPU, memory, people, recording, bandwidth, version, uptime, heartbeat age); one hour of cluster charts; the room index across nodes (presenters, viewers, media nodes, edges) |
+| Cluster | nodes up/down by role, presenters (media nodes), viewers (all nodes), egress, busiest CPU, recording capacity; cluster alerts; the node table (status, CPU, memory, connections, recording, bandwidth, version, uptime, heartbeat age); one hour of cluster charts; the room index across nodes (presenters, viewers, media nodes, edges) |
 | Cluster › room | one room on every node: presenters on their media node and viewers on each edge (relayed copies and relay sessions left out), with Record / Remove |
 | Node picker | the header's **Node** menu points Overview, Rooms, Track quality, Connectivity and Recordings at another node, shown through this dashboard (a banner says so; **Back** returns) |
 
 How it stays cheap:
 
-- Each node adds its **summary** (about 330 bytes: CPU, memory, people, recording capacity,
+- Each node adds its **summary** (about 500 bytes: CPU, memory, connections, recording capacity,
   bandwidth, alert counts) to the registry heartbeat it already sends every 2 s. It is derived from
   the sample the dashboard takes anyway.
 - The serving node reads the registry every 5 s (always on edges, otherwise for an hour after a
@@ -56,6 +56,19 @@ How it stays cheap:
 - Measured on a local cluster (2 media nodes, 1 edge, 20 clients): 23 Redis commands/s with or
   without the cluster page open; every cluster endpoint answers in under 1 ms; cluster state
   1.5 KB, room index 0.4 KB, one room 12.5 KB.
+
+Node table connections, by kind:
+
+| Column | Media node | Edge |
+|---|---|---|
+| Media in | presenters sending media here, and how many through TURN | presenters pulled from media nodes, and the pull sessions bringing them |
+| Media out | edges' pull sessions served | viewers, and how many through TURN |
+| Proxied signaling | | presenter WebSockets passed through to their media node |
+| TURN | | allocations on this edge's TURN server and their traffic (both legs: clients and media nodes) |
+
+"Through TURN" is the participant's selected ICE path (`relay`). A browser told about several
+TURN servers may allocate on each, so allocations can exceed the connections using them. The
+**Out** column is media sent by the SFU; TURN traffic is shown in its own column.
 
 Cluster alerts: a node that stops heartbeating (listed as down for an hour), a late heartbeat
 (over 4 s), a draining node, the registry unreachable, no media node up, and each node's own

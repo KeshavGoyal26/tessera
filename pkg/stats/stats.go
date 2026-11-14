@@ -85,6 +85,17 @@ type NodeStats struct {
 	UDPBytesOutPerSec   float64 `json:"udp_bytes_out_per_sec"`
 
 	PeerConnections int `json:"peer_connections"`
+
+	// Embedded TURN server (edges in a cluster): active allocations and traffic per
+	// second on both legs (clients and relay peers). Zero without TURN.
+	TURNAllocations    int     `json:"turn_allocations"`
+	TURNBytesInPerSec  float64 `json:"turn_bytes_in_per_sec"`
+	TURNBytesOutPerSec float64 `json:"turn_bytes_out_per_sec"`
+	// Edge only: presenter signaling sessions proxied to media nodes, and pull sessions
+	// to media nodes (one per group and media node, ADR-0012).
+	ProxiedSessions int `json:"proxied_sessions"`
+	PullSessions    int `json:"pull_sessions"`
+
 	Rooms           int `json:"rooms"`
 	Participants    int `json:"participants"`
 	PublishedTracks int `json:"published_tracks"`

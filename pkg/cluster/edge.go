@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -34,7 +35,13 @@ type Edge struct {
 	// MaxMessageSize bounds one signaling message (default 1 MiB).
 	MaxMessageSize int64
 	Logger         *slog.Logger
+
+	proxied atomic.Int64
 }
+
+// Proxied is the number of presenter signaling sessions this edge is relaying to media
+// nodes right now.
+func (e *Edge) Proxied() int { return int(e.proxied.Load()) }
 
 func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("access_token")
@@ -121,6 +128,8 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	up.SetReadLimit(limit)
 	down.SetReadLimit(limit)
+	e.proxied.Add(1)
+	defer e.proxied.Add(-1)
 	relay(context.Background(), down, up)
 }
 
