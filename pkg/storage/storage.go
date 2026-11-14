@@ -29,12 +29,17 @@ type Storage interface {
 	// (file path or s3://bucket/key). Implementations must be safe for
 	// concurrent use and must overwrite existing keys (playlists).
 	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) (location string, err error)
+	// Get returns the object stored at key, or an error matching ErrNotFound.
+	Get(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	// URL returns a public/HTTP URL for key when configured, else "".
 	URL(key string) string
 	// Check verifies connectivity/permissions (readiness).
 	Check(ctx context.Context) error
 }
+
+// ErrNotFound is returned (wrapped) by Get when key does not exist.
+var ErrNotFound = errors.New("storage: object not found")
 
 // Content types for HLS objects.
 const (
@@ -128,6 +133,18 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader, _ int64, _ str
 		return "", err
 	}
 	return dst, nil
+}
+
+func (l *local) Get(_ context.Context, key string) ([]byte, error) {
+	k, err := cleanKey(key)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(filepath.Join(l.root, filepath.FromSlash(k)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+	}
+	return b, err
 }
 
 func (l *local) Delete(_ context.Context, key string) error {
@@ -319,6 +336,27 @@ func (s *s3store) Put(ctx context.Context, key string, r io.Reader, size int64, 
 		return "", err
 	}
 	return "s3://" + s.cfg.Bucket + "/" + k, nil
+}
+
+func (s *s3store) Get(ctx context.Context, key string) ([]byte, error) {
+	k, err := s.objectKey(key)
+	if err != nil {
+		return nil, err
+	}
+	var b []byte
+	err = Retry(ctx, s.cfg.Attempts, s.cfg.Backoff, func() error {
+		obj, err := s.cl.GetObject(ctx, s.cfg.Bucket, k, minio.GetObjectOptions{})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = obj.Close() }()
+		b, err = io.ReadAll(obj)
+		return err
+	})
+	if err != nil && minio.ToErrorResponse(err).StatusCode == 404 {
+		return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+	}
+	return b, err
 }
 
 func (s *s3store) Delete(ctx context.Context, key string) error {

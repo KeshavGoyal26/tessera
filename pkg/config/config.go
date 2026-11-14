@@ -202,6 +202,11 @@ type RecordingConfig struct {
 	FFmpegPath string           `yaml:"ffmpeg_path"` // only for the optional AAC audio mode
 	Storage    RecordingStorage `yaml:"storage"`
 	HLS        RecordingHLS     `yaml:"hls"`
+	// FilenamePrefix is the default output prefix template, used by auto-record and
+	// by requests without filename_prefix. Default "{room}/{recording_id}". With
+	// "{pid}" each presenter also gets an index.json listing their recordings, e.g.
+	// "recordings/{shard}/{pid}/{start_ms}". See docs/RECORDING.md.
+	FilenamePrefix string `yaml:"filename_prefix"`
 }
 
 // RecordingStorage selects where recordings are written.

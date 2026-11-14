@@ -26,6 +26,7 @@ recording:
     kind: local
     local_root: /tmp/recordings
     local_base_url: /recordings # served on the HTTP port (7880); use s3 in production
+  # filename_prefix: "recordings/{shard}/{pid}/{start_ms}" # per presenter, with index.json (docs/RECORDING.md)
   hls:
     segment_duration: 4s
     audio_codec: opus

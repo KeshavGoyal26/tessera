@@ -300,3 +300,82 @@ func TestStopIsImmediateAndRejectsLaterTracks(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerPresenterPrefixAndIndex: with a {pid} prefix template, each recording of a
+// presenter lands in recordings/<shard>/<pid>/<start_ms>/ and their index.json lists
+// every master playlist, oldest first.
+func TestWorkerPresenterPrefixAndIndex(t *testing.T) {
+	hlstest.NeedFFmpeg(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	coord := NewCoordinator(CoordinatorParams{
+		Config: config.RecordingConfig{HeartbeatTimeout: time.Minute}, Notifier: &fakeNotifier{},
+		APIKey: "k", Secret: "secret-secret-secret-secret-1234",
+	})
+	defer coord.Close()
+	root := t.TempDir()
+	video, audio := hlstest.H264(t, 6), hlstest.Opus(t, 6)
+
+	var masters []string
+	for range 2 {
+		v, a := NewMemSource("video/H264", ""), NewMemSource("audio/opus", "")
+		conn := &fakeConnector{joined: make(chan struct{}), tracks: []Track{
+			{SID: "TR_v", ParticipantIdentity: "1048576", Kind: "video", Source: "camera", RTP: v},
+			{SID: "TR_a", ParticipantIdentity: "1048576", Kind: "audio", Source: "microphone", RTP: a},
+		}}
+		cfg := DefaultConfig()
+		cfg.WorkerID, cfg.Capacity, cfg.Heartbeat = "w1", 10, 50*time.Millisecond
+		cfg.Storage.LocalRoot = root
+		cfg.FilenamePrefix = "recordings/{shard}/{pid}/{start_ms}"
+		w, err := NewWorker(cfg, nil, nil, WithJobAPI(coord), WithConnector(conn))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wctx, wcancel := context.WithCancel(ctx)
+		runDone := make(chan struct{})
+		go func() { defer close(runDone); _ = w.Run(wctx) }()
+
+		info, err := coord.StartRecording(ctx, &tesserav1.StartRecordingRequest{
+			Room:   "demo",
+			Target: &tesserav1.StartRecordingRequest_Participant{Participant: &tesserav1.ParticipantRecordingTarget{Identity: "1048576"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-conn.joined
+		feedVideo(t, v, video)
+		feedAudio(t, a, audio)
+		v.Close()
+		a.Close()
+		waitFor(t, "segments", func() bool { return w.Stats().SegmentsWritten >= 2 })
+		if _, err := coord.StopRecording(ctx, info.RecordingId); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "COMPLETE", func() bool {
+			r, _ := coord.GetRecording(ctx, info.RecordingId)
+			return r.Status == tesserav1.RecordingStatus_RECORDING_STATUS_COMPLETE
+		})
+		got, _ := coord.GetRecording(ctx, info.RecordingId)
+		rel, _ := filepath.Rel(root, got.MasterPlaylistLocation)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) != 5 || parts[0] != "recordings" || parts[1] != "576" || parts[2] != "1048576" || parts[4] != "master.m3u8" {
+			t.Fatalf("master at %q", rel)
+		}
+		masters = append(masters, got.MasterPlaylistLocation)
+		wcancel()
+		<-runDone
+		time.Sleep(2 * time.Millisecond) // distinct start_ms
+	}
+
+	b, err := os.ReadFile(filepath.Join(root, "recordings/576/1048576/index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var idx recordingIndex
+	if err := json.Unmarshal(b, &idx); err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Recordings) != 2 || idx.Recordings[0] != masters[0] || idx.Recordings[1] != masters[1] || masters[0] == masters[1] {
+		t.Fatalf("index %s, masters %v", b, masters)
+	}
+}

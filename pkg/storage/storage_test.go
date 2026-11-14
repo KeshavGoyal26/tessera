@@ -56,11 +56,17 @@ func TestLocal(t *testing.T) {
 			t.Fatalf("key %q accepted", bad)
 		}
 	}
+	if b, err := s.Get(ctx, "r1/video/index.m3u8"); err != nil || string(b) != "v2" {
+		t.Fatalf("get: %q %v", b, err)
+	}
 	if err := s.Delete(ctx, "r1/video/index.m3u8"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(ctx, "r1/video/index.m3u8"); err != nil {
 		t.Fatal("delete must be idempotent")
+	}
+	if _, err := s.Get(ctx, "r1/video/index.m3u8"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get after delete: %v", err)
 	}
 	if err := s.Check(ctx); err != nil {
 		t.Fatal(err)
@@ -151,6 +157,19 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.ctype[path] = r.Header.Get("Content-Type")
 		f.mu.Unlock()
 		w.Header().Set("ETag", `"e"`)
+	case r.Method == http.MethodGet && strings.Contains(path, "/"):
+		f.mu.Lock()
+		b, ok := f.objects[path]
+		f.mu.Unlock()
+		if !ok {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(404)
+			_, _ = fmt.Fprint(w, `<Error><Code>NoSuchKey</Code><Message>no</Message></Error>`)
+			return
+		}
+		w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+		w.Header().Set("ETag", `"e"`)
+		_, _ = w.Write(b)
 	case r.Method == http.MethodDelete:
 		f.mu.Lock()
 		delete(f.objects, path)
@@ -200,8 +219,14 @@ func TestS3FakeServer(t *testing.T) {
 	if got := s.URL("r/index.m3u8"); got != srv.URL+"/rec/pre/r/index.m3u8" {
 		t.Fatal(got)
 	}
+	if b, err := s.Get(ctx, "r/seg_00001.m4s"); err != nil || string(b) != "hello" {
+		t.Fatalf("get: %q %v", b, err)
+	}
 	if err := s.Delete(ctx, "r/seg_00001.m4s"); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, "r/seg_00001.m4s"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get after delete: %v", err)
 	}
 }
 

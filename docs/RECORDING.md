@@ -46,7 +46,47 @@ and a clock that goes backwards (new SSRC) continues the timeline.
   <track_sid>/seg_00000.m4s    CMAF fragment (moof+mdat), cut on keyframes
 ```
 
-Templates: `{room}`, `{recording_id}`, `{time}` (UTC `20060102T150405Z`). Segment target
+Templates: `{room}`, `{recording_id}`, `{time}` (UTC `20060102T150405Z`), `{start_ms}` (Unix
+milliseconds), `{pid}` (the recorded participant's identity, made safe as one path segment) and
+`{shard}` (pid mod 1000 as three digits; a hash for non-numeric pids). The request's
+`filename_prefix` wins; otherwise `recording.filename_prefix` from the config is used, which is
+also what auto-record gets. A template with `{pid}` or `{shard}` falls back to the default for
+recordings without a participant (track recordings).
+
+### Per-presenter layout and index
+
+```yaml
+recording:
+  filename_prefix: "recordings/{shard}/{pid}/{start_ms}"
+```
+
+```
+recordings/576/1048576/index.json                       every recording of pid 1048576
+recordings/576/1048576/1763112345123/master.m3u8         one recording (layout as above)
+recordings/576/1048576/1763119876543/master.m3u8         a later one
+```
+
+The shard spreads consecutive (incremental) pids over 1000 S3 prefixes, and anyone can compute it
+from the pid. When the template contains `{pid}`, the recorder adds each recording's master
+playlist location to `index.json` at the `{pid}` level, oldest first, the first time that
+master is written (live, so a recording in progress is listed). A recording that never gets
+media writes no master and is never listed. Whether a listed recording has ended shows in its
+playlists (`#EXT-X-ENDLIST`).
+
+```json
+{
+  "recordings": [
+    "s3://bucket/recordings/576/1048576/1763112345123/master.m3u8",
+    "s3://bucket/recordings/576/1048576/1763119876543/master.m3u8"
+  ]
+}
+```
+
+The update is a plain read-modify-write: a presenter has one recording at a time, and each
+recording adds itself once. Failures are logged (`recording index`) and do not fail the
+recording.
+
+Segment target
 defaults to 4 s and is clamped to 2 to 6 s; video segments are cut on the first keyframe at or
 after the target. Segments are always uploaded before the playlist that lists them.
 

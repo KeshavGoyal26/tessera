@@ -25,6 +25,7 @@ func InProcessConfig(rc config.RecordingConfig, development bool) *Config {
 	if rc.Storage.Kind != "" {
 		c.Storage = rc.Storage
 	}
+	c.FilenamePrefix = rc.FilenamePrefix
 	if rc.HLS.SegmentDuration > 0 {
 		c.HLS.SegmentDuration = rc.HLS.SegmentDuration
 	}

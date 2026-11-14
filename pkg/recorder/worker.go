@@ -62,6 +62,8 @@ type Worker struct {
 	journal    JournalStore
 	stats      *workerStats
 
+	indexMu sync.Mutex // serialises index.json read-modify-writes
+
 	mu     sync.Mutex
 	active map[string]*jobRun
 	used   int
@@ -286,7 +288,11 @@ type jobRun struct {
 	// many tracks the live master lists. Both are used by the job goroutine only.
 	masterURL string
 	liveRends int
-	quality   *qualityLog // connection timeline (quality.json)
+	// index is the per-presenter index.json key ("" = none); indexed is set once this
+	// recording's master playlist is listed in it. Used by the job goroutine only.
+	index   string
+	indexed bool
+	quality *qualityLog // connection timeline (quality.json)
 }
 
 type recTrack struct {
@@ -332,15 +338,6 @@ func (r *jobRun) matches(t Track) bool {
 	return false
 }
 
-func expandPrefix(tmpl string, room, id string, now time.Time) string {
-	if tmpl == "" {
-		tmpl = "{room}/{recording_id}"
-	}
-	rep := strings.NewReplacer("{room}", room, "{recording_id}", id, "{time}", now.UTC().Format("20060102T150405Z"))
-	p := rep.Replace(tmpl)
-	return strings.Trim(path.Clean("/"+p), "/")
-}
-
 func (r *jobRun) update(ctx context.Context, st tesserav1.RecordingStatus, errMsg string, outs []*tesserav1.RecordingOutput, master string) {
 	r.mu.Lock()
 	r.status = st
@@ -384,7 +381,11 @@ func (r *jobRun) execute(ctx context.Context) {
 		return
 	}
 	r.st = st
-	r.prefix = expandPrefix(r.req.GetFilenamePrefix(), rec.GetRoom(), r.id, r.started)
+	tmpl := r.req.GetFilenamePrefix()
+	if tmpl == "" {
+		tmpl = w.cfg.FilenamePrefix
+	}
+	r.prefix, r.index = expandPrefix(tmpl, rec.GetRoom(), r.id, r.req.GetParticipant().GetIdentity(), r.started)
 	r.journal = r.startJournal()
 	r.quality = newQualityLog(r.origin)
 	defer func() {
@@ -481,6 +482,12 @@ func (r *jobRun) writeMaster(ctx context.Context, rends []hls.Rendition) (string
 		return "", err
 	}
 	r.masterURL = r.st.URL(key)
+	if r.index != "" && !r.indexed {
+		r.indexed = true
+		if err := r.w.addToIndex(ctx, r.st, r.index, loc); err != nil {
+			r.w.logger.Warn("recording index", "recording", r.id, "index", r.index, "err", err)
+		}
+	}
 	return loc, nil
 }
 

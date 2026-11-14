@@ -71,13 +71,16 @@ type Config struct {
 	// Capacity in units (1 unit = one remuxed track).
 	Capacity int `yaml:"capacity"`
 	// TempDir holds segments before upload.
-	TempDir    string               `yaml:"temp_dir"`
-	FFmpegPath string               `yaml:"ffmpeg_path"`
-	Storage    StorageConfig        `yaml:"storage"`
-	HLS        HLSDefaults          `yaml:"hls"`
-	Metrics    config.MetricsConfig `yaml:"metrics"`
-	Logging    config.LoggingConfig `yaml:"logging"`
-	Heartbeat  time.Duration        `yaml:"heartbeat"`
+	TempDir    string        `yaml:"temp_dir"`
+	FFmpegPath string        `yaml:"ffmpeg_path"`
+	Storage    StorageConfig `yaml:"storage"`
+	// FilenamePrefix is the default output prefix template (see expandPrefix); a
+	// request's filename_prefix overrides it.
+	FilenamePrefix string               `yaml:"filename_prefix"`
+	HLS            HLSDefaults          `yaml:"hls"`
+	Metrics        config.MetricsConfig `yaml:"metrics"`
+	Logging        config.LoggingConfig `yaml:"logging"`
+	Heartbeat      time.Duration        `yaml:"heartbeat"`
 }
 
 // StorageConfig selects default storage (shared with the server's in-process recorder).

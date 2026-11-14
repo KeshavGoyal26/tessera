@@ -212,6 +212,10 @@ the moment they publish. Output per recording:
 <room>/<recording_id>/quality.json         connection-quality timeline
 ```
 
+`recording.filename_prefix` changes the layout. For example,
+`recordings/{shard}/{pid}/{start_ms}` puts every recording of a presenter under
+`recordings/<pid mod 1000>/<pid>/` with an `index.json` listing them all.
+
 Viewers can rewind a presenter while the recording is live (the web demo's rewind button; the
 URL is in the participant's `hls_url` attribute). `recording_started` and `recording_ended`
 webhooks carry the playlist URLs. Details: [docs/RECORDING.md](docs/RECORDING.md).
