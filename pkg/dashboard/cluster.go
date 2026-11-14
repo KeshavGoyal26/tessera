@@ -140,26 +140,6 @@ func (h *Handler) Summary() []byte {
 	return h.summary
 }
 
-// latestBytes is the latest Update as JSON, marshalled at most once per sample.
-func (h *Handler) latestBytes() ([]byte, error) {
-	h.mu.Lock()
-	u, b := h.latest, h.latestJSON
-	h.mu.Unlock()
-	if b != nil {
-		return b, nil
-	}
-	b, err := json.Marshal(u)
-	if err != nil {
-		return nil, err
-	}
-	h.mu.Lock()
-	if h.latest == u {
-		h.latestJSON = b
-	}
-	h.mu.Unlock()
-	return b, nil
-}
-
 // liveBytes is the latest Live frame as JSON (cluster/node: another node's live view).
 func (h *Handler) liveBytes() ([]byte, error) {
 	h.mu.Lock()

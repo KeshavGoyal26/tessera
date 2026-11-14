@@ -91,10 +91,8 @@ type Handler struct {
 	// sampler takes one sample per idleEvery intervals.
 	lastUse atomic.Int64
 	latest  *Update
-	// latestJSON is latest marshalled (nil until someone needs it); summary is this
-	// node's Summary for the cluster heartbeat.
-	latestJSON []byte
-	summary    []byte
+	// summary is this node's Summary for the cluster heartbeat.
+	summary []byte
 	// version counts samples; live is the latest Live frame (liveJSON marshalled once).
 	version  atomic.Uint64
 	live     *Live

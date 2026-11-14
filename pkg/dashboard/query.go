@@ -246,7 +246,7 @@ func briefOf(room string, p *stats.ParticipantStats) ParticipantBrief {
 // connectedHere: a participant with its own connection to this node, not a relay session, a
 // recorder or a presenter relayed to this edge from its media node (no ICE here).
 func (b *ParticipantBrief) connectedHere() bool {
-	return b.Role != "relay" && b.Role != "recorder" && !(b.Published > 0 && b.ICEType == "")
+	return b.Role != "relay" && b.Role != "recorder" && (b.Published == 0 || b.ICEType != "")
 }
 
 // live builds the frame for one sample.

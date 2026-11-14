@@ -98,15 +98,6 @@ func TestPlacePresenter(t *testing.T) {
 	}
 }
 
-func sessionsOf(ns []NodeInfo, id string) int {
-	for _, n := range ns {
-		if n.ID == id {
-			return n.Sessions
-		}
-	}
-	return -1
-}
-
 func TestRoomNodes(t *testing.T) {
 	c, mr := newTestClient(t)
 	ctx := context.Background()

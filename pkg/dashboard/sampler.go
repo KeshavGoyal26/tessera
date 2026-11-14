@@ -193,7 +193,7 @@ func (h *Handler) tick() {
 	}
 	b, err := json.Marshal(live) // a few KB at any scale: sent to every viewer as is
 	h.mu.Lock()
-	h.latest, h.latestJSON, h.summary = u, nil, sum
+	h.latest, h.summary = u, sum
 	h.live, h.liveJSON = live, b
 	h.version.Store(ver)
 	h.hist.add(pt)
