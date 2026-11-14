@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"time"
@@ -136,16 +137,28 @@ func (f *AdminForwarder) CreateRoom(ctx context.Context, req *tesserav1.CreateRo
 	if err != nil {
 		return nil, err
 	}
-	var best *NodeInfo
-	for i := range media {
-		if !media[i].Draining && (best == nil || media[i].Sessions < best.Sessions) {
-			best = &media[i]
+	// A room's presenters are placed on any media node, so the room (and its settings,
+	// such as recording_enabled) is created on each; an unused copy closes after its
+	// empty timeout.
+	var out *tesserav1.Room
+	var firstErr error
+	for _, n := range media {
+		if n.Draining {
+			continue
+		}
+		r, err := f.client(n).CreateRoom(ctx, req)
+		if err != nil {
+			firstErr = cmp.Or(firstErr, err)
+			continue
+		}
+		if out == nil {
+			out = r
 		}
 	}
-	if best == nil {
-		return nil, ErrNoMediaNode
+	if out == nil {
+		return nil, cmp.Or[error](firstErr, ErrNoMediaNode)
 	}
-	return f.client(*best).CreateRoom(ctx, req)
+	return out, nil
 }
 
 // ListRooms merges the rooms of every media node (participant counts add up).
@@ -185,10 +198,11 @@ func (f *AdminForwarder) DeleteRoom(ctx context.Context, room string) error {
 		return err
 	}
 	found := false
+	var failed error // a node that did not answer: reported only if no node had the room
 	for _, n := range nodes {
 		err := f.client(n).DeleteRoom(ctx, room)
 		if err != nil && errs.CodeOf(err) != errs.CodeNotFound {
-			return err
+			failed = cmp.Or(failed, err)
 		}
 		found = found || err == nil
 	}
@@ -196,7 +210,7 @@ func (f *AdminForwarder) DeleteRoom(ctx context.Context, room string) error {
 		found = true
 	}
 	if !found {
-		return errs.New(errs.CodeNotFound, "room not found")
+		return cmp.Or[error](failed, errs.New(errs.CodeNotFound, "room not found"))
 	}
 	return nil
 }
@@ -208,13 +222,15 @@ func (f *AdminForwarder) UpdateRoomMetadata(ctx context.Context, room, metadata 
 		return nil, err
 	}
 	var out *tesserav1.Room
+	var failed error // a node that did not answer: reported only if no node had the room
 	for _, n := range nodes {
 		r, err := f.client(n).UpdateRoomMetadata(ctx, room, metadata)
 		if errs.CodeOf(err) == errs.CodeNotFound {
 			continue // asked every media node: not this one
 		}
 		if err != nil {
-			return nil, err
+			failed = cmp.Or(failed, err)
+			continue
 		}
 		out = r
 	}
@@ -222,7 +238,7 @@ func (f *AdminForwarder) UpdateRoomMetadata(ctx context.Context, room, metadata 
 		out = r
 	}
 	if out == nil {
-		return nil, errs.New(errs.CodeNotFound, "room not found")
+		return nil, cmp.Or[error](failed, errs.New(errs.CodeNotFound, "room not found"))
 	}
 	return out, nil
 }
@@ -272,7 +288,7 @@ func (f *AdminForwarder) ListParticipants(ctx context.Context, room string) ([]*
 			}
 		}
 	}
-	if !hosted && err != nil {
+	if !hosted && len(out) == 0 && err != nil {
 		return nil, err
 	}
 	return out, nil

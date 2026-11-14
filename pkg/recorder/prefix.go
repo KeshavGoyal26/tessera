@@ -30,8 +30,8 @@ const (
 // "recordings/{shard}/{pid}/{start_ms}" lists recordings in
 // "recordings/<shard>/<pid>/index.json". A template that needs a pid falls back to
 // the default for recordings that have none (track recordings). A template without
-// {recording_id}, {start_ms} or {time} gets "/{recording_id}" appended, so recordings
-// never overwrite each other.
+// {recording_id}, or without {pid} together with {start_ms} or {time}, gets
+// "/{recording_id}" appended, so recordings never overwrite each other.
 func expandPrefix(tmpl, room, id, pid string, now time.Time) (prefix, index string) {
 	if tmpl == "" {
 		tmpl = defaultPrefix
@@ -41,9 +41,11 @@ func expandPrefix(tmpl, room, id, pid string, now time.Time) (prefix, index stri
 	if usesPID && pid == "" {
 		tmpl = defaultPrefix
 	}
-	if !strings.Contains(tmpl, "{recording_id}") && !strings.Contains(tmpl, "{start_ms}") && !strings.Contains(tmpl, "{time}") {
-		// Nothing tells this recording from the next one of the same room or pid: they
-		// would overwrite each other.
+	timed := strings.Contains(tmpl, "{start_ms}") || strings.Contains(tmpl, "{time}")
+	unique := strings.Contains(tmpl, "{recording_id}") || timed && strings.Contains(tmpl, "{pid}")
+	if !unique {
+		// Nothing tells this recording from another one of the room (several presenters
+		// start in the same second) or of the pid: they would overwrite each other.
 		tmpl += "/{recording_id}"
 	}
 	rep := strings.NewReplacer("{room}", room, "{recording_id}", id, "{time}", now.UTC().Format("20060102T150405Z"),
@@ -57,8 +59,11 @@ func expandPrefix(tmpl, room, id, pid string, now time.Time) (prefix, index stri
 }
 
 // safePID keeps a pid to one path segment: characters other than letters, digits,
-// '-', '_' and '.' become '_', and "." / ".." are rejected.
+// '-', '_' and '.' become '_', long ones are cut, and "." / ".." are rejected. When it had
+// to change the pid, a hash of the original is appended, so two identities never share
+// a folder ("a b" and "a_b").
 func safePID(pid string) string {
+	orig := pid
 	if len(pid) > 128 {
 		pid = pid[:128]
 	}
@@ -69,10 +74,16 @@ func safePID(pid string) string {
 			b[i] = '_'
 		}
 	}
-	if s := string(b); s != "." && s != ".." {
-		return s
+	s := string(b)
+	if s == "" || s == "." || s == ".." {
+		return ""
 	}
-	return ""
+	if s != orig {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(orig))
+		s = fmt.Sprintf("%s-%08x", s, h.Sum32())
+	}
+	return s
 }
 
 // shard is pid mod 1000 as three digits ("1048576" -> "576"). Non-numeric pids use
@@ -101,11 +112,10 @@ type recordingIndex struct {
 }
 
 // addToIndex lists master (a master playlist location) in the index.json at key.
-// A presenter has one recording at a time and each recording adds itself once, so
-// a plain read-modify-write is enough; the mutex covers this worker.
+// A plain read-modify-write: each recording adds itself once and a presenter normally
+// has one recording at a time. Two recordings of one pid adding themselves at the same
+// moment (two rooms at once) can lose an entry; the recordings themselves are kept.
 func (w *Worker) addToIndex(ctx context.Context, st storage.Storage, key, master string) error {
-	w.indexMu.Lock()
-	defer w.indexMu.Unlock()
 	var idx recordingIndex
 	b, err := st.Get(ctx, key)
 	switch {

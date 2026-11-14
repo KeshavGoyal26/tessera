@@ -112,7 +112,7 @@ export class Cluster implements View {
     g.add({ title: 'Bandwidth', series: [
       { label: 'delivered', color: '--c2', get: (i) => P()[i]!.delivered_bps ?? 0, fill: true },
       { label: 'ingest', color: '--c1', get: (i) => P()[i]!.ingest_bps ?? 0 },
-      { label: 'between nodes', color: '--c3', get: (i) => P()[i]!.internal_bps ?? 0 },
+      { label: 'from media nodes', color: '--c3', get: (i) => P()[i]!.internal_bps ?? 0 },
       { label: 'TURN', color: '--c6', get: (i) => P()[i]!.turn_bps ?? 0 }], fmt: fmtBps });
     g.add({ title: 'CPU (% of each node)', series: [{ label: 'busiest', color: '--c6', get: (i) => P()[i]!.cpu_max }, { label: 'average', color: '--c3', get: (i) => P()[i]!.cpu_avg }], fmt: (v) => v.toFixed(0) + '%' });
     g.add({ title: 'Recording capacity (units)', series: [{ label: 'used', color: '--c6', get: (i) => P()[i]!.rec_used }, { label: 'capacity', color: '--c3', get: (i) => P()[i]!.rec_cap }], fmt: (v) => fmtNum(v), int: true });
@@ -168,7 +168,7 @@ export class Cluster implements View {
       card('Nodes', `${up.length} up`, `${p?.media ?? 0} media · ${p?.edges ?? 0} edge${p?.edges === 1 ? '' : 's'}${down ? ` · ${down} down` : ''}`, down ? 'bad' : '') +
       card('Presenters', fmtNum(p?.presenters ?? 0), 'on media nodes') +
       card('Viewers', fmtNum(p?.viewers ?? 0), 'on all nodes') +
-      card('Delivered', fmtBps(p?.delivered_bps ?? 0), `to viewers · ingest ${fmtBps(p?.ingest_bps ?? 0)} · between nodes ${fmtBps(p?.internal_bps ?? 0)} · TURN ${fmtBps(p?.turn_bps ?? 0)}`) +
+      card('Delivered', fmtBps(p?.delivered_bps ?? 0), `to viewers · ingest ${fmtBps(p?.ingest_bps ?? 0)} · from media nodes ${fmtBps(p?.internal_bps ?? 0)} · TURN ${fmtBps(p?.turn_bps ?? 0)}`) +
       card('Busiest CPU', `${(p?.cpu_max ?? 0).toFixed(0)}%`, `average ${(p?.cpu_avg ?? 0).toFixed(0)}%`, (p?.cpu_max ?? 0) > 80 ? 'warn' : '') +
       card('Recording', `${fmtNum(p?.recordings ?? 0)} active`, `capacity ${fmtNum(p?.rec_used ?? 0)} of ${fmtNum(p?.rec_cap ?? 0)} units`,
         p && p.rec_cap && p.rec_used * 10 >= p.rec_cap * 9 ? 'warn' : ''));

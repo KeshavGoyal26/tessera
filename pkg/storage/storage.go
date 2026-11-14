@@ -41,6 +41,9 @@ type Storage interface {
 // ErrNotFound is returned (wrapped) by Get when key does not exist.
 var ErrNotFound = errors.New("storage: object not found")
 
+// maxGet bounds what Get reads (small control files such as index.json).
+const maxGet = 16 << 20
+
 // Content types for HLS objects.
 const (
 	ContentTypePlaylist = "application/vnd.apple.mpegurl"
@@ -140,11 +143,15 @@ func (l *local) Get(_ context.Context, key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(filepath.Join(l.root, filepath.FromSlash(k)))
+	f, err := os.Open(filepath.Join(l.root, filepath.FromSlash(k)))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, maxGet))
 }
 
 func (l *local) Delete(_ context.Context, key string) error {
@@ -350,7 +357,7 @@ func (s *s3store) Get(ctx context.Context, key string) ([]byte, error) {
 			return err
 		}
 		defer func() { _ = obj.Close() }()
-		b, err = io.ReadAll(obj)
+		b, err = io.ReadAll(io.LimitReader(obj, maxGet))
 		return err
 	})
 	if err != nil && minio.ToErrorResponse(err).StatusCode == 404 {

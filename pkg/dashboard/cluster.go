@@ -344,8 +344,9 @@ type ClusterPoint struct {
 	Viewers    int     `json:"viewers"`
 	BpsIn      float64 `json:"bps_in"`
 	BpsOut     float64 `json:"bps_out"`
-	// Bandwidth by meaning (ADR-0012): Ingest from presenters into media nodes, Delivered
-	// from edges to viewers, Internal from media nodes to edges (pulls), TURN relayed by
+	// Bandwidth by meaning (ADR-0012): Ingest into media nodes (from presenters), Delivered
+	// from edges to viewers, Internal sent by media nodes (mostly to edges' pull sessions;
+	// also to participants subscribing on a media node, as in a call), TURN relayed by
 	// edges (one leg: a relayed flow crosses the edge twice). BpsIn/BpsOut are raw sums.
 	Ingest     float64 `json:"ingest_bps"`
 	Delivered  float64 `json:"delivered_bps"`

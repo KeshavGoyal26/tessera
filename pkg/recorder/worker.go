@@ -62,8 +62,6 @@ type Worker struct {
 	journal    JournalStore
 	stats      *workerStats
 
-	indexMu sync.Mutex // serialises index.json read-modify-writes
-
 	mu     sync.Mutex
 	active map[string]*jobRun
 	used   int

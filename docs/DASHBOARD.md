@@ -77,7 +77,7 @@ edges in separate tables (status carries late/draining/down; Version only when n
 edge's "in" includes the media it pulls from media nodes.
 
 Cluster bandwidth is shown by meaning: **delivered** (edges to viewers), **ingest** (presenters to
-media nodes), **between nodes** (media nodes to edges) and **TURN** relayed by edges (one leg).
+media nodes), **from media nodes** (mostly to edges' pulls; also to participants subscribing on a media node) and **TURN** relayed by edges (one leg).
 Rooms with viewers and no presenter carry a "no presenter" badge. On the Recordings page a
 finished recording shows the media recorded next to its duration when they differ, and "N of M
 tracks" when a track recorded nothing; an active track that receives packets but has written no

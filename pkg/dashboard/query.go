@@ -84,6 +84,7 @@ type ParticipantBrief struct {
 	Role        string    `json:"role"`
 	Kind        string    `json:"kind"`
 	Hidden      bool      `json:"hidden,omitempty"`
+	Pulled      bool      `json:"pulled,omitempty"`
 	State       string    `json:"state"`
 	Quality     string    `json:"quality"`
 	Score       float64   `json:"score"`
@@ -221,7 +222,7 @@ func buildIndex(version uint64, s *stats.Snapshot) *index {
 
 func briefOf(room string, p *stats.ParticipantStats) ParticipantBrief {
 	b := ParticipantBrief{Room: room, SID: p.SID, Identity: p.Identity, Name: p.Name, Role: roleOf(p), Kind: p.Kind, Hidden: p.Hidden,
-		State: p.State, Quality: cmp.Or(p.ConnectionQuality, stats.QualityUnknown), Score: p.QualityScore, RTTMs: p.RTTMs,
+		Pulled: p.Pulled, State: p.State, Quality: cmp.Or(p.ConnectionQuality, stats.QualityUnknown), Score: p.QualityScore, RTTMs: p.RTTMs,
 		BWEBps: p.BandwidthEstimateBps, ICEType: p.ICECandidateType, ICESetupMs: p.ICESetupMs, DTLSSetupMs: p.DTLSSetupMs,
 		Published: len(p.Published), Subscribed: len(p.Subscribed), ClientSDK: p.ClientSDK, JoinedAt: p.JoinedAt}
 	for _, t := range p.Published {
@@ -243,9 +244,9 @@ func briefOf(room string, p *stats.ParticipantStats) ParticipantBrief {
 }
 
 // connectedHere: a participant with its own connection to this node, not a relay session, a
-// recorder or a presenter relayed to this edge from its media node (no ICE here).
+// recorder or a presenter pulled to this edge from its media node.
 func (b *ParticipantBrief) connectedHere() bool {
-	return b.Role != "relay" && b.Role != "recorder" && (b.Published == 0 || b.ICEType != "")
+	return b.Role != "relay" && b.Role != "recorder" && !b.Pulled
 }
 
 // live builds the frame for one sample.

@@ -47,12 +47,14 @@ and a clock that goes backwards (new SSRC) continues the timeline.
 ```
 
 Templates: `{room}`, `{recording_id}`, `{time}` (UTC `20060102T150405Z`), `{start_ms}` (Unix
-milliseconds), `{pid}` (the recorded participant's identity, made safe as one path segment) and
+milliseconds), `{pid}` (the recorded participant's identity, made safe as one path segment; an identity that
+had to be changed gets a hash of the original appended, so two identities never share a folder) and
 `{shard}` (pid mod 1000 as three digits; a hash for non-numeric pids). The request's
 `filename_prefix` wins; otherwise `recording.filename_prefix` from the config is used, which is
 also what auto-record gets. A template with `{pid}` or `{shard}` falls back to the default for
 recordings without a participant (track recordings). A template without `{recording_id}`,
-`{start_ms}` or `{time}` gets `/{recording_id}` appended, so two recordings never share a folder.
+or without `{pid}` together with `{start_ms}` or `{time}`, gets `/{recording_id}` appended, so two
+recordings never share a folder (several presenters of a room can start in the same second).
 
 ### Per-presenter layout and index
 
@@ -87,8 +89,9 @@ Entries are storage locations as returned by the storage: `s3://bucket/key` on S
 on local storage (inside the container in Docker). Players use the recording's
 `master_playlist_url` from the API or webhook.
 
-The update is a plain read-modify-write: a presenter has one recording at a time, and each
-recording adds itself once. Failures are logged (`recording index`), do not fail the
+The update is a plain read-modify-write: each recording adds itself once and a presenter
+normally has one recording at a time. A presenter recorded in two rooms at the same moment can
+lose one index entry (the recording itself is kept). Failures are logged (`recording index`), do not fail the
 recording and are retried at the next master write.
 
 Segment target

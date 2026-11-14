@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,14 +19,15 @@ func TestExpandPrefix(t *testing.T) {
 		tmpl, pid, prefix, index string
 	}{
 		{"", "alice", "demo/REC_1", ""},
-		{"{room}/{time}", "", "demo/20251114T092545Z", ""},
+		// A time alone is not unique (presenters starting in the same second): ID appended.
+		{"{room}/{time}", "", "demo/20251114T092545Z/REC_1", ""},
 		{pidTmpl, "1048576", "recordings/576/1048576/1763112345123", "recordings/576/1048576/index.json"},
 		{pidTmpl, "7", "recordings/007/7/1763112345123", "recordings/007/7/index.json"},
 		{pidTmpl, "42", "recordings/042/42/1763112345123", "recordings/042/42/index.json"},
 		{pidTmpl, "1000", "recordings/000/1000/1763112345123", "recordings/000/1000/index.json"},
-		// Not one path segment: sanitised, never a traversal.
-		{pidTmpl, "../x", "recordings/" + shard(".._x") + "/.._x/1763112345123", "recordings/" + shard(".._x") + "/.._x/index.json"},
-		{pidTmpl, "a/b", "recordings/" + shard("a_b") + "/a_b/1763112345123", "recordings/" + shard("a_b") + "/a_b/index.json"},
+		// Not one path segment: sanitised (and made unique), never a traversal.
+		{pidTmpl, "../x", "recordings/" + shard(safePID("../x")) + "/" + safePID("../x") + "/1763112345123", "recordings/" + shard(safePID("../x")) + "/" + safePID("../x") + "/index.json"},
+		{pidTmpl, "a/b", "recordings/" + shard(safePID("a/b")) + "/" + safePID("a/b") + "/1763112345123", "recordings/" + shard(safePID("a/b")) + "/" + safePID("a/b") + "/index.json"},
 		// Nothing unique per recording: the recording ID is appended (no overwrites).
 		{"{pid}", "42", "42/REC_1", "42/index.json"},
 		{"{room}", "", "demo/REC_1", ""},
@@ -86,5 +88,26 @@ func TestAddToIndex(t *testing.T) {
 	}
 	if err := w.addToIndex(ctx, st, key, "m3"); err == nil {
 		t.Fatal("corrupt index accepted")
+	}
+}
+
+// TestSafePIDKeepsIdentitiesApart: identities that sanitise alike get distinct folders;
+// a pid that needs no change keeps its name.
+func TestSafePIDKeepsIdentitiesApart(t *testing.T) {
+	if got := safePID("1048576"); got != "1048576" {
+		t.Fatalf("plain pid changed: %q", got)
+	}
+	a, b := safePID("a b"), safePID("a_b")
+	if a == b || b != "a_b" || !strings.HasPrefix(a, "a_b-") || strings.ContainsAny(a, "/ ") {
+		t.Fatalf("%q %q", a, b)
+	}
+	long1, long2 := strings.Repeat("x", 200)+"1", strings.Repeat("x", 200)+"2"
+	if safePID(long1) == safePID(long2) {
+		t.Fatal("long identities with the same first 128 bytes share a folder")
+	}
+	for _, bad := range []string{"", ".", ".."} {
+		if safePID(bad) != "" {
+			t.Fatalf("%q accepted", bad)
+		}
 	}
 }
